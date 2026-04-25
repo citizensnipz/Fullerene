@@ -1,6 +1,6 @@
 # AI-facing changelog
 
-Changes that matter for **future AI coding sessions** (layout, commands, invariants). Not a substitute for user-facing release notes.
+Changes that matter for future AI coding sessions (layout, commands, invariants). Not a substitute for user-facing release notes.
 
 ## Instructions
 
@@ -8,6 +8,13 @@ Changes that matter for **future AI coding sessions** (layout, commands, invaria
 - One line or bullet per change set; prefer paths over long prose.
 
 ## Changelog
+
+### 2026-04-25 (d)
+
+- Added initial runtime package under `fullerene/` with `nexus/`, `facets/`, `state/`, `cli.py`, and `__main__.py`.
+- Added `tests/test_nexus_runtime.py` and documented the runnable commands in `ai/operations/commands.md`.
+- Updated harness terminology from Conductor to Nexus in `ai/project/overview.md`, `ai/project/architecture.md`, `ai/apps/runtime-cli.md`, `ai/operations/verification.md`, and `ai/knowledge/glossary.md`.
+- Recorded the v0 runtime persistence decision in `ai/knowledge/decisions.md` and session handoff notes in `ai/logs/SESSION_LOG.md`.
 
 ### 2026-04-25 (c)
 

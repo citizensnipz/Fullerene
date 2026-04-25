@@ -1,34 +1,34 @@
-# App — Python runtime and CLI (v0)
+# App - Python runtime and CLI (v0)
 
-Single primary surface for v0: **library + CLI** driving the Conductor on one machine.
+Single primary surface for v0: **library + CLI** driving the Nexus on one machine.
 
 ## Purpose
 
-- Run Fullerene continuously or stepwise locally.
-- Expose operator commands (exact verbs and flags **TBD**).
+- Run Fullerene locally in a simple, inspectable way.
+- Expose an operator-friendly command for processing events through the runtime.
 
 ## Responsibilities
 
-- Start, stop, or tick the **Conductor** loop.
-- Load configuration (see `ai/operations/env-vars.md` — **TBD**).
-- Persist state via **SQLite** (`ai/operations/database.md` — **TBD** schema).
-- Integrate **Ollama** (or a stub) for LLM calls on planner/policy paths (**TBD**).
+- Process a local event through the **Nexus** loop.
+- Persist state through a local snapshot/log directory.
+- Stay model-agnostic; no provider integration yet.
 
 ## Boundaries
 
-| In scope (v0 intent) | Out of scope (v0) |
-|----------------------|-------------------|
+| In scope (v0) | Out of scope (v0) |
+|---------------|-------------------|
 | Local process, operator logging, facet orchestration | Remote multi-tenant serving |
-| | Voice, camera, robotics |
-| | Unattended risky tool use |
+| Explicit local persistence path | Voice, camera, robotics |
+| Typed decisions without side effects | Unattended risky tool use |
 
-## When implemented, document here
+## Current implementation
 
 | Topic | Status |
 |-------|--------|
-| Entrypoint (e.g. `python -m …`, console script) | **TBD** |
-| Config resolution order | **TBD** |
-| Graceful shutdown (flush DB, stop loop) | **TBD** |
+| Entrypoint | `python -m fullerene --event-type user_message --content "hello"` |
+| Config resolution order | CLI flags only (v0) |
+| Graceful shutdown | Single-event command; no long-running loop yet |
+| Local persistence path | `--state-dir` (defaults to `.fullerene-state`) |
 
 ## Related harness files
 

@@ -1,23 +1,24 @@
-# Commands — install, run, test
+# Commands - install, run, test
 
-Replace placeholders when the toolchain exists. Agents should run commands from here once filled in.
+Agents should prefer commands documented here.
 
 ## Setup
 
 ```bash
-# TBD — e.g. uv sync, pip install -e ".[dev]"
+# No bootstrap step is required yet beyond a supported local Python.
 ```
 
 ## Run (development)
 
 ```bash
-# TBD — e.g. python -m fullerene --help
+python -m fullerene --help
+python -m fullerene --event-type user_message --content "hello nexus" --state-dir .fullerene-state
 ```
 
 ## Tests
 
 ```bash
-# TBD — e.g. pytest -q
+python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
 ## Lint and format
@@ -26,13 +27,13 @@ Replace placeholders when the toolchain exists. Agents should run commands from 
 # TBD
 ```
 
-## Ollama (local models)
+## Model backends
 
 ```bash
-# TBD — how to confirm Ollama is up and the model is pulled
+# Not wired yet.
 ```
 
 ## For AI agents
 
 - Prefer commands documented in this file.
-- If tooling is added without updating this file, add the commands in the **same** change.
+- If tooling is added without updating this file, add the commands in the same change.

@@ -219,3 +219,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Fullerene runtime state
+.fullerene-state*/
+.test-nexus-store*/
+tmp*/
