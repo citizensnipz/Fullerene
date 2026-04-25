@@ -7,7 +7,7 @@ This file gives shared names and intent from the product description so the harn
 | Pillar | Meaning |
 |--------|---------|
 | State | Memory, goals, world model, and other structured runtime state |
-| Control | Policy, confidence, and verification boundaries |
+| Control | Behavior, policy, and verification boundaries |
 | Signal | Facets contribute observations, updates, and proposals |
 | Execution | Planner and executor remain future components; v0 does not perform autonomous side effects |
 
@@ -25,7 +25,7 @@ Product vocabulary for modular components:
 8. Planner
 9. Executor
 10. Verifier
-11. Confidence
+11. Behavior
 12. Learning
 
 Harness note: treat each as an interface-friendly boundary in design discussions. The first runtime slice only implements the facet contract plus a tiny example facet.
@@ -35,7 +35,7 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - Accept an event plus the current runtime state.
 - Pass the event and state through registered facets.
 - Collect structured `FacetResult` objects.
-- Integrate those results into a small `NexusDecision` (`WAIT`, `ASK`, `ACT`, `RECORD`).
+- Integrate those results into a small `NexusDecision` (`WAIT`, `ASK`, `ACT`, `RECORD`), using explicit proposal priority `ACT > ASK > RECORD > WAIT` when multiple facets disagree.
 - Persist the updated runtime snapshot plus an append-only event log.
 - Avoid autonomous tool execution; `ACT` is only a typed decision for now.
 
@@ -66,6 +66,14 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - **v2** - embeddings / vector retrieval as a non-canonical index layered on top of SQLite.
 - **v3** - memory links / graph structure, reflection or compression, and affect-weighted salience.
 
+## Behavior v0 (current)
+
+- **Deterministic and model-free** - `BehaviorFacet` does not call an LLM, planner, graph, executor, or external policy engine.
+- **Inputs** - event type/content, explicit event metadata, deterministic tag inference, deterministic salience, and any passed-through memory metadata when the caller provides it.
+- **Outputs** - a proposed `WAIT` / `RECORD` / `ASK` / `ACT` decision plus inspectable metadata (`selected_decision`, `confidence`, `salience`, `tags_considered`, and `reasons`).
+- **Conservative policy** - empty/no-signal events wait; normal user messages record; response/uncertainty signals ask; explicit low-risk actions can propose `ACT`.
+- **No execution** - `ACT` is only a typed proposal for a future executor; Nexus v0 still performs no autonomous tool execution or irreversible side effects.
+
 ## Model integration (current v0)
 
 - None yet. Nexus is model-agnostic and does not call any provider in the first runtime slice.
@@ -91,6 +99,7 @@ flowchart LR
 | Event and decision models | `fullerene/nexus/models.py` | Typed dataclasses for events, results, decisions, state, and records |
 | Facet interface | `fullerene/facets/base.py` | `Facet` protocol |
 | Example facet | `fullerene/facets/echo.py` | Small bundled facet for smoke/testing |
+| Behavior facet | `fullerene/facets/behavior.py` | Deterministic, inspectable decision policy for `WAIT` / `RECORD` / `ASK` / `ACT` |
 | Memory facet | `fullerene/facets/memory.py` | Deterministic episodic storage with v1 tag/salience inference plus bounded retrieval |
 | Memory models and store | `fullerene/memory/` | `MemoryRecord`, scoring helpers, deterministic tag/salience inference (`inference.py`), and SQLite-backed canonical memory |
 | State store | `fullerene/state/store.py` | In-memory or file-backed JSON persistence |

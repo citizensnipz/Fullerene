@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-25 - Behavior Facet v0
+
+- **Context:** Add the first deterministic behavior/decision policy layer after Nexus + Memory v1, without LLM planning, graph reasoning, tool execution, or autonomous side effects.
+- **Done:** Added `fullerene/facets/behavior.py` with deterministic `WAIT` / `RECORD` / `ASK` / `ACT` policy rules, inspectable confidence/reason metadata, and optional memory-signal awareness; wired `--behavior` into `fullerene/cli.py`; exported `BehaviorFacet`; made `EchoFacet` ignore empty user messages so behavior-driven `WAIT` can win cleanly; added `tests/test_behavior.py`; added explicit runtime decision-priority constant in `fullerene/nexus/runtime.py`; updated architecture / glossary / decisions docs.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -v`
+- **Next:** Decide whether future executor/planner work should consume `BehaviorFacet` metadata directly or whether a small executor-intent schema should sit between behavior and execution.
+- **Blockers:** None.
+
 ### 2026-04-25 - Memory v1 deterministic scoring completion
 
 - **Context:** Finish Memory v1 so tag extraction is content-driven and salience is derived from deterministic tag signals only, without embeddings, RAG, LLM calls, or prosody.

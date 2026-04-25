@@ -16,6 +16,15 @@ from fullerene.nexus.models import (
 )
 from fullerene.state.store import InMemoryStateStore, StateStore
 
+# Higher score wins when multiple facets explicitly propose a decision.
+# ACT > ASK > RECORD > WAIT.
+DECISION_PRIORITY = {
+    DecisionAction.WAIT: 0,
+    DecisionAction.RECORD: 1,
+    DecisionAction.ASK: 2,
+    DecisionAction.ACT: 3,
+}
+
 
 class Nexus:
     """Central interpreter/integrator loop for Fullerene v0."""
@@ -79,19 +88,13 @@ class Nexus:
         event: Event,
         facet_results: list[FacetResult],
     ) -> NexusDecision:
-        priority = {
-            DecisionAction.WAIT: 0,
-            DecisionAction.RECORD: 1,
-            DecisionAction.ASK: 2,
-            DecisionAction.ACT: 3,
-        }
         explicit_results = [
             result for result in facet_results if result.proposed_decision is not None
         ]
         if explicit_results:
             selected_action = max(
                 (result.proposed_decision for result in explicit_results),
-                key=lambda action: priority[action],
+                key=lambda action: DECISION_PRIORITY[action],
             )
             source_facets = [
                 result.facet_name

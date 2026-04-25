@@ -18,8 +18,8 @@
 ## Engineering goals
 
 - **Persistence** - state survives restarts (currently local snapshot/log files; SQLite can come later if needed).
-- **Modularity** - facets (Memory, Affect, Attention, Context, World Model, Goals, Policy, Planner, Executor, Verifier, Confidence, Learning) stay isolatable.
-- **Safety by default** - policy + verification before irreversible effects (expand as the executor gains tools).
+- **Modularity** - facets (Memory, Affect, Attention, Context, World Model, Goals, Policy, Planner, Executor, Verifier, Behavior, Learning) stay isolatable.
+- **Safety by default** - behavior + policy + verification before irreversible effects (expand as the executor gains tools).
 
 ## Non-goals (near term)
 

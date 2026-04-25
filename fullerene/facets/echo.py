@@ -18,6 +18,13 @@ class EchoFacet:
 
     def process(self, event: Event, state: NexusState) -> FacetResult:
         if event.event_type == EventType.USER_MESSAGE:
+            if not event.content.strip():
+                return FacetResult(
+                    facet_name=self.name,
+                    summary=(
+                        "Observed an empty user message and left echo state unchanged."
+                    ),
+                )
             seen_messages = (
                 int(state.facet_state.get(self.name, {}).get("seen_messages", 0)) + 1
             )

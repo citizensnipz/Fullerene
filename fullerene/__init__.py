@@ -5,6 +5,7 @@ from __future__ import annotations
 from importlib import import_module
 
 __all__ = [
+    "BehaviorFacet",
     "DecisionAction",
     "EchoFacet",
     "Event",
@@ -30,7 +31,7 @@ __all__ = [
 def __getattr__(name: str):
     if name in {"Facet"}:
         return getattr(import_module("fullerene.facets.base"), name)
-    if name in {"EchoFacet", "MemoryFacet"}:
+    if name in {"BehaviorFacet", "EchoFacet", "MemoryFacet"}:
         return getattr(import_module("fullerene.facets"), name)
     if name in {"MemoryRecord", "MemoryStore", "MemoryType", "SQLiteMemoryStore"}:
         return getattr(import_module("fullerene.memory"), name)

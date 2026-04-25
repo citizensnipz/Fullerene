@@ -9,6 +9,13 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-25 (j)
+
+- Added `fullerene/facets/behavior.py` with deterministic `BehaviorFacet` rules for `WAIT` / `RECORD` / `ASK` / `ACT`, including inspectable `selected_decision`, `confidence`, `salience`, `tags_considered`, and `reasons` metadata.
+- Wired `BehaviorFacet` into `fullerene/facets/__init__.py`, `fullerene/__init__.py`, and `fullerene/cli.py` behind `--behavior`.
+- Adjusted `fullerene/facets/echo.py` so empty user messages no longer force a `RECORD` proposal, letting the behavior layer return `WAIT` for truly empty input.
+- Added `tests/test_behavior.py` for rule coverage, runtime integration, and CLI behavior; extended `tests/test_nexus_runtime.py` with an explicit priority-order test; documented the deterministic behavior decision in `ai/project/architecture.md`, `ai/knowledge/glossary.md`, and `ai/knowledge/decisions.md`.
+
 ### 2026-04-25 (i)
 
 - Tightened `fullerene/memory/inference.py` to infer the requested starter tags from lowercase content, including `correction`, and to score salience from user-message plus tag signals only.

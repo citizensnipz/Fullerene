@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from fullerene.facets import EchoFacet, MemoryFacet
+from fullerene.facets import BehaviorFacet, EchoFacet, MemoryFacet
 from fullerene.memory import SQLiteMemoryStore
 from fullerene.nexus import Event, EventType, NexusRuntime
 from fullerene.state import FileStateStore
@@ -21,6 +21,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--memory",
         action="store_true",
         help="Enable the SQLite-backed MemoryFacet for this run.",
+    )
+    parser.add_argument(
+        "--behavior",
+        action="store_true",
+        help="Enable the deterministic BehaviorFacet for this run.",
     )
     parser.add_argument(
         "--event-type",
@@ -53,6 +58,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     state_dir = Path(args.state_dir)
     store = FileStateStore(state_dir)
     facets = [EchoFacet()]
+    if args.behavior:
+        facets = [BehaviorFacet(), *facets]
     if args.memory:
         memory_store = SQLiteMemoryStore(Path(args.memory_db))
         facets = [MemoryFacet(memory_store), *facets]

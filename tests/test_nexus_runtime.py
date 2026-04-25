@@ -46,6 +46,17 @@ class ExplodingFacet:
         raise ValueError("facet exploded")
 
 
+class ActFacet:
+    name = "actor"
+
+    def process(self, event: Event, state: NexusState) -> FacetResult:
+        return FacetResult(
+            facet_name=self.name,
+            summary="Proposed a future action for the event.",
+            proposed_decision=DecisionAction.ACT,
+        )
+
+
 class NexusRuntimeTests(unittest.TestCase):
     def make_file_store(self) -> FileStateStore:
         store_root = Path.cwd() / f".test-nexus-store-{uuid4().hex}"
@@ -99,6 +110,19 @@ class NexusRuntimeTests(unittest.TestCase):
         record = runtime.process_event(Event(event_type=EventType.SYSTEM_TICK))
 
         self.assertEqual(record.decision.action, DecisionAction.WAIT)
+
+    def test_priority_order_prefers_act_over_ask_and_record(self) -> None:
+        runtime = NexusRuntime(
+            facets=[EchoFacet(), AskFacet(), ActFacet()],
+            store=InMemoryStateStore(),
+        )
+
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="hello")
+        )
+
+        self.assertEqual(record.decision.action, DecisionAction.ACT)
+        self.assertEqual(record.decision.source_facets, ["actor"])
 
     def test_facet_errors_are_isolated_and_persisted(self) -> None:
         store = self.make_file_store()
