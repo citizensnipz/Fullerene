@@ -13,11 +13,16 @@ __all__ = [
     "FacetResult",
     "FileStateStore",
     "InMemoryStateStore",
+    "MemoryFacet",
+    "MemoryRecord",
+    "MemoryStore",
+    "MemoryType",
     "Nexus",
     "NexusDecision",
     "NexusRecord",
     "NexusRuntime",
     "NexusState",
+    "SQLiteMemoryStore",
     "StateStore",
 ]
 
@@ -25,8 +30,10 @@ __all__ = [
 def __getattr__(name: str):
     if name in {"Facet"}:
         return getattr(import_module("fullerene.facets.base"), name)
-    if name in {"EchoFacet"}:
-        return getattr(import_module("fullerene.facets.echo"), name)
+    if name in {"EchoFacet", "MemoryFacet"}:
+        return getattr(import_module("fullerene.facets"), name)
+    if name in {"MemoryRecord", "MemoryStore", "MemoryType", "SQLiteMemoryStore"}:
+        return getattr(import_module("fullerene.memory"), name)
     if name in {
         "DecisionAction",
         "Event",

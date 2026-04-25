@@ -9,6 +9,13 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-25 (f)
+
+- Added `fullerene/memory/` with `MemoryRecord`, `MemoryType`, deterministic scoring helpers, and `SQLiteMemoryStore` as the canonical Memory v0 store.
+- Added `fullerene/facets/memory.py` and exported `MemoryFacet` so Nexus and the CLI can persist episodic memories and retrieve a bounded relevant/recent memory set.
+- Added `tests/test_memory.py` covering record round-tripping, SQLite schema/init, CRUD and retrieval behavior, bounded facet loading, and Nexus integration with `EchoFacet`.
+- Updated `ai/project/architecture.md`, `ai/knowledge/decisions.md`, `ai/knowledge/glossary.md`, and `ai/logs/SESSION_LOG.md` for Memory v0 and the SQLite-canonical-memory decision.
+
 ### 2026-04-25 (e)
 
 - Hardened `fullerene/nexus/runtime.py` so facet exceptions are isolated into sanitized `FacetResult` error entries instead of aborting the event loop.

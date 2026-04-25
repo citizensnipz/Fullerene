@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-25 - Memory facet v0
+
+- **Context:** Implement the first real Memory facet without embeddings, RAG, summarization, or a giant prompt file.
+- **Done:** Added `fullerene/memory/` with `MemoryRecord`, deterministic scoring helpers, and `SQLiteMemoryStore`; added `fullerene/facets/memory.py`; wired the CLI to create `memory.sqlite3` beside `state.json` and `runtime-log.jsonl`; added `tests/test_memory.py`; updated architecture / glossary / decision docs for Memory v0.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -v`; `python -m fullerene --content "hello memory" --state-dir <temp-state-dir>`; `python -m fullerene --content "hello memory again" --state-dir <same-temp-state-dir>`
+- **Next:** Add better deterministic salience and tag rules, then decide how semantic memory creation should happen before any embedding or vector index work.
+- **Blockers:** None.
+
 ### 2026-04-25 - Nexus facet error isolation
 
 - **Context:** Harden Nexus v0 so one facet failure does not abort event processing, later facets still run, and persistence still occurs.

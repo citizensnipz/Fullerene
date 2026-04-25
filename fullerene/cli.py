@@ -7,7 +7,8 @@ import json
 from pathlib import Path
 from typing import Sequence
 
-from fullerene.facets import EchoFacet
+from fullerene.facets import EchoFacet, MemoryFacet
+from fullerene.memory import SQLiteMemoryStore
 from fullerene.nexus import Event, EventType, NexusRuntime
 from fullerene.state import FileStateStore
 
@@ -39,8 +40,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    store = FileStateStore(Path(args.state_dir))
-    runtime = NexusRuntime(facets=[EchoFacet()], store=store)
+    state_dir = Path(args.state_dir)
+    store = FileStateStore(state_dir)
+    memory_store = SQLiteMemoryStore(state_dir / "memory.sqlite3")
+    runtime = NexusRuntime(
+        facets=[MemoryFacet(memory_store), EchoFacet()],
+        store=store,
+    )
     event = Event(event_type=EventType(args.event_type), content=args.content)
     record = runtime.process_event(event)
 

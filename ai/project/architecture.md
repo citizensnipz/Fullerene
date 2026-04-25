@@ -42,7 +42,21 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 ## Data stores (current v0)
 
 - **Local JSON files** - `state.json` snapshot plus `runtime-log.jsonl` under an explicit state directory.
-- **SQLite** remains a future option once the runtime needs a richer schema.
+- **SQLite memory store** - `memory.sqlite3` under the same state directory is the canonical store for what the system remembers.
+
+## Memory v0
+
+- **Working memory** - derived from a bounded set of recent memory records; it is not a separate giant prompt file.
+- **Episodic memory** - append-only records of observed events; this is the first real source-of-truth memory layer.
+- **Semantic memory** - supported as a typed record in the schema, but v0 does not yet automate rich semantic extraction.
+- **Retrieval** - deterministic only: keyword overlap, tag overlap, salience, and recency. No embeddings, vector DB, summarization, RAG, or model calls.
+- **Inspection** - memory remains readable through SQLite rows and bounded facet metadata instead of opaque compressed blobs.
+
+## Memory roadmap
+
+- **v1** - better deterministic scoring, tagging rules, and salience heuristics.
+- **v2** - embeddings / vector retrieval as a non-canonical index layered on top of SQLite.
+- **v3** - memory links / graph structure, reflection or compression, and affect-weighted salience.
 
 ## Model integration (current v0)
 
@@ -69,5 +83,7 @@ flowchart LR
 | Event and decision models | `fullerene/nexus/models.py` | Typed dataclasses for events, results, decisions, state, and records |
 | Facet interface | `fullerene/facets/base.py` | `Facet` protocol |
 | Example facet | `fullerene/facets/echo.py` | Small bundled facet for smoke/testing |
+| Memory facet | `fullerene/facets/memory.py` | Deterministic episodic storage plus bounded retrieval |
+| Memory models and store | `fullerene/memory/` | `MemoryRecord`, scoring helpers, and SQLite-backed canonical memory |
 | State store | `fullerene/state/store.py` | In-memory or file-backed JSON persistence |
 | CLI | `fullerene/cli.py`, `fullerene/__main__.py` | `python -m fullerene` |

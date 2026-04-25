@@ -8,7 +8,10 @@ Terms for harness and design discussions. Definitions follow the current repo wh
 | **Nexus** | Central interpreter/integrator loop that accepts events, asks facets for results, integrates a decision, and persists runtime state/logs. |
 | **Conductor** | Earlier harness placeholder for the central loop; superseded in code by **Nexus**. |
 | **Event** | Typed runtime input such as a user message, system tick, or system note. |
-| **Memory** | Structured store; selective persistence by importance, affect, repetition. |
+| **Memory** | Structured, selective persistence for what Fullerene remembers; in v0 the canonical store is SQLite rather than a monolithic prompt file. |
+| **Working memory** | Small, recent memory slice derived from stored records for the current context window. |
+| **Episodic memory** | Append-only record of what happened; the primary source-of-truth event/history memory in v0. |
+| **Semantic memory** | Persistent facts or beliefs distilled from experience; schema-supported in v0, but richer creation logic is deferred. |
 | **Affect** | Signal layer: intensity, urgency, confidence-like cues from text (voice later); not only "mood." |
 | **Attention** | What the system foregrounds when building context. |
 | **Context** | Assembled view for reasoning or tool steps. |
