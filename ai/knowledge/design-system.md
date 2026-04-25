@@ -2,14 +2,14 @@
 
 ## Status
 
-- v0 is **CLI + Python runtime** per product description. **No UI** is required for initial scope.
+v0 is **CLI + Python runtime** per product description. **No UI** is required for initial scope.
 
 ## If a UI is added later
 
-- Design tokens: color, type, spacing, components library.
+- Design tokens: color, typography, spacing, components.
 - Accessibility baseline (contrast, focus, keyboard).
-- Link to Figma or Storybook if used.
+- Links to Figma, Storybook, or internal design docs.
 
 ## Current truth
 
-- N/A for v0 harness
+**N/A** for v0 harness.

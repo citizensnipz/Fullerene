@@ -1,20 +1,20 @@
-# Authentication & authorization
+# Authentication and authorization
 
 ## v0 expectation
 
-- Product description emphasizes **local-first** CLI/runtime; **no web product auth** is implied for v0.
-- **Skills / Executor**: authorization is the real “auth” story — what tools may run, with which args (document in code + here when implemented).
+- **Local-first** CLI / runtime — no web product auth implied for v0.
+- **Skills / executor** — The important “auth” story is **what tools may run** with which arguments. Document in code and here when implemented.
 
 ## Document actual behavior
 
-| Surface | Auth model | Notes |
-|---------|------------|-------|
-| CLI | _TBD_ | e.g. OS user only |
-| SQLite | _TBD_ | file permissions |
-| Ollama | _TBD_ | local bind / optional API key |
+| Surface | Model | Notes |
+|---------|--------|-------|
+| CLI | **TBD** | e.g. OS user only |
+| SQLite file | **TBD** | Filesystem permissions |
+| Ollama | **TBD** | Local bind, optional API key |
 
-## When auth is added later
+## If auth is added later
 
-- Threat model (who can call what).
+- Threat model (who can invoke what).
 - Token storage and rotation.
-- How Fullerene’s **Policy** facet maps principals to allowed skills.
+- How policy maps principals to allowed skills.

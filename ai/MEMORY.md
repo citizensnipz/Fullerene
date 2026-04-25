@@ -1,87 +1,113 @@
 # AI memory index — Fullerene
 
+> **Harness vs repo:** Harness docs are project guidance, not unquestionable truth. If harness docs conflict with source code, tests, package files, or runtime behavior, treat the harness as stale, verify against the repo, and update the harness.
+
 Central map for Claude, Codex, Cursor, and other tools. **Read this file first**, then open only what the task needs.
 
-## Tool-native entrypoints (optional layers)
+See **`ai/README.md`** for why this folder exists and who should use it.
 
-These folders **mirror** the harness so each tool can load rules the way it expects. They should stay thin; `ai/` remains the shared brain.
+**Path convention:** File references below are from the **repository root** (for example `ai/project/overview.md`).
+
+---
+
+## Working agreements (all AI tools)
+
+- **Minimal context** — Open only files relevant to the current step; use search and targeted reads, not whole-repo dumps.
+- **No guessing** — If a fact is not in the repo or harness, say it is unknown and how to verify. Do not invent implementation details.
+- **Small, scoped changes** — Prefer the smallest diff that satisfies the request; avoid drive-by refactors.
+- **Verification before completion** — Follow `ai/operations/verification.md`; do not claim “done” without checks that match the task.
+- **Harness updates after meaningful work** — Update `ai/logs/CHANGELOG_AI.md`; add session notes to `ai/logs/SESSION_LOG.md` when handoff helps; use `ai/knowledge/decisions.md` for significant choices.
+- **No architecture rewrites without explicit instruction** — Do not reshape the system or harness-level product layout unless the user asked for that scope.
+
+---
+
+## Tool-native entrypoints (optional)
+
+These paths let each tool load rules its own way. Keep them **thin**; `ai/` stays the shared brain.
 
 | Location | Tool | Role |
 |----------|------|------|
-| `.cursor/rules/fullerene-harness.mdc` | Cursor | `alwaysApply` rule; delegates here |
-| `.claude/rules/fullerene-harness.md` | Claude Code | Extra rule file alongside root `CLAUDE.md` |
-| `.codex/AGENTS.md` | Codex CLI / IDE | Points at root `AGENTS.md` + this file |
+| `.cursor/rules/fullerene-harness.mdc` | Cursor | `alwaysApply`; delegates here |
+| `.claude/rules/fullerene-harness.md` | Claude Code | Extra rule next to root `CLAUDE.md` |
+| `.codex/AGENTS.md` | Codex | Points at root `AGENTS.md` and this file |
 
-Root `CLAUDE.md`, `AGENTS.md`, and `.cursorrules` are the **portable** adapters; add `.claude/settings.json` or `.codex/config.toml` only when the team needs tool-specific permissions or defaults.
+Portable adapters: root **`CLAUDE.md`**, **`AGENTS.md`**, **`.cursorrules`**. Add **`.claude/settings.json`** or **`.codex/config.toml`** only when the team wants shared tool permissions or defaults.
 
-## Workflow (every non-trivial task)
+---
 
-1. **Orient** — `project/overview.md`, `project/architecture.md` (skim)
-2. **Operate** — `operations/commands.md`, `operations/verification.md`
-3. **Change** — follow `prompts/implement.md` or `prompts/debug.md`
-4. **Close** — verify, then `logs/CHANGELOG_AI.md` (+ `logs/SESSION_LOG.md` if handoff matters)
-5. **Learn** — `knowledge/decisions.md`, `knowledge/known-issues.md` as needed
+## Workflow (non-trivial tasks)
 
-## Project
+1. **Orient** — `ai/project/overview.md`, `ai/project/architecture.md` (skim)
+2. **Operate** — `ai/operations/commands.md`, `ai/operations/verification.md`
+3. **Change** — `ai/prompts/implement.md` or `ai/prompts/debug.md`
+4. **Close** — Verify, then `ai/logs/CHANGELOG_AI.md` (and `ai/logs/SESSION_LOG.md` if useful)
+5. **Learn** — `ai/knowledge/decisions.md`, `ai/knowledge/known-issues.md` as needed
 
-| File | Purpose |
-|------|---------|
-| `project/overview.md` | What Fullerene is, v0 scope, non-goals |
-| `project/architecture.md` | Facets, conductor, data flow (high level) |
-| `project/conventions.md` | Code style, naming, where things live |
-| `project/ownership-map.md` | Who owns what when team grows (template) |
+---
 
-## Apps / surfaces
+## `ai/project/`
 
 | File | Purpose |
 |------|---------|
-| `apps/runtime-cli.md` | Python runtime, SQLite, CLI, Ollama boundary |
+| `ai/project/overview.md` | Vision, v0 scope, non-goals |
+| `ai/project/architecture.md` | Harness-level product vocabulary (facets, conductor); **TBD** paths until code exists |
+| `ai/project/conventions.md` | Engineering conventions; **TBD** where not yet chosen |
+| `ai/project/ownership-map.md` | Owner template for teams |
 
-Add more `apps/*.md` when new deployable surfaces exist.
+---
 
-## Operations
-
-| File | Purpose |
-|------|---------|
-| `operations/env-vars.md` | Local config and secrets handling |
-| `operations/deployment.md` | How/where it runs (v0: local) |
-| `operations/verification.md` | Definition of “done,” checks |
-| `operations/commands.md` | Install, run, test, lint |
-| `operations/database.md` | SQLite schema/migrations notes |
-| `operations/auth.md` | Auth model (v0: likely none — document truth) |
-| `operations/payments.md` | N/A unless product adds billing |
-
-## Knowledge
+## `ai/apps/`
 
 | File | Purpose |
 |------|---------|
-| `knowledge/tools-and-packages.md` | Python, Ollama, key libs |
-| `knowledge/design-system.md` | UI only — placeholder until UI exists |
-| `knowledge/known-issues.md` | Bugs, sharp edges, workarounds |
-| `knowledge/decisions.md` | ADR-style decision log |
-| `knowledge/glossary.md` | Terms: facet, conductor, affect, etc. |
+| `ai/apps/runtime-cli.md` | v0 Python runtime + CLI surface (**TBD** entrypoints until implemented) |
 
-## Logs & retros
+Add more `ai/apps/*.md` when new surfaces exist.
+
+---
+
+## `ai/operations/`
 
 | File | Purpose |
 |------|---------|
-| `logs/SESSION_LOG.md` | Short session trail for the next agent |
-| `logs/CHANGELOG_AI.md` | AI-facing change log (not user release notes) |
-| `retros/TEMPLATE.md` | Post-task or post-milestone retro |
+| `ai/operations/env-vars.md` | Env vars and local config (**TBD** until defined) |
+| `ai/operations/deployment.md` | Where and how it runs |
+| `ai/operations/verification.md` | Definition of “done” |
+| `ai/operations/commands.md` | Install, run, test, lint (**TBD** until toolchain exists) |
+| `ai/operations/database.md` | SQLite notes (**TBD** schema) |
+| `ai/operations/auth.md` | Auth story when known (**TBD**) |
+| `ai/operations/payments.md` | N/A for v0 unless product changes |
 
-## Prompts
+---
+
+## `ai/knowledge/`
+
+| File | Purpose |
+|------|---------|
+| `ai/knowledge/tools-and-packages.md` | Verified toolchain (**TBD** until pinned) |
+| `ai/knowledge/design-system.md` | UI placeholder until a UI exists |
+| `ai/knowledge/known-issues.md` | Operational issues and workarounds |
+| `ai/knowledge/decisions.md` | ADR-style log |
+| `ai/knowledge/glossary.md` | Shared terms (facet, conductor, …) |
+
+---
+
+## `ai/logs/` and `ai/retros/`
+
+| File | Purpose |
+|------|---------|
+| `ai/logs/SESSION_LOG.md` | Short handoff for the next session |
+| `ai/logs/CHANGELOG_AI.md` | AI-facing change log |
+| `ai/retros/TEMPLATE.md` | Retro template |
+
+---
+
+## `ai/prompts/`
 
 | File | Use when |
 |------|----------|
-| `prompts/explore.md` | Mapping codebase or behavior |
-| `prompts/debug.md` | Reproducing and fixing defects |
-| `prompts/implement.md` | Feature or refactor with harness discipline |
-| `prompts/review.md` | Reviewing a PR or diff |
-| `prompts/retro.md` | After milestone or messy task |
-
-## Global rules
-
-- **No guessing** — cite repo paths or harness docs; otherwise mark unknown.
-- **Minimal context** — open only files relevant to the current step.
-- **Verification-first** — see `operations/verification.md` before completion.
-- **Harness updates** — meaningful work → update changelog (and issues/decisions when appropriate).
+| `ai/prompts/explore.md` | Mapping codebase or behavior |
+| `ai/prompts/debug.md` | Defects and “why does it…?” |
+| `ai/prompts/implement.md` | Features or focused refactors |
+| `ai/prompts/review.md` | PR or diff review |
+| `ai/prompts/retro.md` | After a milestone or messy task |

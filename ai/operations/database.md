@@ -1,32 +1,34 @@
-# Database — SQLite (v0)
+# Database — SQLite (v0 intent)
 
 ## Role
 
-- Durable **state** for Memory, Goals, World Model, Policy artifacts, etc., as implemented.
-- Single-file or single-DB deployment for local-first v0 is typical; confirm actual design in code.
+- Durable **state** for memory, goals, world model, policy artifacts, etc., **as implemented**.
+- Local-first v0 often uses a single DB file; confirm in code when it exists.
 
 ## Schema documentation rule
 
-- When tables exist, list them here with **one-line purpose** each.
-- Link or embed migration tool (Alembic, ad-hoc SQL, etc.) once chosen.
+- When tables exist, list each with a **one-line** purpose.
+- Record the migration approach (tool and workflow) once chosen.
 
-## Template: tables
+## Tables (template)
 
-| Table | Owner facet / module | Purpose |
-|-------|----------------------|---------|
-| _TBD_ | | |
+| Table | Owner / module | Purpose |
+|-------|------------------|---------|
+| **TBD** | | |
 
 ## Migrations
 
-- Tool: _TBD_
-- How to create a migration: _TBD_
-- How to apply: _TBD_
+| Step | Status |
+|------|--------|
+| Tool | **TBD** |
+| Create migration | **TBD** |
+| Apply migration | **TBD** |
 
-## Integrity & backups
+## Integrity and backups
 
-- **WAL**: note if SQLite WAL mode is used.
-- **Backup**: copy file when Conductor stopped, or use documented hot backup approach.
+- **WAL** — Note here if SQLite WAL mode is used.
+- **Backup** — Document approach (e.g. copy when stopped, or hot backup tool).
 
 ## Do not
 
-- Commit production databases or PII dumps to the repo.
+- Commit production databases or PII dumps to the repository.

@@ -1,17 +1,19 @@
-# Fullerene — architecture (harness-level)
+# Fullerene — architecture (harness vocabulary)
 
-This document tracks **intent** from the product description. Update with **verified** paths and types once code exists.
+This file gives **shared names and intent** from the product description so the harness stays consistent. It is **not** a spec of implemented APIs or file layout. When code exists, add verified paths to the table at the end and keep narrative aligned with the repo.
 
 ## High-level shape
 
-- **State**: memory, goals, world model (structured, not raw chat logs).
-- **Control**: policy (skills/rules), confidence, verification.
-- **Signal**: affect (intensity, urgency, confidence-like signals from text; voice later).
-- **Execution**: planner → executor (skills sandboxed, permission-controlled).
+| Pillar | Meaning |
+|--------|---------|
+| State | Memory, goals, world model (structured, not raw chat logs) |
+| Control | Policy (skills/rules), confidence, verification |
+| Signal | Affect — intensity, urgency, confidence-like signals from text (voice later) |
+| Execution | Planner → executor (skills sandboxed, permission-controlled) |
 
-## Facets (12)
+## Facets (twelve)
 
-Core modules the runtime composes:
+Product vocabulary for modular components:
 
 1. Memory  
 2. Affect  
@@ -26,28 +28,26 @@ Core modules the runtime composes:
 11. Confidence  
 12. Learning  
 
-Treat each as an **interface + implementation** boundary; avoid cyclic imports; prefer explicit messages/events between facets where possible.
+**Harness note:** Treat each as an interface-friendly boundary in design discussions; actual packaging and imports are **TBD** in code.
 
-## Conductor loop
+## Conductor loop (conceptual)
 
-Responsibilities (conceptual):
+- Observe state and events.
+- Build context (e.g. memory, attention, context facet).
+- Decide next actions (policy, confidence).
+- Invoke models and tools only when needed (planner / executor).
+- Run verifier where required.
+- Persist updates (memory, learning, goals, world model as applicable).
 
-- Observe state/events.
-- Build context (pull from Memory, Attention, Context facet).
-- Decide next actions (Policy, Confidence).
-- Invoke models/tools only when needed (Planner/Executor).
-- Run Verifier where required.
-- Persist updates (Memory, Learning, Goals, World Model as applicable).
+## Data stores (v0 intent)
 
-## Data stores (v0)
+- **SQLite** — durable state; document real schema in `ai/operations/database.md` when it exists.
 
-- **SQLite**: durable state. Schema belongs in `operations/database.md` once defined.
+## Model integration (v0 intent)
 
-## Model integration (v0)
+- **Ollama** — local inference; treat as a replaceable backend (model-agnostic goal).
 
-- **Ollama**: local inference; treat as replaceable backend (model-agnostic goal).
-
-## Diagram (conceptual)
+## Conceptual diagram
 
 ```mermaid
 flowchart LR
@@ -71,10 +71,10 @@ flowchart LR
   V --> C
 ```
 
-## Fill-in table (after code exists)
+## Verified mapping (fill when code exists)
 
-| Component | Package/path | Notes |
-|-----------|----------------|-------|
-| Conductor | _TBD_ | main loop |
-| SQLite access | _TBD_ | migrations, WAL |
-| CLI | _TBD_ | user entry |
+| Component | Path / package | Notes |
+|-------------|------------------|-------|
+| Conductor | **TBD** | Main loop |
+| SQLite access | **TBD** | Migrations, WAL, etc. |
+| CLI | **TBD** | Operator entry |

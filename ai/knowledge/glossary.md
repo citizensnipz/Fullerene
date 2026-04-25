@@ -1,22 +1,22 @@
 # Glossary — Fullerene
 
-Terms used across harness and code. Definitions align with the **product description** unless code narrows them.
+Terms for harness and design discussions. Definitions follow the **product description** until code narrows them.
 
 | Term | Meaning |
 |------|---------|
-| **Facet** | One of twelve modular components (Memory, Affect, … Learning). |
-| **Conductor** | Central orchestration loop observing state/events and coordinating facets. |
-| **Memory** | Structured short/long-term store; selective persistence by importance, affect, repetition. |
-| **Affect** | Signal layer: intensity, urgency, confidence-like cues from text (voice later); not “mood” only. |
-| **Attention** | What the system foregrounds in context building. |
-| **Context** | Assembled view fed to reasoning/tool steps. |
-| **World Model** | Structured beliefs about environment/tasks (not raw logs). |
-| **Goals** | Persistent objectives driving planning. |
+| **Facet** | One of twelve modular components (Memory through Learning). |
+| **Conductor** | Central loop that observes state or events and coordinates facets. |
+| **Memory** | Structured store; selective persistence by importance, affect, repetition. |
+| **Affect** | Signal layer: intensity, urgency, confidence-like cues from text (voice later); not only “mood.” |
+| **Attention** | What the system foregrounds when building context. |
+| **Context** | Assembled view for reasoning or tool steps. |
+| **World Model** | Structured beliefs about the environment or tasks (not raw logs). |
+| **Goals** | Persistent objectives that drive planning. |
 | **Policy** | Skills, rules, permission boundaries. |
-| **Planner** | Produces plans / next steps; may invoke LLM. |
-| **Executor** | Runs actions/skills (sandboxed, permission-controlled). |
-| **Verifier** | Checks outputs/plans against constraints before commit. |
-| **Confidence** | Meta-level certainty / gating for actions or model use. |
-| **Learning** | Updates to policy/goals/world model from feedback—not neural training. |
-| **Skill** | Injectable capability (files, git, inbox, …) invoked by Executor under Policy. |
-| **Bob** | Example persistent agent instance (product vision); not a harness term. |
+| **Planner** | Produces plans or next steps; may invoke an LLM. |
+| **Executor** | Runs actions or skills under sandbox and permissions. |
+| **Verifier** | Checks plans or outputs against constraints before commit. |
+| **Confidence** | Meta-level certainty or gating for actions or model use. |
+| **Learning** | Structured updates to policy, goals, or world model from feedback — not neural training. |
+| **Skill** | Injectable capability (files, git, inbox, …) under policy control. |
+| **Bob** | Example agent name from product vision; not a harness term. |

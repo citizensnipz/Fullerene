@@ -1,19 +1,19 @@
-# Environment variables & local config
+# Environment variables and local config
 
-Document **only variables that exist or are planned**. Do not invent secret names.
+Document **only** variables that exist or are explicitly planned. Do not invent secret names.
 
 ## Principles
 
-- **Local-first**: defaults should work on a dev machine without cloud secrets.
-- **Never commit** real secrets; use `.env` (gitignored) or OS secret store; reference variable *names* here.
+- **Local-first** — Sensible defaults on a dev machine without cloud-only secrets.
+- **Secrets** — Never commit real values. Use `.env` (gitignored) or the OS secret store; list **names** here only.
 
-## Template table
+## Variable table (fill when defined)
 
 | Variable | Required | Used by | Description |
 |----------|----------|---------|-------------|
-| _TBD_ | | | e.g. SQLite path |
-| _TBD_ | | | e.g. Ollama base URL |
-| _TBD_ | | | e.g. default model name |
+| **TBD** | | | e.g. SQLite path |
+| **TBD** | | | e.g. Ollama base URL |
+| **TBD** | | | e.g. default model id |
 
 ## Files (when introduced)
 
@@ -24,5 +24,5 @@ Document **only variables that exist or are planned**. Do not invent secret name
 
 ## Notes
 
-- If the runtime uses **XDG** or app data dirs, document the resolution order here.
-- If no auth in v0, state “no auth env vars” explicitly once confirmed.
+- If the runtime uses **XDG** or app-data directories, document resolution order here.
+- When v0 auth is confirmed absent, state “no auth env vars” explicitly in this section.

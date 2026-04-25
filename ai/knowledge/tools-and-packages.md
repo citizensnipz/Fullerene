@@ -1,27 +1,27 @@
-# Tools & packages
+# Tools and packages
 
-Record **verified** toolchain choices. Remove or update rows when the repo changes.
+Record **verified** choices from the repo. Remove or update rows when reality changes.
 
-## Runtime
+## Runtime (v0 intent from product description)
 
 | Tool | Role | Notes |
 |------|------|-------|
-| Python | v0 language | version TBD |
-| SQLite | persistence | via stdlib or wrapper TBD |
-| Ollama | local LLM host | HTTP API; model names TBD |
+| Python | Language | Version **TBD** (pin in project when known) |
+| SQLite | Persistence | Access pattern **TBD** |
+| Ollama | Local LLM host | HTTP API; model ids **TBD** |
 
-## Development (placeholders)
+## Development
 
 | Tool | Role | Status |
 |------|------|--------|
-| pytest | tests | TBD |
-| Ruff / Black / mypy | quality | TBD |
+| Test runner | e.g. pytest | **TBD** |
+| Linter / formatter / types | e.g. Ruff, Black, mypy | **TBD** |
 
-## Fullerene-specific
+## Fullerene-specific (when code exists)
 
-- **Facets**: pure Python modules (planned); list actual import graph in `architecture.md` when stable.
-- **CLI**: document framework if any (Click, Typer, argparse).
+- Facet packaging and import graph — document in `ai/project/architecture.md` once stable.
+- CLI framework (if any) — **TBD** (e.g. Click, Typer, argparse).
 
 ## Version pinning
 
-- Where versions are pinned (`pyproject.toml`, `requirements*.txt`), mention the file here in one sentence.
+When versions live in `pyproject.toml`, `requirements*.txt`, or similar, name that file here in one sentence (**TBD** until files exist).

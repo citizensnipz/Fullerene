@@ -1,13 +1,10 @@
 ---
-description: Delegate to the Fullerene ai/ harness; verification and changelog discipline
+description: Fullerene harness — delegate to ai/MEMORY.md
 alwaysApply: true
 ---
 
-# Fullerene — Cursor project rules
+# Fullerene
 
-- **First read**: `ai/MEMORY.md`, then only paths it lists for the task.
-- **Root adapters**: `CLAUDE.md`, `AGENTS.md`, `.cursorrules` stay short; long-lived truth lives under `ai/`.
-- **Changes**: small, scoped diffs; no architecture rewrites unless the user explicitly asks.
-- **Done means verified**: follow `ai/operations/verification.md` (tests, CLI, or documented manual checks — no guessing).
-- **After meaningful work**: update `ai/logs/CHANGELOG_AI.md`; use `ai/logs/SESSION_LOG.md` when the next session needs handoff notes.
-- **Unknowns**: if a fact is not in the repo or harness, state that and how to verify; do not invent stack details.
+Read **`ai/MEMORY.md`** first. It holds the index, workflows, and working agreements (including when to treat the harness as stale).
+
+Keep this rule file short; do not duplicate long policy here.

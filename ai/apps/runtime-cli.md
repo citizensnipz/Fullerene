@@ -1,29 +1,34 @@
-# App — Python runtime & CLI (v0)
+# App — Python runtime and CLI (v0)
 
-Single primary surface for v0: **library + CLI** driving the Conductor locally.
+Single primary surface for v0: **library + CLI** driving the Conductor on one machine.
 
 ## Purpose
 
-- Run Fullerene continuously or stepwise on one machine.
-- Expose operator-facing commands (status, inspect state, trigger tasks — exact commands TBD).
+- Run Fullerene continuously or stepwise locally.
+- Expose operator commands (exact verbs and flags **TBD**).
 
 ## Responsibilities
 
-- Start/stop or tick the **Conductor loop**.
-- Load configuration (paths, model endpoints — see `operations/env-vars.md`).
-- Persist state via **SQLite** (`operations/database.md`).
-- Integrate **Ollama** (or stub) for LLM calls invoked by Planner/Policy paths.
+- Start, stop, or tick the **Conductor** loop.
+- Load configuration (see `ai/operations/env-vars.md` — **TBD**).
+- Persist state via **SQLite** (`ai/operations/database.md` — **TBD** schema).
+- Integrate **Ollama** (or a stub) for LLM calls on planner/policy paths (**TBD**).
 
 ## Boundaries
 
-- **In scope**: local process, structured logging to operator, facet orchestration.
-- **Out of scope (v0)**: remote multi-tenant serving, voice, camera, robotics, unattended risky tool use.
+| In scope (v0 intent) | Out of scope (v0) |
+|----------------------|-------------------|
+| Local process, operator logging, facet orchestration | Remote multi-tenant serving |
+| | Voice, camera, robotics |
+| | Unattended risky tool use |
 
-## Known patterns (to document when implemented)
+## When implemented, document here
 
-- Entrypoint: _TBD_ (e.g. `python -m fullerene` or `fullerene` console script).
-- Config resolution order: _TBD_.
-- Graceful shutdown: _TBD_ (flush SQLite, stop loop).
+| Topic | Status |
+|-------|--------|
+| Entrypoint (e.g. `python -m …`, console script) | **TBD** |
+| Config resolution order | **TBD** |
+| Graceful shutdown (flush DB, stop loop) | **TBD** |
 
 ## Related harness files
 

@@ -1,36 +1,40 @@
 # Engineering conventions — Fullerene
 
-Align with whatever the repo already uses once Python code exists. Until then, prefer these defaults.
+Match whatever the repo already uses once Python code exists. Until then, these are **defaults**, not requirements.
 
-## Language & runtime
+## Language and runtime
 
-- **Python** for v0 runtime (per product description).
-- Pin **minimum Python** in `pyproject.toml` or `README.md` when added; record here.
+- **Python** for the v0 runtime (per product description).
+- When `pyproject.toml` or `README.md` pins a version, record it here (**TBD** until then).
 
-## Project layout (suggested — change if repo chooses otherwise)
+## Suggested layout (adjust if the repo differs)
 
-- `src/fullerene/` or `fullerene/` — library/runtime
-- `tests/` — pytest (or chosen framework)
-- `ai/` — **this harness** (markdown only unless tooling added later)
+| Path | Role |
+|------|------|
+| `src/fullerene/` or `fullerene/` | Library / runtime — **TBD** |
+| `tests/` | Automated tests — **TBD** |
+| `ai/` | This harness (markdown; tooling **TBD**) |
 
-## Style
+## Style and quality
 
-- Formatter/linter: _TBD_ (e.g. Ruff, Black) — document actual choice.
-- Types: prefer type hints on public facet interfaces.
-- Naming: `snake_case` modules; facet names match glossary in `knowledge/glossary.md`.
+| Topic | Status |
+|-------|--------|
+| Formatter / linter | **TBD** (e.g. Ruff, Black) |
+| Type hints | Prefer on public facet-facing APIs when code exists |
+| Module naming | `snake_case`; facet names align with `ai/knowledge/glossary.md` |
 
-## Facets
+## Facets and side effects
 
-- Each facet: clear **inputs**, **outputs**, **persistence** (yes/no + which tables).
-- Side effects only through **Executor** (or explicitly documented exceptions).
+- Each facet should have clear **inputs**, **outputs**, and **persistence** (yes/no; which tables **TBD**).
+- Side effects only through **Executor** (or exceptions documented in code and harness).
 
 ## Git
 
-- Small commits; messages describe *why* when non-obvious.
-- No generated secrets or local DB files in VCS — see `operations/env-vars.md`.
+- Small commits; commit message explains **why** when non-obvious.
+- No secrets or local DB artifacts in VCS — see `ai/operations/env-vars.md`.
 
-## AI agents editing the repo
+## AI agents
 
 - Read `ai/MEMORY.md` before large edits.
 - After meaningful changes: `ai/logs/CHANGELOG_AI.md`.
-- Do not rewrite architecture in code without product direction; update *this* harness when architecture changes.
+- Do not reshape architecture in code or harness without explicit product direction.

@@ -1,16 +1,16 @@
 # Fullerene — Codex (project-scoped)
 
-Codex loads project instructions from the repo root **`AGENTS.md`** and may also load **`.codex/AGENTS.md`** when the project is **trusted**.
+Codex may load this file when the project is **trusted**, in addition to the repository root **`AGENTS.md`**.
 
-This file exists so Codex users who rely on `.codex/` still land on the same harness.
+## Read next
 
-## What to read
+| Order | Path |
+|-------|------|
+| 1 | `AGENTS.md` (repo root) |
+| 2 | `ai/MEMORY.md` |
 
-1. `../AGENTS.md` (root) — short bootstrap
-2. `../ai/MEMORY.md` — full index and workflow
+Keep those two in sync with long-lived guidance; avoid copying long policy into three places.
 
-Keep root `AGENTS.md` and `ai/` in sync; avoid duplicating long policies in three places.
+## Optional
 
-## Project config
-
-- Optional team overrides: `.codex/config.toml` (only if you want committed Codex defaults). Codex skips project `.codex/` layers on untrusted clones — mark the repo trusted when appropriate.
+Team defaults in **`.codex/config.toml`** — only if you intentionally commit Codex settings. Untrusted clones skip project `.codex/` layers.

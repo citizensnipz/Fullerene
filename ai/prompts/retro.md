@@ -4,22 +4,22 @@ Use after a milestone, incident, or long AI-led session.
 
 ## Preconditions
 
-- Copy `ai/retros/TEMPLATE.md` to a dated file if you want persistent retros (optional convention: `ai/retros/YYYY-MM-DD-topic.md`).
+- Optional: copy `ai/retros/TEMPLATE.md` to `ai/retros/YYYY-MM-DD-topic.md` for a saved retro.
 
-## Facilitate
+## Facilitation questions
 
-1. What was the objective?
-2. What shipped vs what did not?
-3. Where did harness (`ai/`) help or fail?
-4. What verification caught issues — or what slipped through?
-5. What three improvements are highest leverage?
+1. What was the objective?  
+2. What shipped versus what did not?  
+3. Where did `ai/` help or fail?  
+4. What did verification catch — or what slipped through?  
+5. What three improvements have the highest leverage?  
 
 ## Constraints
 
-- Blameless; focus on systems.
-- Actions must have owners and dates (or they will not happen).
+- Blameless; focus on systems.  
+- Actions need owners and dates or they tend not to happen.  
 
 ## Output
 
-- Filled retro sections from the template
-- Links/paths to follow-up issues or harness edits
+- Filled sections from the template  
+- Paths or links for follow-up issues or harness edits  

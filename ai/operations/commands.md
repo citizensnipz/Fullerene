@@ -1,26 +1,26 @@
 # Commands — install, run, test
 
-Replace `_TBD_` entries when the toolchain is added.
+Replace placeholders when the toolchain exists. Agents should run commands from here once filled in.
 
 ## Setup
 
 ```bash
-# TBD: e.g. uv sync / pip install -e ".[dev]"
+# TBD — e.g. uv sync, pip install -e ".[dev]"
 ```
 
 ## Run (development)
 
 ```bash
-# TBD: e.g. python -m fullerene --help
+# TBD — e.g. python -m fullerene --help
 ```
 
 ## Tests
 
 ```bash
-# TBD: e.g. pytest -q
+# TBD — e.g. pytest -q
 ```
 
-## Lint / format
+## Lint and format
 
 ```bash
 # TBD
@@ -29,9 +29,10 @@ Replace `_TBD_` entries when the toolchain is added.
 ## Ollama (local models)
 
 ```bash
-# TBD: document how to confirm Ollama is reachable and model is pulled
+# TBD — how to confirm Ollama is up and the model is pulled
 ```
 
-## Notes for AI agents
+## For AI agents
 
-- Prefer running commands from this file; if a command is missing, add it here in the same change that introduces the tooling.
+- Prefer commands documented in this file.
+- If tooling is added without updating this file, add the commands in the **same** change.

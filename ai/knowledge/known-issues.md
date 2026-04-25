@@ -1,15 +1,18 @@
 # Known issues
 
-Short-lived operational pain and long-standing caveats. **Verify** before copy-pasting workarounds.
+Operational pain and long-standing caveats. **Re-verify** workarounds before relying on them.
 
-## Format
+## Entry format
 
-```text
-### [TITLE] — severity: low|med|high
-- Symptom:
-- Affected versions / commits:
-- Workaround:
-- Tracking: (issue link or TODO path)
+Use this shape for new issues:
+
+```markdown
+### [TITLE] — severity: low | med | high
+
+- **Symptom:**
+- **Affected versions / commits:**
+- **Workaround:**
+- **Tracking:** (issue URL or path)
 ```
 
 ## Issues
@@ -18,4 +21,5 @@ _No entries yet — add as discovered._
 
 ## AI agents
 
-- If you hit a defect while working, add a minimal entry here and reference it in `logs/CHANGELOG_AI.md`.
+- When you find a reproducible defect, add a minimal entry here.
+- Reference it from `ai/logs/CHANGELOG_AI.md` when the finding matters for future sessions.

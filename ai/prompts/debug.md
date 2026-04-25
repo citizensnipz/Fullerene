@@ -6,29 +6,29 @@ Use for defects, flaky behavior, or “why does it do X?”
 
 - `ai/knowledge/known-issues.md`
 - `ai/operations/verification.md`
-- Relevant facet doc in `ai/project/architecture.md` or code path
+- `ai/project/architecture.md` (vocabulary) or the relevant code path
 
 ## Steps
 
-1. **Repro**: exact command or steps; minimal case.
-2. **Evidence**: logs, stack traces, failing test name — paste or path.
-3. **Isolate**: binary search (commits, components) when helpful.
-4. **Fix**: smallest change; avoid refactors mixed with bugfix.
-5. **Verify**: run checks from `ai/operations/commands.md` (update file if commands were wrong/missing).
+1. **Repro** — Exact commands or UI steps; smallest case.
+2. **Evidence** — Logs, stack traces, failing test name (path or excerpt).
+3. **Isolate** — Bisect commits or components when useful.
+4. **Fix** — Smallest change; avoid mixing refactors with the bugfix.
+5. **Verify** — Commands from `ai/operations/commands.md`; update that file if commands were wrong or missing.
 
 ## Constraints
 
-- Do not blame the model; trace deterministic code + config first.
-- If repro impossible, list what you need from the user **specifically**.
+- Trace deterministic code and config before blaming the model.
+- If repro is impossible, list **specific** inputs you need from the user.
 
 ## After
 
-- Update `ai/knowledge/known-issues.md` if new sharp edge remains.
+- Update `known-issues.md` if a sharp edge remains.
 - Update `ai/logs/CHANGELOG_AI.md` for meaningful fixes.
 
 ## Output shape
 
-- Repro
-- Root cause (with path:line if possible)
-- Fix summary
-- Verification performed
+- Repro  
+- Root cause (path:line if possible)  
+- Fix summary  
+- Verification performed  
