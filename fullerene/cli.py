@@ -38,6 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=".fullerene-state",
         help="Local directory for the runtime snapshot and append-only log.",
     )
+    parser.add_argument(
+        "--memory-db",
+        default="mem_storage/memory.sqlite3",
+        help="SQLite path used by --memory runs.",
+    )
     return parser
 
 
@@ -49,7 +54,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     store = FileStateStore(state_dir)
     facets = [EchoFacet()]
     if args.memory:
-        memory_store = SQLiteMemoryStore(state_dir / "memory.sqlite3")
+        memory_store = SQLiteMemoryStore(Path(args.memory_db))
         facets = [MemoryFacet(memory_store), *facets]
 
     runtime = NexusRuntime(facets=facets, store=store)

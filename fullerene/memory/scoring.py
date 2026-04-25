@@ -19,6 +19,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+from fullerene.memory.inference import infer_tags, merge_tags
 from fullerene.memory.models import MemoryRecord, normalize_tags
 from fullerene.nexus.models import Event
 
@@ -40,9 +41,10 @@ def tokenize(text: str) -> set[str]:
 
 def extract_event_tags(event: Event) -> set[str]:
     raw_tags = event.metadata.get("tags", [])
-    if not isinstance(raw_tags, Iterable) or isinstance(raw_tags, (str, bytes)):
-        return set()
-    return set(normalize_tags(raw_tags))
+    metadata_tags: list[str] = []
+    if isinstance(raw_tags, Iterable) and not isinstance(raw_tags, (str, bytes)):
+        metadata_tags = normalize_tags(raw_tags)
+    return set(merge_tags(metadata_tags, infer_tags(event.content)))
 
 
 def recency_score(created_at: datetime, now: datetime | None = None) -> float:

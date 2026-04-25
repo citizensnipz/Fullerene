@@ -119,23 +119,8 @@ class MemoryFacet:
         return False
 
     def _build_memory_record(self, event: Event) -> MemoryRecord:
-        metadata_tags = normalize_tags(event.metadata.get("tags", []))
-        inferred_tags = infer_tags(event.content)
-        # Explicit metadata tags lead so they retain priority in the merged
-        # output; inferred tags only fill gaps.
-        merged_tags = merge_tags(metadata_tags, inferred_tags)
-
-        is_user_message = event.event_type == EventType.USER_MESSAGE
-        salience = compute_salience(
-            content=event.content,
-            tags=merged_tags,
-            is_user_message=is_user_message,
-        )
-        salience_breakdown = explain_salience(
-            content=event.content,
-            tags=merged_tags,
-            is_user_message=is_user_message,
-        )
+        metadata_tags, inferred_tags, merged_tags = self._derive_tags(event)
+        salience, salience_breakdown = self._derive_salience(event, merged_tags)
 
         return MemoryRecord(
             memory_type=MemoryType.EPISODIC,
@@ -153,6 +138,33 @@ class MemoryFacet:
                 "salience_breakdown": salience_breakdown,
             },
         )
+
+    @staticmethod
+    def _derive_tags(event: Event) -> tuple[list[str], list[str], list[str]]:
+        metadata_tags = normalize_tags(event.metadata.get("tags", []))
+        inferred_tags = infer_tags(event.content)
+        # Explicit metadata tags lead so they retain priority in the merged
+        # output; inferred tags only fill gaps.
+        merged_tags = merge_tags(metadata_tags, inferred_tags)
+        return metadata_tags, inferred_tags, merged_tags
+
+    @staticmethod
+    def _derive_salience(
+        event: Event,
+        tags: list[str],
+    ) -> tuple[float, dict[str, float]]:
+        is_user_message = event.event_type == EventType.USER_MESSAGE
+        salience = compute_salience(
+            content=event.content,
+            tags=tags,
+            is_user_message=is_user_message,
+        )
+        salience_breakdown = explain_salience(
+            content=event.content,
+            tags=tags,
+            is_user_message=is_user_message,
+        )
+        return salience, salience_breakdown
 
     @staticmethod
     def _describe_memory(memory: MemoryRecord) -> dict[str, object]:

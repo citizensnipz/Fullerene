@@ -1,16 +1,14 @@
 """Public memory package exports."""
 
 from fullerene.memory.inference import (
+    AUTHORITY_BOOST,
     BASE_SALIENCE,
+    COMMUNICATION_BOOST,
     CORRECTION_BOOST,
-    CORRECTION_WORDS,
     HARD_RULE_BOOST,
-    INSTRUCTION_WORDS,
-    STRONG_LANGUAGE_BOOST,
-    STRONG_LANGUAGE_WORDS,
     TAG_RULES,
     URGENT_BOOST,
-    USER_INSTRUCTION_BOOST,
+    USER_MESSAGE_BOOST,
     compute_salience,
     explain_salience,
     infer_tags,
@@ -20,20 +18,18 @@ from fullerene.memory.models import MemoryRecord, MemoryType, normalize_tags
 from fullerene.memory.store import MemoryStore, SQLiteMemoryStore
 
 __all__ = [
+    "AUTHORITY_BOOST",
     "BASE_SALIENCE",
+    "COMMUNICATION_BOOST",
     "CORRECTION_BOOST",
-    "CORRECTION_WORDS",
     "HARD_RULE_BOOST",
-    "INSTRUCTION_WORDS",
     "MemoryRecord",
     "MemoryStore",
     "MemoryType",
-    "STRONG_LANGUAGE_BOOST",
-    "STRONG_LANGUAGE_WORDS",
     "SQLiteMemoryStore",
     "TAG_RULES",
     "URGENT_BOOST",
-    "USER_INSTRUCTION_BOOST",
+    "USER_MESSAGE_BOOST",
     "compute_salience",
     "explain_salience",
     "infer_tags",

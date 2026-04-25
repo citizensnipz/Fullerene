@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-25 - Memory v1 deterministic scoring completion
+
+- **Context:** Finish Memory v1 so tag extraction is content-driven and salience is derived from deterministic tag signals only, without embeddings, RAG, LLM calls, or prosody.
+- **Done:** Updated `fullerene/memory/inference.py` to add `correction` inference and the requested salience formula; updated retrieval-side event tag extraction in `fullerene/memory/scoring.py`; refactored `fullerene/facets/memory.py` to derive tags/salience explicitly before storing; refreshed `tests/test_memory.py`; updated `ai/project/architecture.md` and `ai/logs/CHANGELOG_AI.md`.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -v`; `python -m fullerene --content "don't ever skip my boss emails"`
+- **Next:** If the CLI should surface memory inference by default, decide whether `--memory` should remain opt-in or whether a dedicated explain/output flag should be added.
+- **Blockers:** None.
+
 ### 2026-04-25 - Memory v1 deterministic tags + salience
 
 - **Context:** Improve Memory v0 with deterministic tag extraction and salience scoring without adding embeddings, vector DBs, model calls, RAG, voice, or prosody.

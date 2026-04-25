@@ -54,11 +54,11 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 
 ## Memory v1 (current)
 
-- **Deterministic tag extraction** - `fullerene/memory/inference.py` declares a small lowercase rule table (communication, authority, urgent, hard-rule-candidate, bug, verification, memory, goals, policy). Matching is case-insensitive with token boundaries so "lead" does not fire on "leader".
-- **Deterministic salience scoring** - base 0.3 plus transparent boosts for direct user-instruction language, strong/emphasis words, `hard-rule-candidate` tags, `urgent` tags, and correction/negative-feedback terms. The total is clamped to `[0.0, 1.0]`. `explain_salience` returns the per-signal breakdown for inspection.
-- **MemoryFacet integration** - on store, the facet infers tags, merges them with any explicit metadata-supplied tags (explicit tags retain priority), computes salience, and persists `metadata_tags`, `inferred_tags`, and `salience_breakdown` alongside the record for inspection.
-- **Retrieval explanation** - `score_memory_record` is unchanged in formula (keyword 0.5, tag 0.2, salience 0.2, recency 0.1) but now backed by `explain_score`, which exposes the per-component breakdown. Retrieval is still bounded; Nexus context never loads all memory.
-- **Out of scope** - no embeddings, no vector DB, no model calls, no prosody. Future affect/prosody may influence salience, but is not implemented yet.
+- **Deterministic tag extraction** - `fullerene/memory/inference.py` declares a lowercase rule table for `communication`, `authority`, `urgent`, `hard-rule-candidate`, `bug`, `verification`, `memory`, `goals`, `policy`, and `correction`. Matching is case-insensitive with token boundaries, with smart-quote normalization so `don't` behaves the same whether the apostrophe is straight or curly.
+- **Deterministic salience scoring** - base `0.3`, plus `+0.2` for user messages, `+0.2` for `hard-rule-candidate`, `+0.1` for `urgent`, `+0.2` for `correction`, `+0.1` for `authority`, and `+0.05` for `communication`. The total is clamped to `[0.0, 1.0]`. `explain_salience` returns the per-signal breakdown for inspection.
+- **MemoryFacet integration** - on store, the facet infers tags from `event.content`, merges them with any explicit metadata-supplied tags (explicit tags retain priority), computes salience from the merged tag set, and persists `metadata_tags`, `inferred_tags`, and `salience_breakdown` alongside the canonical `MemoryRecord.tags` and `MemoryRecord.salience` fields.
+- **Retrieval explanation** - `score_memory_record` still uses keyword 0.5, tag 0.2, salience 0.2, and recency 0.1, and `explain_score` exposes the per-component breakdown. Query-side tag overlap also uses deterministic content-inferred tags, so retrieval can benefit from tag matches even when the caller did not pass explicit metadata tags.
+- **Out of scope** - no embeddings, no vector DB, no model calls, no RAG, no voice/prosody features.
 
 ## Memory roadmap
 

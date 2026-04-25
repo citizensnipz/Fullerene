@@ -26,7 +26,7 @@ from fullerene.state import FileStateStore
 
 
 def make_tempdir_path() -> Path:
-    return Path.cwd() / f".test-memory-{uuid4().hex}"
+    return Path.cwd() / "mem_storage" / f".test-memory-{uuid4().hex}"
 
 
 class TrackingMemoryStore:
@@ -252,7 +252,15 @@ class CLIMemoryIntegrationTests(unittest.TestCase):
 
         with redirect_stdout(stdout):
             exit_code = cli_main(
-                ["--memory", "--content", "hello memory", "--state-dir", str(root)]
+                [
+                    "--memory",
+                    "--content",
+                    "hello memory",
+                    "--state-dir",
+                    str(root),
+                    "--memory-db",
+                    str(root / "memory.sqlite3"),
+                ]
             )
 
         self.assertEqual(exit_code, 0)
@@ -275,22 +283,23 @@ class CLIMemoryIntegrationTests(unittest.TestCase):
 
 
 class TagInferenceTests(unittest.TestCase):
+    def test_dont_ever_skip_my_boss_emails_extracts_requested_tags(self) -> None:
+        # Smart-quote apostrophe should also work after normalization.
+        smart = infer_tags("don\u2019t ever skip my boss emails")
+        straight = infer_tags("don't ever skip my boss emails")
+
+        self.assertIn("communication", smart)
+        self.assertIn("authority", smart)
+        self.assertIn("hard-rule-candidate", smart)
+        self.assertIn("correction", smart)
+        self.assertEqual(smart, straight)
+
     def test_extracts_communication_authority_and_urgent_tags(self) -> None:
         tags = infer_tags("Send the email to the boss now")
 
         self.assertIn("communication", tags)
         self.assertIn("authority", tags)
         self.assertIn("urgent", tags)
-
-    def test_extracts_hard_rule_candidate_from_dont_ever(self) -> None:
-        # Smart-quote apostrophe should also work after normalization.
-        smart = infer_tags("don\u2019t ever skip my boss emails")
-        straight = infer_tags("don't ever skip my boss emails")
-
-        self.assertIn("hard-rule-candidate", smart)
-        self.assertIn("authority", smart)
-        self.assertIn("communication", smart)
-        self.assertEqual(smart, straight)
 
     def test_extracts_bug_and_verification_tags(self) -> None:
         tags = infer_tags("a failing test is broken; please verify")
@@ -327,27 +336,19 @@ class SalienceScoringTests(unittest.TestCase):
         )
         self.assertAlmostEqual(score, 0.3)
 
-    def test_user_instruction_increases_salience(self) -> None:
+    def test_user_message_increases_salience(self) -> None:
         baseline = compute_salience(
+            content="finish the task",
+            tags=[],
+            is_user_message=False,
+        )
+        user_message = compute_salience(
             content="finish the task",
             tags=[],
             is_user_message=True,
         )
-        instructed = compute_salience(
-            content="please remember to finish the task",
-            tags=[],
-            is_user_message=True,
-        )
-        self.assertGreater(instructed, baseline)
-        self.assertAlmostEqual(instructed - baseline, 0.2)
-
-    def test_user_instruction_only_counts_for_user_messages(self) -> None:
-        score = compute_salience(
-            content="please remember to finish the task",
-            tags=[],
-            is_user_message=False,
-        )
-        self.assertAlmostEqual(score, 0.3)
+        self.assertGreater(user_message, baseline)
+        self.assertAlmostEqual(user_message - baseline, 0.2)
 
     def test_correction_language_increases_salience(self) -> None:
         baseline = compute_salience(
@@ -361,8 +362,11 @@ class SalienceScoringTests(unittest.TestCase):
             is_user_message=True,
         )
         self.assertGreater(corrected, baseline)
+        self.assertAlmostEqual(corrected - baseline, 0.2)
 
-    def test_hard_rule_and_urgent_tags_increase_salience(self) -> None:
+    def test_hard_rule_urgent_authority_and_communication_tags_increase_salience(
+        self,
+    ) -> None:
         baseline = compute_salience(
             content="generic note",
             tags=[],
@@ -378,21 +382,29 @@ class SalienceScoringTests(unittest.TestCase):
             tags=["urgent"],
             is_user_message=False,
         )
+        authority = compute_salience(
+            content="generic note",
+            tags=["authority"],
+            is_user_message=False,
+        )
+        communication = compute_salience(
+            content="generic note",
+            tags=["communication"],
+            is_user_message=False,
+        )
         self.assertAlmostEqual(hard_rule - baseline, 0.2)
         self.assertAlmostEqual(urgent - baseline, 0.1)
+        self.assertAlmostEqual(authority - baseline, 0.1)
+        self.assertAlmostEqual(communication - baseline, 0.05)
 
     def test_salience_is_clamped_to_unit_interval(self) -> None:
         # Stack every signal so the raw total exceeds 1.0; clamp must hold.
         loud = compute_salience(
-            content=(
-                "please remember; this is absolutely wrong and you must "
-                "never ignore the urgent boss emails"
-            ),
-            tags=["hard-rule-candidate", "urgent"],
+            content="don't ever fail my boss email now",
+            tags=[],
             is_user_message=True,
         )
-        self.assertLessEqual(loud, 1.0)
-        self.assertGreaterEqual(loud, 0.0)
+        self.assertEqual(loud, 1.0)
 
         # Low base also clamps at 0.
         quiet = compute_salience(
@@ -405,14 +417,18 @@ class SalienceScoringTests(unittest.TestCase):
 
     def test_explain_salience_reports_components(self) -> None:
         breakdown = explain_salience(
-            content="please remember the urgent fix",
-            tags=["urgent"],
+            content="don't ever skip my boss emails now",
+            tags=[],
             is_user_message=True,
         )
         self.assertEqual(breakdown["base"], 0.3)
-        self.assertEqual(breakdown["user_instruction"], 0.2)
+        self.assertEqual(breakdown["user_message"], 0.2)
+        self.assertEqual(breakdown["hard_rule_candidate_tag"], 0.2)
         self.assertEqual(breakdown["urgent_tag"], 0.1)
-        self.assertAlmostEqual(breakdown["total"], 0.6)
+        self.assertEqual(breakdown["correction_tag"], 0.2)
+        self.assertEqual(breakdown["authority_tag"], 0.1)
+        self.assertEqual(breakdown["communication_tag"], 0.05)
+        self.assertEqual(breakdown["total"], 1.0)
 
 
 class MemoryFacetInferenceTests(unittest.TestCase):
@@ -438,6 +454,7 @@ class MemoryFacetInferenceTests(unittest.TestCase):
         self.assertIn("communication", stored.tags)
         self.assertIn("authority", stored.tags)
         self.assertIn("hard-rule-candidate", stored.tags)
+        self.assertIn("correction", stored.tags)
         # Explicit metadata tag retains priority (appears before inferred ones).
         self.assertEqual(stored.tags[0], "personal")
         self.assertEqual(stored.metadata["metadata_tags"], ["personal"])
@@ -454,10 +471,10 @@ class MemoryFacetInferenceTests(unittest.TestCase):
 
         self.assertEqual(len(memories), 1)
         stored = memories[0]
-        # Base 0.3 + user instruction (don't) + hard-rule-candidate tag = 0.7.
-        self.assertAlmostEqual(stored.salience, 0.7, places=6)
+        self.assertAlmostEqual(stored.salience, 1.0, places=6)
         self.assertIn("salience_breakdown", stored.metadata)
         self.assertEqual(stored.metadata["salience_breakdown"]["base"], 0.3)
+        self.assertEqual(stored.metadata["salience_breakdown"]["user_message"], 0.2)
 
 
 class MemoryRetrievalTagPreferenceTests(unittest.TestCase):
@@ -474,9 +491,18 @@ class MemoryRetrievalTagPreferenceTests(unittest.TestCase):
             content="don't ever skip my boss emails",
             salience=0.9,
             confidence=1.0,
-            tags=["communication", "authority", "hard-rule-candidate"],
+            tags=["communication", "authority", "hard-rule-candidate", "correction"],
         )
-        # Newer but irrelevant and low-salience record.
+        # Newer and partly matching, but materially less salient.
+        medium = MemoryRecord(
+            id="medium",
+            created_at=utcnow(),
+            memory_type=MemoryType.EPISODIC,
+            content="boss emails are archived for later review",
+            salience=0.2,
+            confidence=1.0,
+            tags=["communication", "authority"],
+        )
         low = MemoryRecord(
             id="low",
             created_at=utcnow(),
@@ -487,15 +513,15 @@ class MemoryRetrievalTagPreferenceTests(unittest.TestCase):
             tags=["food"],
         )
         store.add_memory(high)
+        store.add_memory(medium)
         store.add_memory(low)
 
         relevant = store.retrieve_relevant(
             Event(
                 event_type=EventType.USER_MESSAGE,
-                content="follow up on boss communication",
-                metadata={"tags": ["communication", "authority"]},
+                content="boss email follow up",
             ),
-            limit=2,
+            limit=3,
         )
 
         self.assertEqual([memory.id for memory in relevant][:1], ["high"])

@@ -1,11 +1,10 @@
 """Deterministic tag and salience inference for Fullerene Memory v1.
 
-These rules are intentionally simple, lowercase, and transparent:
+These rules stay intentionally small and inspectable:
 
 - No model calls, embeddings, vector indices, or external NLP libraries.
-- All matching is case-insensitive and respects token boundaries.
-- Tag rules and salience signals are declared as plain tuples so they can
-  be inspected, audited, or extended without any clever framework code.
+- Matching is lowercase, deterministic, and respects token boundaries.
+- Salience is derived from event kind plus the effective tag set only.
 
 Future affect / prosody work may influence salience, but is not implemented
 here. See ai/project/architecture.md for the Memory roadmap.
@@ -39,49 +38,23 @@ TAG_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         "policy",
         ("policy", "policies", "rule", "rules", "permission", "permissions"),
     ),
-)
-
-# Direct user instruction cues. Only contribute when the source event is a
-# user message (instructions from the user, not generic system notes).
-INSTRUCTION_WORDS: tuple[str, ...] = (
-    "please",
-    "make sure",
-    "remember",
-    "do not",
-    "don't",
-    "ensure",
-)
-
-# Generic emphasis / strong-language intensifiers.
-STRONG_LANGUAGE_WORDS: tuple[str, ...] = (
-    "very",
-    "really",
-    "extremely",
-    "critically",
-    "absolutely",
-    "definitely",
-)
-
-# Correction / negative-feedback cues.
-CORRECTION_WORDS: tuple[str, ...] = (
-    "wrong",
-    "incorrect",
-    "mistake",
-    "actually",
-    "instead",
-    "correction",
+    ("correction", ("don't", "wrong", "missed", "skipped", "failed")),
 )
 
 # Salience constants exposed so tests and docs can refer to them by name.
 BASE_SALIENCE: float = 0.3
-USER_INSTRUCTION_BOOST: float = 0.2
-STRONG_LANGUAGE_BOOST: float = 0.2
+USER_MESSAGE_BOOST: float = 0.2
 HARD_RULE_BOOST: float = 0.2
 URGENT_BOOST: float = 0.1
 CORRECTION_BOOST: float = 0.2
+AUTHORITY_BOOST: float = 0.1
+COMMUNICATION_BOOST: float = 0.05
 
 HARD_RULE_TAG = "hard-rule-candidate"
 URGENT_TAG = "urgent"
+CORRECTION_TAG = "correction"
+AUTHORITY_TAG = "authority"
+COMMUNICATION_TAG = "communication"
 
 
 def _normalize_text(text: str) -> str:
@@ -103,15 +76,6 @@ def _trigger_pattern(trigger: str) -> re.Pattern[str]:
 _TAG_PATTERNS: tuple[tuple[str, tuple[re.Pattern[str], ...]], ...] = tuple(
     (tag, tuple(_trigger_pattern(trigger) for trigger in triggers))
     for tag, triggers in TAG_RULES
-)
-_INSTRUCTION_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
-    _trigger_pattern(word) for word in INSTRUCTION_WORDS
-)
-_STRONG_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
-    _trigger_pattern(word) for word in STRONG_LANGUAGE_WORDS
-)
-_CORRECTION_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
-    _trigger_pattern(word) for word in CORRECTION_WORDS
 )
 
 
@@ -162,28 +126,30 @@ def compute_salience(
     Signals (each contributes independently, then the sum is clamped):
 
     - base salience (default 0.3)
-    - direct user instruction language (+0.2, only on user messages)
-    - strong / emphasis language (+0.2)
+    - user message (+0.2)
     - ``hard-rule-candidate`` tag (+0.2)
     - ``urgent`` tag (+0.1)
-    - correction / negative-feedback language (+0.2)
+    - ``correction`` tag (+0.2)
+    - ``authority`` tag (+0.1)
+    - ``communication`` tag (+0.05)
 
     The result is always clamped to the inclusive range ``[0.0, 1.0]``.
     """
-    text = _normalize_text(content)
-    tag_set = {tag for tag in tags}
+    tag_set = set(merge_tags(tags, infer_tags(content)))
 
     score = float(base)
-    if is_user_message and _matches_any(text, _INSTRUCTION_PATTERNS):
-        score += USER_INSTRUCTION_BOOST
-    if _matches_any(text, _STRONG_PATTERNS):
-        score += STRONG_LANGUAGE_BOOST
+    if is_user_message:
+        score += USER_MESSAGE_BOOST
     if HARD_RULE_TAG in tag_set:
         score += HARD_RULE_BOOST
     if URGENT_TAG in tag_set:
         score += URGENT_BOOST
-    if _matches_any(text, _CORRECTION_PATTERNS):
+    if CORRECTION_TAG in tag_set:
         score += CORRECTION_BOOST
+    if AUTHORITY_TAG in tag_set:
+        score += AUTHORITY_BOOST
+    if COMMUNICATION_TAG in tag_set:
+        score += COMMUNICATION_BOOST
 
     return _clamp_unit(score)
 
@@ -200,20 +166,21 @@ def explain_salience(
     Useful for debugging / inspection ("why is this memory salient?") without
     re-implementing the scoring logic in callers.
     """
-    text = _normalize_text(content)
-    tag_set = {tag for tag in tags}
+    tag_set = set(merge_tags(tags, infer_tags(content)))
 
     breakdown: dict[str, float] = {"base": float(base)}
-    if is_user_message and _matches_any(text, _INSTRUCTION_PATTERNS):
-        breakdown["user_instruction"] = USER_INSTRUCTION_BOOST
-    if _matches_any(text, _STRONG_PATTERNS):
-        breakdown["strong_language"] = STRONG_LANGUAGE_BOOST
+    if is_user_message:
+        breakdown["user_message"] = USER_MESSAGE_BOOST
     if HARD_RULE_TAG in tag_set:
-        breakdown["hard_rule_candidate"] = HARD_RULE_BOOST
+        breakdown["hard_rule_candidate_tag"] = HARD_RULE_BOOST
     if URGENT_TAG in tag_set:
         breakdown["urgent_tag"] = URGENT_BOOST
-    if _matches_any(text, _CORRECTION_PATTERNS):
-        breakdown["correction"] = CORRECTION_BOOST
+    if CORRECTION_TAG in tag_set:
+        breakdown["correction_tag"] = CORRECTION_BOOST
+    if AUTHORITY_TAG in tag_set:
+        breakdown["authority_tag"] = AUTHORITY_BOOST
+    if COMMUNICATION_TAG in tag_set:
+        breakdown["communication_tag"] = COMMUNICATION_BOOST
 
     raw_total = sum(breakdown.values())
     breakdown["total"] = _clamp_unit(raw_total)

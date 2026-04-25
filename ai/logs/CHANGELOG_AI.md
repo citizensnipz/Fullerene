@@ -9,6 +9,14 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-25 (i)
+
+- Tightened `fullerene/memory/inference.py` to infer the requested starter tags from lowercase content, including `correction`, and to score salience from user-message plus tag signals only.
+- Updated `fullerene/memory/scoring.py` so retrieval-side event tags merge explicit metadata tags with deterministic content-inferred tags.
+- Refactored `fullerene/facets/memory.py` to derive merged tags and salience explicitly before building each `MemoryRecord`.
+- Refreshed `tests/test_memory.py` to cover the requested boss-email tags, correction-driven salience, clamp behavior, content-inferred storage, and retrieval preference.
+- Updated `ai/project/architecture.md` and `ai/logs/SESSION_LOG.md` to reflect the current Memory v1 behavior and verification commands.
+
 ### 2026-04-25 (h)
 
 - Added `fullerene/memory/inference.py` with deterministic tag rules (`infer_tags`, `merge_tags`) and salience scoring (`compute_salience`, `explain_salience`) for Memory v1.
