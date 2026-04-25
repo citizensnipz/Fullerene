@@ -1,0 +1,8 @@
+# Fullerene — Cursor
+
+Delegate to the harness: read `ai/MEMORY.md` first, then task-specific paths it lists.
+
+- Small diffs; match existing style; no drive-by refactors.
+- Verify (tests, CLI, DB) per `ai/operations/verification.md` before “done.”
+- Update `ai/logs/CHANGELOG_AI.md` after meaningful work; log session notes in `ai/logs/SESSION_LOG.md` when useful.
+- Do not invent stack details; use repo + harness only. Unknown → say how to verify.
