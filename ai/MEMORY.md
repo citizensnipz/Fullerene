@@ -50,7 +50,7 @@ Portable adapters: root **`CLAUDE.md`**, **`AGENTS.md`**, **`.cursorrules`**. Ad
 | File | Purpose |
 |------|---------|
 | `ai/project/overview.md` | Vision, v0 scope, non-goals |
-| `ai/project/architecture.md` | Harness-level product vocabulary (facets, conductor); **TBD** paths until code exists |
+| `ai/project/architecture.md` | Harness-level product vocabulary (facets, Nexus) aligned to implemented runtime |
 | `ai/project/conventions.md` | Engineering conventions; **TBD** where not yet chosen |
 | `ai/project/ownership-map.md` | Owner template for teams |
 

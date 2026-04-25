@@ -45,8 +45,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--memory-db",
-        default="mem_storage/memory.sqlite3",
-        help="SQLite path used by --memory runs.",
+        default=None,
+        help=(
+            "SQLite path used by --memory runs. "
+            "Defaults to <state-dir>/memory.sqlite3 when omitted."
+        ),
     )
     return parser
 
@@ -61,7 +64,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.behavior:
         facets = [BehaviorFacet(), *facets]
     if args.memory:
-        memory_store = SQLiteMemoryStore(Path(args.memory_db))
+        memory_db_path = Path(args.memory_db) if args.memory_db else state_dir / "memory.sqlite3"
+        memory_store = SQLiteMemoryStore(memory_db_path)
         facets = [MemoryFacet(memory_store), *facets]
 
     runtime = NexusRuntime(facets=facets, store=store)

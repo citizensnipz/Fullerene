@@ -6,7 +6,7 @@ Terms for harness and design discussions. Definitions follow the current repo wh
 |------|---------|
 | **Facet** | One of twelve modular components (Memory through Learning); the current v0 terminology uses **Behavior** in place of the earlier confidence/decision placeholder. |
 | **Nexus** | Central interpreter/integrator loop that accepts events, asks facets for results, integrates a decision, and persists runtime state/logs. |
-| **Conductor** | Earlier harness placeholder for the central loop; superseded in code by **Nexus**. |
+| **Conductor** | Deprecated harness-era name for the runtime loop; use **Nexus** for implemented runtime behavior. |
 | **Event** | Typed runtime input such as a user message, system tick, or system note. |
 | **Behavior Facet** | Deterministic decision-policy layer that proposes whether Fullerene should `WAIT`, `RECORD`, `ASK`, or `ACT`, along with inspectable reasons, tags, salience, and confidence. `ACT` is still only a typed proposal in v0. |
 | **Memory** | Structured, selective persistence for what Fullerene remembers; in v0 the canonical store is SQLite rather than a monolithic prompt file. |
@@ -25,7 +25,7 @@ Terms for harness and design discussions. Definitions follow the current repo wh
 | **Planner** | Produces plans or next steps; may invoke an LLM later. |
 | **Executor** | Runs actions or skills under sandbox and permissions. Not implemented in v0 Nexus. |
 | **Verifier** | Checks plans or outputs against constraints before commit. |
-| **Confidence** | Historical harness term for decision certainty/gating; Behavior v0 now owns the concrete decision proposal, while confidence remains an inspectable score attached to that deterministic policy result. |
+| **Confidence** | In Behavior v0, confidence is a deterministic inspection score (`confidence` and `confidence_breakdown`) attached to policy output; it is not ML probability or model uncertainty. |
 | **Learning** | Structured updates to policy, goals, or world model from feedback - not neural training. |
 | **Skill** | Injectable capability (files, git, inbox, and so on) under policy control. |
 | **Bob** | Example agent name from product vision; not a harness term. |

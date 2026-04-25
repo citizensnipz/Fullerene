@@ -9,6 +9,13 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-26 (k)
+
+- Updated `fullerene/cli.py` so `--memory` defaults memory DB placement to `<state-dir>/memory.sqlite3` when `--memory-db` is omitted; explicit `--memory-db` override remains supported.
+- Added CLI coverage in `tests/test_memory.py` for state-dir default memory DB creation and explicit override path handling.
+- Added a behavior-only CLI assertion in `tests/test_behavior.py` that `--behavior` runs independently and does not create `memory.sqlite3` unless `--memory` is enabled.
+- Refreshed stale harness wording in `ai/project/architecture.md`, `ai/knowledge/glossary.md`, and `ai/MEMORY.md` to emphasize Nexus naming, Behavior Facet v0 scope, deterministic inspectable confidence metadata, and no model/provider/tool execution integration in v0.
+
 ### 2026-04-25 (j)
 
 - Added `fullerene/facets/behavior.py` with deterministic `BehaviorFacet` rules for `WAIT` / `RECORD` / `ASK` / `ACT`, including inspectable `selected_decision`, `confidence`, `salience`, `tags_considered`, and `reasons` metadata.

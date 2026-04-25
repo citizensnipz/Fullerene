@@ -186,6 +186,7 @@ class CLIBehaviorIntegrationTests(unittest.TestCase):
         self.assertEqual(payload["decision"]["action"], "ask")
         self.assertTrue((root / "state.json").exists())
         self.assertTrue((root / "runtime-log.jsonl").exists())
+        self.assertFalse((root / "memory.sqlite3").exists())
 
 
 if __name__ == "__main__":

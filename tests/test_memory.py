@@ -245,7 +245,7 @@ class MemoryRuntimeIntegrationTests(unittest.TestCase):
 
 
 class CLIMemoryIntegrationTests(unittest.TestCase):
-    def test_cli_with_memory_creates_memory_sqlite(self) -> None:
+    def test_cli_with_memory_creates_memory_sqlite_under_state_dir_by_default(self) -> None:
         root = make_tempdir_path()
         self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
         stdout = io.StringIO()
@@ -258,13 +258,36 @@ class CLIMemoryIntegrationTests(unittest.TestCase):
                     "hello memory",
                     "--state-dir",
                     str(root),
-                    "--memory-db",
-                    str(root / "memory.sqlite3"),
                 ]
             )
 
         self.assertEqual(exit_code, 0)
         self.assertTrue((root / "memory.sqlite3").exists())
+        self.assertTrue((root / "state.json").exists())
+        self.assertTrue((root / "runtime-log.jsonl").exists())
+
+    def test_cli_memory_db_flag_overrides_default_path(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        stdout = io.StringIO()
+        custom_db = root / "custom" / "memory.sqlite3"
+
+        with redirect_stdout(stdout):
+            exit_code = cli_main(
+                [
+                    "--memory",
+                    "--content",
+                    "hello memory",
+                    "--state-dir",
+                    str(root),
+                    "--memory-db",
+                    str(custom_db),
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(custom_db.exists())
+        self.assertFalse((root / "memory.sqlite3").exists())
         self.assertTrue((root / "state.json").exists())
         self.assertTrue((root / "runtime-log.jsonl").exists())
 

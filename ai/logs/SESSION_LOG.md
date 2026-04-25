@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-26 - Behavior v0 integration polish
+
+- **Context:** Polish Behavior v0 integration and stale harness language, and align CLI memory path behavior with state-dir defaults.
+- **Done:** Updated `fullerene/cli.py` so `--memory` defaults SQLite to `<state-dir>/memory.sqlite3` when `--memory-db` is omitted; kept explicit `--memory-db` override behavior. Added CLI coverage in `tests/test_memory.py` for state-dir default and override path, plus a behavior-only CLI assertion in `tests/test_behavior.py` that no memory DB is created. Refreshed `ai/project/architecture.md`, `ai/knowledge/glossary.md`, and `ai/MEMORY.md` to clarify Nexus naming, Behavior Facet v0 scope, deterministic decision policy semantics, inspectable confidence metadata, and no tool execution/model integration in v0.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -v`; `python -m fullerene --memory --behavior --content "don’t ever skip my boss emails"`; `python -m fullerene --behavior --content "what should I do next?"`
+- **Next:** Decide whether to keep historical "Conductor" references in docs once external docs are fully migrated to Nexus-only naming.
+- **Blockers:** None.
+
 ### 2026-04-25 - Behavior Facet v0
 
 - **Context:** Add the first deterministic behavior/decision policy layer after Nexus + Memory v1, without LLM planning, graph reasoning, tool execution, or autonomous side effects.

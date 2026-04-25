@@ -28,7 +28,7 @@ Product vocabulary for modular components:
 11. Behavior
 12. Learning
 
-Harness note: treat each as an interface-friendly boundary in design discussions. The first runtime slice only implements the facet contract plus a tiny example facet.
+Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `BehaviorFacet v0`, and `EchoFacet`; `BehaviorFacet v0` currently covers the first deterministic decision-policy role in the long-term twelve-facet model.
 
 ## Nexus loop (current v0)
 
@@ -69,8 +69,10 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 ## Behavior v0 (current)
 
 - **Deterministic and model-free** - `BehaviorFacet` does not call an LLM, planner, graph, executor, or external policy engine.
+- **Current role in the 12-facet vision** - this is the first implemented deterministic decision-policy layer; it is intentionally narrow and inspectable.
 - **Inputs** - event type/content, explicit event metadata, deterministic tag inference, deterministic salience, and any passed-through memory metadata when the caller provides it.
 - **Outputs** - a proposed `WAIT` / `RECORD` / `ASK` / `ACT` decision plus inspectable metadata (`selected_decision`, `confidence`, `salience`, `tags_considered`, and `reasons`).
+- **Inspectable confidence only** - `confidence` and `confidence_breakdown` are deterministic trace fields for inspection/debugging, not probabilistic ML confidence or model uncertainty.
 - **Conservative policy** - empty/no-signal events wait; normal user messages record; response/uncertainty signals ask; explicit low-risk actions can propose `ACT`.
 - **No execution** - `ACT` is only a typed proposal for a future executor; Nexus v0 still performs no autonomous tool execution or irreversible side effects.
 
