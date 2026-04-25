@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-25 - Nexus facet error isolation
+
+- **Context:** Harden Nexus v0 so one facet failure does not abort event processing, later facets still run, and persistence still occurs.
+- **Done:** Updated `fullerene/nexus/runtime.py` to isolate per-facet exceptions and convert them into sanitized `FacetResult` error records with `error_type` and `error_message` metadata. Extended `tests/test_nexus_runtime.py` to cover error isolation, continued execution, and persisted logging/state.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -v`; `python -m fullerene --content "hello nexus"`
+- **Next:** If richer failure handling is needed later, decide whether facet errors should also set structured severity or retry hints without widening v0 scope.
+- **Blockers:** None.
+
 ### 2026-04-25 - Nexus runtime v0
 
 - **Context:** First real runtime implementation for Fullerene; keep it local, model-agnostic, and testable.

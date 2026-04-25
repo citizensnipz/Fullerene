@@ -38,7 +38,7 @@ class Nexus:
         self._facets.append(facet)
 
     def process_event(self, event: Event) -> NexusRecord:
-        facet_results = [facet.process(event, self.state) for facet in self._facets]
+        facet_results = [self._run_facet(facet, event) for facet in self._facets]
         decision = self._integrate(event, facet_results)
         self.state.apply(event, facet_results, decision)
 
@@ -50,6 +50,29 @@ class Nexus:
         self._store.save_state(self.state)
         self._store.append_record(record)
         return record
+
+    def _run_facet(self, facet: Facet, event: Event) -> FacetResult:
+        try:
+            return facet.process(event, self.state)
+        except Exception as exc:
+            facet_name = self._facet_name(facet)
+            error_message = str(exc) or "Facet raised without an error message."
+            return FacetResult(
+                facet_name=facet_name,
+                summary=(
+                    f"Facet '{facet_name}' failed while processing the event: "
+                    f"{error_message}"
+                ),
+                proposed_decision=DecisionAction.RECORD,
+                metadata={
+                    "error_type": exc.__class__.__name__,
+                    "error_message": error_message,
+                },
+            )
+
+    def _facet_name(self, facet: Facet) -> str:
+        raw_name = getattr(facet, "name", "") or facet.__class__.__name__
+        return str(raw_name)
 
     def _integrate(
         self,
