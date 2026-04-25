@@ -11,7 +11,15 @@ from uuid import uuid4
 
 from fullerene.cli import main as cli_main
 from fullerene.facets import EchoFacet, MemoryFacet
-from fullerene.memory import MemoryRecord, MemoryType, SQLiteMemoryStore
+from fullerene.memory import (
+    MemoryRecord,
+    MemoryType,
+    SQLiteMemoryStore,
+    compute_salience,
+    explain_salience,
+    infer_tags,
+    merge_tags,
+)
 from fullerene.memory.models import utcnow
 from fullerene.nexus import Event, EventType, NexusRuntime, NexusState
 from fullerene.state import FileStateStore
@@ -264,6 +272,233 @@ class CLIMemoryIntegrationTests(unittest.TestCase):
         self.assertFalse((root / "memory.sqlite3").exists())
         self.assertTrue((root / "state.json").exists())
         self.assertTrue((root / "runtime-log.jsonl").exists())
+
+
+class TagInferenceTests(unittest.TestCase):
+    def test_extracts_communication_authority_and_urgent_tags(self) -> None:
+        tags = infer_tags("Send the email to the boss now")
+
+        self.assertIn("communication", tags)
+        self.assertIn("authority", tags)
+        self.assertIn("urgent", tags)
+
+    def test_extracts_hard_rule_candidate_from_dont_ever(self) -> None:
+        # Smart-quote apostrophe should also work after normalization.
+        smart = infer_tags("don\u2019t ever skip my boss emails")
+        straight = infer_tags("don't ever skip my boss emails")
+
+        self.assertIn("hard-rule-candidate", smart)
+        self.assertIn("authority", smart)
+        self.assertIn("communication", smart)
+        self.assertEqual(smart, straight)
+
+    def test_extracts_bug_and_verification_tags(self) -> None:
+        tags = infer_tags("a failing test is broken; please verify")
+
+        self.assertIn("bug", tags)
+        self.assertIn("verification", tags)
+
+    def test_extracts_memory_goals_and_policy_tags(self) -> None:
+        memory_tags = infer_tags("remember the goal and the policy")
+
+        self.assertIn("memory", memory_tags)
+        self.assertIn("goals", memory_tags)
+        self.assertIn("policy", memory_tags)
+
+    def test_token_boundaries_avoid_false_positives(self) -> None:
+        # "leader" must not trigger "lead"; "embossed" must not trigger "boss".
+        self.assertEqual(infer_tags("leader embossed nowadays"), [])
+
+    def test_ignores_empty_content(self) -> None:
+        self.assertEqual(infer_tags(""), [])
+
+    def test_merge_tags_normalizes_and_dedupes(self) -> None:
+        merged = merge_tags(["Memory", " greeting "], ["memory", "communication"])
+
+        self.assertEqual(merged, ["memory", "greeting", "communication"])
+
+
+class SalienceScoringTests(unittest.TestCase):
+    def test_base_salience_for_neutral_content(self) -> None:
+        score = compute_salience(
+            content="weather looks fine",
+            tags=[],
+            is_user_message=False,
+        )
+        self.assertAlmostEqual(score, 0.3)
+
+    def test_user_instruction_increases_salience(self) -> None:
+        baseline = compute_salience(
+            content="finish the task",
+            tags=[],
+            is_user_message=True,
+        )
+        instructed = compute_salience(
+            content="please remember to finish the task",
+            tags=[],
+            is_user_message=True,
+        )
+        self.assertGreater(instructed, baseline)
+        self.assertAlmostEqual(instructed - baseline, 0.2)
+
+    def test_user_instruction_only_counts_for_user_messages(self) -> None:
+        score = compute_salience(
+            content="please remember to finish the task",
+            tags=[],
+            is_user_message=False,
+        )
+        self.assertAlmostEqual(score, 0.3)
+
+    def test_correction_language_increases_salience(self) -> None:
+        baseline = compute_salience(
+            content="this output looks fine",
+            tags=[],
+            is_user_message=True,
+        )
+        corrected = compute_salience(
+            content="this output is wrong; do it the other way instead",
+            tags=[],
+            is_user_message=True,
+        )
+        self.assertGreater(corrected, baseline)
+
+    def test_hard_rule_and_urgent_tags_increase_salience(self) -> None:
+        baseline = compute_salience(
+            content="generic note",
+            tags=[],
+            is_user_message=False,
+        )
+        hard_rule = compute_salience(
+            content="generic note",
+            tags=["hard-rule-candidate"],
+            is_user_message=False,
+        )
+        urgent = compute_salience(
+            content="generic note",
+            tags=["urgent"],
+            is_user_message=False,
+        )
+        self.assertAlmostEqual(hard_rule - baseline, 0.2)
+        self.assertAlmostEqual(urgent - baseline, 0.1)
+
+    def test_salience_is_clamped_to_unit_interval(self) -> None:
+        # Stack every signal so the raw total exceeds 1.0; clamp must hold.
+        loud = compute_salience(
+            content=(
+                "please remember; this is absolutely wrong and you must "
+                "never ignore the urgent boss emails"
+            ),
+            tags=["hard-rule-candidate", "urgent"],
+            is_user_message=True,
+        )
+        self.assertLessEqual(loud, 1.0)
+        self.assertGreaterEqual(loud, 0.0)
+
+        # Low base also clamps at 0.
+        quiet = compute_salience(
+            content="",
+            tags=[],
+            is_user_message=False,
+            base=-1.0,
+        )
+        self.assertEqual(quiet, 0.0)
+
+    def test_explain_salience_reports_components(self) -> None:
+        breakdown = explain_salience(
+            content="please remember the urgent fix",
+            tags=["urgent"],
+            is_user_message=True,
+        )
+        self.assertEqual(breakdown["base"], 0.3)
+        self.assertEqual(breakdown["user_instruction"], 0.2)
+        self.assertEqual(breakdown["urgent_tag"], 0.1)
+        self.assertAlmostEqual(breakdown["total"], 0.6)
+
+
+class MemoryFacetInferenceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(self.root, ignore_errors=True))
+        self.store = SQLiteMemoryStore(self.root / "memory.sqlite3")
+        self.facet = MemoryFacet(self.store, retrieve_limit=2, working_limit=2)
+
+    def test_facet_stores_inferred_tags_alongside_metadata_tags(self) -> None:
+        event = Event(
+            event_type=EventType.USER_MESSAGE,
+            content="don't ever skip my boss emails",
+            metadata={"tags": ["personal"]},
+        )
+
+        self.facet.process(event, NexusState())
+        memories = self.store.list_recent(limit=1)
+
+        self.assertEqual(len(memories), 1)
+        stored = memories[0]
+        self.assertIn("personal", stored.tags)
+        self.assertIn("communication", stored.tags)
+        self.assertIn("authority", stored.tags)
+        self.assertIn("hard-rule-candidate", stored.tags)
+        # Explicit metadata tag retains priority (appears before inferred ones).
+        self.assertEqual(stored.tags[0], "personal")
+        self.assertEqual(stored.metadata["metadata_tags"], ["personal"])
+        self.assertIn("communication", stored.metadata["inferred_tags"])
+
+    def test_facet_stores_computed_salience(self) -> None:
+        event = Event(
+            event_type=EventType.USER_MESSAGE,
+            content="don't ever skip my boss emails",
+        )
+
+        self.facet.process(event, NexusState())
+        memories = self.store.list_recent(limit=1)
+
+        self.assertEqual(len(memories), 1)
+        stored = memories[0]
+        # Base 0.3 + user instruction (don't) + hard-rule-candidate tag = 0.7.
+        self.assertAlmostEqual(stored.salience, 0.7, places=6)
+        self.assertIn("salience_breakdown", stored.metadata)
+        self.assertEqual(stored.metadata["salience_breakdown"]["base"], 0.3)
+
+
+class MemoryRetrievalTagPreferenceTests(unittest.TestCase):
+    def test_retrieve_relevant_favors_matching_tags_and_salience(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        store = SQLiteMemoryStore(root / "memory.sqlite3")
+
+        # High-salience, tag-matching record but older.
+        high = MemoryRecord(
+            id="high",
+            created_at=utcnow() - timedelta(days=2),
+            memory_type=MemoryType.EPISODIC,
+            content="don't ever skip my boss emails",
+            salience=0.9,
+            confidence=1.0,
+            tags=["communication", "authority", "hard-rule-candidate"],
+        )
+        # Newer but irrelevant and low-salience record.
+        low = MemoryRecord(
+            id="low",
+            created_at=utcnow(),
+            memory_type=MemoryType.EPISODIC,
+            content="random unrelated note about lunch",
+            salience=0.1,
+            confidence=1.0,
+            tags=["food"],
+        )
+        store.add_memory(high)
+        store.add_memory(low)
+
+        relevant = store.retrieve_relevant(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="follow up on boss communication",
+                metadata={"tags": ["communication", "authority"]},
+            ),
+            limit=2,
+        )
+
+        self.assertEqual([memory.id for memory in relevant][:1], ["high"])
 
 
 if __name__ == "__main__":

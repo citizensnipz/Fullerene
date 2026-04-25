@@ -52,9 +52,17 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - **Retrieval** - deterministic only: keyword overlap, tag overlap, salience, and recency. No embeddings, vector DB, summarization, RAG, or model calls.
 - **Inspection** - memory remains readable through SQLite rows and bounded facet metadata instead of opaque compressed blobs.
 
+## Memory v1 (current)
+
+- **Deterministic tag extraction** - `fullerene/memory/inference.py` declares a small lowercase rule table (communication, authority, urgent, hard-rule-candidate, bug, verification, memory, goals, policy). Matching is case-insensitive with token boundaries so "lead" does not fire on "leader".
+- **Deterministic salience scoring** - base 0.3 plus transparent boosts for direct user-instruction language, strong/emphasis words, `hard-rule-candidate` tags, `urgent` tags, and correction/negative-feedback terms. The total is clamped to `[0.0, 1.0]`. `explain_salience` returns the per-signal breakdown for inspection.
+- **MemoryFacet integration** - on store, the facet infers tags, merges them with any explicit metadata-supplied tags (explicit tags retain priority), computes salience, and persists `metadata_tags`, `inferred_tags`, and `salience_breakdown` alongside the record for inspection.
+- **Retrieval explanation** - `score_memory_record` is unchanged in formula (keyword 0.5, tag 0.2, salience 0.2, recency 0.1) but now backed by `explain_score`, which exposes the per-component breakdown. Retrieval is still bounded; Nexus context never loads all memory.
+- **Out of scope** - no embeddings, no vector DB, no model calls, no prosody. Future affect/prosody may influence salience, but is not implemented yet.
+
 ## Memory roadmap
 
-- **v1** - better deterministic scoring, tagging rules, and salience heuristics.
+- **v1** - better deterministic scoring, tagging rules, and salience heuristics. **Current.**
 - **v2** - embeddings / vector retrieval as a non-canonical index layered on top of SQLite.
 - **v3** - memory links / graph structure, reflection or compression, and affect-weighted salience.
 
@@ -83,7 +91,7 @@ flowchart LR
 | Event and decision models | `fullerene/nexus/models.py` | Typed dataclasses for events, results, decisions, state, and records |
 | Facet interface | `fullerene/facets/base.py` | `Facet` protocol |
 | Example facet | `fullerene/facets/echo.py` | Small bundled facet for smoke/testing |
-| Memory facet | `fullerene/facets/memory.py` | Deterministic episodic storage plus bounded retrieval |
-| Memory models and store | `fullerene/memory/` | `MemoryRecord`, scoring helpers, and SQLite-backed canonical memory |
+| Memory facet | `fullerene/facets/memory.py` | Deterministic episodic storage with v1 tag/salience inference plus bounded retrieval |
+| Memory models and store | `fullerene/memory/` | `MemoryRecord`, scoring helpers, deterministic tag/salience inference (`inference.py`), and SQLite-backed canonical memory |
 | State store | `fullerene/state/store.py` | In-memory or file-backed JSON persistence |
 | CLI | `fullerene/cli.py`, `fullerene/__main__.py` | `python -m fullerene` |

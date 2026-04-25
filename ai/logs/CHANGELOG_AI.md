@@ -9,6 +9,14 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-25 (h)
+
+- Added `fullerene/memory/inference.py` with deterministic tag rules (`infer_tags`, `merge_tags`) and salience scoring (`compute_salience`, `explain_salience`) for Memory v1.
+- Wired `fullerene/facets/memory.py` to merge metadata-supplied tags with inferred tags (explicit tags retain priority), compute salience, and persist `metadata_tags` / `inferred_tags` / `salience_breakdown` for inspection.
+- Added `explain_score` in `fullerene/memory/scoring.py` so retrieval rankings can be explained by component (keyword/tag/salience/recency); retrieval weights and bounds unchanged.
+- Extended `tests/test_memory.py` with tag-inference, salience-scoring, MemoryFacet integration, and tag-favored retrieval tests.
+- Updated `ai/project/architecture.md` (Memory v1 section + verified mapping note) and `ai/knowledge/glossary.md` (tag inference, salience, hard-rule-candidate).
+
 ### 2026-04-25 (g)
 
 - Polished `fullerene/cli.py` so `MemoryFacet` is opt-in behind `--memory`; default CLI behavior remains `EchoFacet` only.

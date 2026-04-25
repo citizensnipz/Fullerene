@@ -1,10 +1,19 @@
-"""Deterministic memory facet for Fullerene v0."""
+"""Deterministic memory facet for Fullerene Memory v1."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from fullerene.memory import MemoryRecord, MemoryStore, MemoryType, SQLiteMemoryStore
+from fullerene.memory import (
+    MemoryRecord,
+    MemoryStore,
+    MemoryType,
+    SQLiteMemoryStore,
+    compute_salience,
+    explain_salience,
+    infer_tags,
+    merge_tags,
+)
 from fullerene.memory.models import normalize_tags
 from fullerene.nexus.models import (
     DecisionAction,
@@ -16,7 +25,13 @@ from fullerene.nexus.models import (
 
 
 class MemoryFacet:
-    """Persists episodic memory and retrieves a bounded memory view."""
+    """Persists episodic memory and retrieves a bounded memory view.
+
+    Memory v1: when storing an event, the facet infers deterministic tags from
+    the content, merges them with any explicit metadata-supplied tags, and
+    computes a transparent salience score from a small, inspectable rule set.
+    Explicit tags from event metadata are never overwritten - they are merged.
+    """
 
     name = "memory"
 
@@ -104,28 +119,40 @@ class MemoryFacet:
         return False
 
     def _build_memory_record(self, event: Event) -> MemoryRecord:
-        tags = normalize_tags(event.metadata.get("tags", []))
+        metadata_tags = normalize_tags(event.metadata.get("tags", []))
+        inferred_tags = infer_tags(event.content)
+        # Explicit metadata tags lead so they retain priority in the merged
+        # output; inferred tags only fill gaps.
+        merged_tags = merge_tags(metadata_tags, inferred_tags)
+
+        is_user_message = event.event_type == EventType.USER_MESSAGE
+        salience = compute_salience(
+            content=event.content,
+            tags=merged_tags,
+            is_user_message=is_user_message,
+        )
+        salience_breakdown = explain_salience(
+            content=event.content,
+            tags=merged_tags,
+            is_user_message=is_user_message,
+        )
+
         return MemoryRecord(
             memory_type=MemoryType.EPISODIC,
             content=event.content,
             source_event_id=event.event_id,
-            salience=self._derive_salience(event, tags),
+            salience=salience,
             confidence=1.0,
-            tags=tags,
+            tags=merged_tags,
             metadata={
                 "event_type": event.event_type.value,
                 "event_timestamp": event.timestamp.isoformat(),
                 "event_metadata": event.metadata,
+                "metadata_tags": metadata_tags,
+                "inferred_tags": inferred_tags,
+                "salience_breakdown": salience_breakdown,
             },
         )
-
-    def _derive_salience(self, event: Event, tags: list[str]) -> float:
-        base = 0.6 if event.event_type == EventType.USER_MESSAGE else 0.5
-        if tags:
-            base += 0.1
-        if len(event.content.split()) >= 12:
-            base += 0.1
-        return min(base, 1.0)
 
     @staticmethod
     def _describe_memory(memory: MemoryRecord) -> dict[str, object]:

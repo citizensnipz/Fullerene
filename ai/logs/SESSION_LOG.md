@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-25 - Memory v1 deterministic tags + salience
+
+- **Context:** Improve Memory v0 with deterministic tag extraction and salience scoring without adding embeddings, vector DBs, model calls, RAG, voice, or prosody.
+- **Done:** Added `fullerene/memory/inference.py` (tag rules + salience signals + explain helpers); wired `MemoryFacet` to merge metadata + inferred tags and compute salience with breakdown metadata; added `explain_score` to `fullerene/memory/scoring.py`; expanded `tests/test_memory.py`; updated `ai/project/architecture.md` (Memory v1 section), `ai/knowledge/glossary.md`, and `ai/logs/CHANGELOG_AI.md`.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -v` (30/30 passing); `python -m fullerene --memory --content "don't ever skip my boss emails" --state-dir .smoke-memory-v1` returned salience `0.7` with tags `["communication", "authority", "hard-rule-candidate"]`.
+- **Next:** Decide whether semantic memory creation should be triggered from `hard-rule-candidate` tags before any embedding/vector index work, and consider adding a `--explain` CLI flag that surfaces the salience and retrieval breakdowns.
+- **Blockers:** None.
+
 ### 2026-04-25 - Memory facet v0
 
 - **Context:** Implement the first real Memory facet without embeddings, RAG, summarization, or a giant prompt file.
