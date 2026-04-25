@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import io
 import sqlite3
 import shutil
 import unittest
+from contextlib import redirect_stdout
 from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
+from fullerene.cli import main as cli_main
 from fullerene.facets import EchoFacet, MemoryFacet
 from fullerene.memory import MemoryRecord, MemoryType, SQLiteMemoryStore
 from fullerene.memory.models import utcnow
@@ -231,6 +234,36 @@ class MemoryRuntimeIntegrationTests(unittest.TestCase):
         self.assertTrue((root / "state.json").exists())
         self.assertTrue((root / "runtime-log.jsonl").exists())
         self.assertTrue((root / "memory.sqlite3").exists())
+
+
+class CLIMemoryIntegrationTests(unittest.TestCase):
+    def test_cli_with_memory_creates_memory_sqlite(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            exit_code = cli_main(
+                ["--memory", "--content", "hello memory", "--state-dir", str(root)]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue((root / "memory.sqlite3").exists())
+        self.assertTrue((root / "state.json").exists())
+        self.assertTrue((root / "runtime-log.jsonl").exists())
+
+    def test_cli_without_memory_does_not_create_memory_sqlite(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            exit_code = cli_main(["--content", "hello echo", "--state-dir", str(root)])
+
+        self.assertEqual(exit_code, 0)
+        self.assertFalse((root / "memory.sqlite3").exists())
+        self.assertTrue((root / "state.json").exists())
+        self.assertTrue((root / "runtime-log.jsonl").exists())
 
 
 if __name__ == "__main__":

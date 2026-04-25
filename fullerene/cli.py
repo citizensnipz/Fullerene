@@ -18,6 +18,11 @@ def build_parser() -> argparse.ArgumentParser:
         description="Process a single event through the Fullerene Nexus runtime."
     )
     parser.add_argument(
+        "--memory",
+        action="store_true",
+        help="Enable the SQLite-backed MemoryFacet for this run.",
+    )
+    parser.add_argument(
         "--event-type",
         choices=[event_type.value for event_type in EventType],
         default=EventType.USER_MESSAGE.value,
@@ -42,11 +47,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     state_dir = Path(args.state_dir)
     store = FileStateStore(state_dir)
-    memory_store = SQLiteMemoryStore(state_dir / "memory.sqlite3")
-    runtime = NexusRuntime(
-        facets=[MemoryFacet(memory_store), EchoFacet()],
-        store=store,
-    )
+    facets = [EchoFacet()]
+    if args.memory:
+        memory_store = SQLiteMemoryStore(state_dir / "memory.sqlite3")
+        facets = [MemoryFacet(memory_store), *facets]
+
+    runtime = NexusRuntime(facets=facets, store=store)
     event = Event(event_type=EventType(args.event_type), content=args.content)
     record = runtime.process_event(event)
 

@@ -9,6 +9,12 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-25 (g)
+
+- Polished `fullerene/cli.py` so `MemoryFacet` is opt-in behind `--memory`; default CLI behavior remains `EchoFacet` only.
+- Extended `tests/test_memory.py` with CLI-path coverage for `--memory` creating `memory.sqlite3` and the default path not requiring or creating the SQLite memory DB.
+- Updated `ai/operations/commands.md` with the memory smoke command.
+
 ### 2026-04-25 (f)
 
 - Added `fullerene/memory/` with `MemoryRecord`, `MemoryType`, deterministic scoring helpers, and `SQLiteMemoryStore` as the canonical Memory v0 store.

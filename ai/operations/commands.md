@@ -13,6 +13,7 @@ Agents should prefer commands documented here.
 ```bash
 python -m fullerene --help
 python -m fullerene --event-type user_message --content "hello nexus" --state-dir .fullerene-state
+python -m fullerene --memory --content "hello memory"
 ```
 
 ## Tests
