@@ -31,8 +31,16 @@ __all__ = [
     "NexusRecord",
     "NexusRuntime",
     "NexusState",
+    "PolicyFacet",
+    "PolicyRule",
+    "PolicyRuleType",
+    "PolicySource",
+    "PolicyStatus",
+    "PolicyStore",
+    "PolicyTargetType",
     "SQLiteGoalStore",
     "SQLiteMemoryStore",
+    "SQLitePolicyStore",
     "SQLiteWorldModelStore",
     "StateStore",
     "WorldModelFacet",
@@ -48,6 +56,7 @@ def __getattr__(name: str):
         "EchoFacet",
         "GoalsFacet",
         "MemoryFacet",
+        "PolicyFacet",
         "WorldModelFacet",
     }:
         return getattr(import_module("fullerene.facets"), name)
@@ -55,6 +64,16 @@ def __getattr__(name: str):
         return getattr(import_module("fullerene.goals"), name)
     if name in {"MemoryRecord", "MemoryStore", "MemoryType", "SQLiteMemoryStore"}:
         return getattr(import_module("fullerene.memory"), name)
+    if name in {
+        "PolicyRule",
+        "PolicyRuleType",
+        "PolicySource",
+        "PolicyStatus",
+        "PolicyStore",
+        "PolicyTargetType",
+        "SQLitePolicyStore",
+    }:
+        return getattr(import_module("fullerene.policy"), name)
     if name in {
         "Belief",
         "BeliefSource",

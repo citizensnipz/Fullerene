@@ -9,6 +9,23 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-26 (scratch)
+
+- Introduced `fullerene/scratch.py` with `DEFAULT_STATE_DIR` (`scratch/.fullerene-state`) and `scratch_root()`; CLI `--state-dir` now defaults to that path so local runs stay under one gitignored tree.
+- Pointed all unit tests that used repo-root or system-temp paths at `scratch/` (`mem_storage/`, `goals_storage/`, `.test-*` prefixes) via `scratch_root()`.
+- Replaced the older `.gitignore` list of per-pattern runtime folders with a single `scratch/` entry; updated `ai/project/architecture.md`, `ai/project/conventions.md`, `ai/knowledge/glossary.md`, `ai/operations/commands.md`, `ai/operations/verification.md`, and `ai/apps/runtime-cli.md` accordingly.
+- **Agent note:** do not create new dot-directories or parallel storage folders at the project root; add ephemeral paths under `scratch/` and reuse `fullerene.scratch`.
+
+### 2026-04-26 (n)
+
+- Added `fullerene/policy/` with `PolicyRule`, policy enums, and `SQLitePolicyStore` as the canonical explicit Policy v0 store in `policy.sqlite3`.
+- Added `fullerene/facets/policy.py` and exported `PolicyFacet` so Nexus can evaluate explicit rules plus built-in sandbox defaults for internal state CRUD and external approval requirements.
+- Updated `fullerene/nexus/runtime.py` so policy `denied` results force `RECORD` and policy `approval_required` results force `ASK`, even when another facet proposed `ACT`.
+- Updated `fullerene/cli.py` with `--policy`, `--policy-db`, and explicit metadata-driven `create_policy` support; normal messages still do not infer policies automatically.
+- Added `tests/test_policy.py` covering policy model/store CRUD, facet evaluation precedence, behavior/runtime integration, CLI DB creation, and metadata-driven policy creation.
+- Updated `fullerene/policy/store.py` to use `PRAGMA locking_mode = EXCLUSIVE`, matching the existing workspace-safe SQLite pattern used by the other working stores on this filesystem.
+- Updated `ai/project/architecture.md`, `ai/knowledge/glossary.md`, `ai/knowledge/decisions.md`, and `ai/logs/SESSION_LOG.md` for Policy v0 and the internal-state sandbox decision.
+
 ### 2026-04-26 (m)
 
 - Added `fullerene/world_model/` with `Belief`, `BeliefStatus`, `BeliefSource`, and `SQLiteWorldModelStore` as the canonical World Model v0 store in `world.sqlite3`.

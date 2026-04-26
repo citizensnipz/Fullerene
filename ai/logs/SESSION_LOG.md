@@ -22,6 +22,22 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-26 - Centralize runtime and test output under scratch/
+
+- **Context:** Ad-hoc folders and dot-directories (`.test-behavior-*`, `mem_storage/`, `goals_storage/`, `.smoke-*`, system temp for policy/world tests) were polluting the repo root; needed one conventional location and updated generators/readers.
+- **Done:** Added `fullerene/scratch.py` (`DEFAULT_STATE_DIR`, `scratch_root()`); CLI default `--state-dir` is `scratch/.fullerene-state`; all tests and docs now target `scratch/`.`.gitignore` uses a single `scratch/` rule. Glossary, architecture, conventions, commands, verification, runtime-cli, and this changelog were updated. Older session log lines may still mention historical `.smoke-*` or `.fullerene-state` at repo root—new work should use `scratch/` only.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -v`
+- **Next:** N/A
+- **Blockers:** None
+
+### 2026-04-26 - Policy v0 deterministic permissions
+
+- **Context:** Add a persistent Policy layer so Fullerene can evaluate explicit permission rules and sandbox boundaries separately from memory, goals, world beliefs, and behavior.
+- **Done:** Added `fullerene/policy/` with `PolicyRule`, policy enums, and `SQLitePolicyStore`; added `fullerene/facets/policy.py`; wired `PolicyFacet` into `fullerene/cli.py` behind `--policy` with `--policy-db` override and explicit metadata-driven `create_policy`; updated `fullerene/nexus/runtime.py` so policy `denied` / `approval_required` results override an `ACT` proposal safely; added `tests/test_policy.py`; updated architecture, glossary, and decisions docs.
+- **Verified:** `python -m unittest tests.test_policy -v`; `python -m unittest discover -s tests -p "test_*.py" -v`; direct `python -m fullerene --policy ...` smoke runs verified through exact `python -m fullerene` argv lists executed via Python `subprocess` because PowerShell mangles inline JSON quoting for `--metadata`.
+- **Next:** Add CLI inspection/update flows for policy rows (`list`, `enable`, `disable`, `delete`, `reprioritize`) and decide whether world-model SQLite should also adopt the workspace-safe `PRAGMA locking_mode = EXCLUSIVE` path for consistency.
+- **Blockers:** PowerShell inline JSON quoting makes the literal `--metadata '{"..."}'` examples unreliable on this machine; the CLI logic itself is verified.
+
 ### 2026-04-26 - World Model v0 explicit beliefs
 
 - **Context:** Add persistent World Model v0 so Fullerene can store explicit beliefs about reality separately from episodic memory, without adding inference, reasoning, embeddings, or planning.

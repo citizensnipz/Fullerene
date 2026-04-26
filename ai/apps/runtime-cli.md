@@ -28,7 +28,7 @@ Single primary surface for v0: **library + CLI** driving the Nexus on one machin
 | Entrypoint | `python -m fullerene --event-type user_message --content "hello"` |
 | Config resolution order | CLI flags only (v0) |
 | Graceful shutdown | Single-event command; no long-running loop yet |
-| Local persistence path | `--state-dir` (defaults to `.fullerene-state`) |
+| Local persistence path | `--state-dir` (defaults to `scratch/.fullerene-state`) |
 
 ## Related harness files
 

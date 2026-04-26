@@ -1,0 +1,26 @@
+{
+  "created_at": "2026-04-25T00:42:30.445003+00:00",
+  "event_count": 1,
+  "facet_state": {
+    "echo": {
+      "last_user_message": "hello nexus",
+      "seen_messages": 1
+    }
+  },
+  "last_decision": {
+    "action": "record",
+    "reason": "Selected RECORD from facet proposals: echo.",
+    "source_facets": [
+      "echo"
+    ],
+    "timestamp": "2026-04-25T00:42:30.445030+00:00"
+  },
+  "last_event": {
+    "content": "hello nexus",
+    "event_id": "78d649e276d745a8b200b4e8ff90f225",
+    "event_type": "user_message",
+    "metadata": {},
+    "timestamp": "2026-04-25T00:42:30.445018+00:00"
+  },
+  "updated_at": "2026-04-25T00:42:30.445033+00:00"
+}

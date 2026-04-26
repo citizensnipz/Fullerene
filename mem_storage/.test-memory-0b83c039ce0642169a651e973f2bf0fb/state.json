@@ -1,0 +1,34 @@
+{
+  "created_at": "2026-04-26T09:03:16.765465+00:00",
+  "event_count": 1,
+  "facet_state": {
+    "echo": {
+      "last_user_message": "hello memory",
+      "seen_messages": 1
+    },
+    "memory": {
+      "last_relevant_memory_ids": [],
+      "last_stored_memory_id": "23f2c8c7f0cf4d63a8d5308f3514cc0b",
+      "last_working_memory_ids": [
+        "23f2c8c7f0cf4d63a8d5308f3514cc0b"
+      ]
+    }
+  },
+  "last_decision": {
+    "action": "record",
+    "reason": "Selected RECORD from facet proposals: memory, echo.",
+    "source_facets": [
+      "memory",
+      "echo"
+    ],
+    "timestamp": "2026-04-26T09:03:18.249735+00:00"
+  },
+  "last_event": {
+    "content": "hello memory",
+    "event_id": "8be0a45daacf4027942a2cbd1cfb0822",
+    "event_type": "user_message",
+    "metadata": {},
+    "timestamp": "2026-04-26T09:03:15.295966+00:00"
+  },
+  "updated_at": "2026-04-26T09:03:18.249737+00:00"
+}

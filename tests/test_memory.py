@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from fullerene.cli import main as cli_main
 from fullerene.facets import EchoFacet, MemoryFacet
+from fullerene.scratch import scratch_root
 from fullerene.memory import (
     MemoryRecord,
     MemoryType,
@@ -26,7 +27,7 @@ from fullerene.state import FileStateStore
 
 
 def make_tempdir_path() -> Path:
-    return Path.cwd() / "mem_storage" / f".test-memory-{uuid4().hex}"
+    return scratch_root() / "mem_storage" / f".test-memory-{uuid4().hex}"
 
 
 class TrackingMemoryStore:

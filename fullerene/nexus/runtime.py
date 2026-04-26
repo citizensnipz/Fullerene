@@ -14,6 +14,7 @@ from fullerene.nexus.models import (
     NexusRecord,
     NexusState,
 )
+from fullerene.policy.models import PolicyStatus
 from fullerene.state.store import InMemoryStateStore, StateStore
 
 # Higher score wins when multiple facets explicitly propose a decision.
@@ -105,6 +106,37 @@ class Nexus:
         event: Event,
         facet_results: list[FacetResult],
     ) -> NexusDecision:
+        denied_policy_results = self._policy_results(
+            facet_results,
+            status=PolicyStatus.DENIED,
+        )
+        if denied_policy_results:
+            return NexusDecision(
+                action=DecisionAction.RECORD,
+                reason=self._policy_reason(
+                    denied_policy_results,
+                    default="Selected RECORD because policy denied the modeled action.",
+                ),
+                source_facets=[result.facet_name for result in denied_policy_results],
+            )
+
+        approval_policy_results = self._policy_results(
+            facet_results,
+            status=PolicyStatus.APPROVAL_REQUIRED,
+        )
+        if approval_policy_results:
+            return NexusDecision(
+                action=DecisionAction.ASK,
+                reason=self._policy_reason(
+                    approval_policy_results,
+                    default=(
+                        "Selected ASK because policy requires approval before the "
+                        "modeled action."
+                    ),
+                ),
+                source_facets=[result.facet_name for result in approval_policy_results],
+            )
+
         explicit_results = [
             result for result in facet_results if result.proposed_decision is not None
         ]
@@ -144,6 +176,41 @@ class Nexus:
             action=DecisionAction.WAIT,
             reason="Defaulted to WAIT because no facet proposed or updated anything.",
         )
+
+    @staticmethod
+    def _policy_results(
+        facet_results: list[FacetResult],
+        *,
+        status: PolicyStatus,
+    ) -> list[FacetResult]:
+        matches: list[FacetResult] = []
+        for result in facet_results:
+            metadata = result.metadata if isinstance(result.metadata, dict) else {}
+            if metadata.get("policy_status") == status.value:
+                matches.append(result)
+        return matches
+
+    @staticmethod
+    def _policy_reason(
+        policy_results: list[FacetResult],
+        *,
+        default: str,
+    ) -> str:
+        policy_names: list[str] = []
+        for result in policy_results:
+            metadata = result.metadata if isinstance(result.metadata, dict) else {}
+            matched_policies = metadata.get("matched_policies")
+            if not isinstance(matched_policies, list):
+                continue
+            for policy in matched_policies:
+                if not isinstance(policy, dict):
+                    continue
+                name = policy.get("name")
+                if isinstance(name, str) and name not in policy_names:
+                    policy_names.append(name)
+        if not policy_names:
+            return default
+        return f"{default} Matched policies: {', '.join(policy_names)}."
 
 
 class NexusRuntime(Nexus):

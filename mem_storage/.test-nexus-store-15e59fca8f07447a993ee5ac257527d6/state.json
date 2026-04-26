@@ -1,0 +1,27 @@
+{
+  "created_at": "2026-04-25T14:23:06.996821+00:00",
+  "event_count": 1,
+  "facet_state": {
+    "echo": {
+      "last_user_message": "hello nexus",
+      "seen_messages": 1
+    }
+  },
+  "last_decision": {
+    "action": "record",
+    "reason": "Selected RECORD from facet proposals: exploder, echo.",
+    "source_facets": [
+      "exploder",
+      "echo"
+    ],
+    "timestamp": "2026-04-25T14:23:06.996857+00:00"
+  },
+  "last_event": {
+    "content": "hello nexus",
+    "event_id": "e7985c8b9c524da8a9037f2b7e4d043e",
+    "event_type": "user_message",
+    "metadata": {},
+    "timestamp": "2026-04-25T14:23:06.996837+00:00"
+  },
+  "updated_at": "2026-04-25T14:23:06.996859+00:00"
+}

@@ -13,8 +13,8 @@ A task is not complete until the checks below (plus any task-specific checks) pa
 - Run unit/integration tests - use the command in `ai/operations/commands.md`.
 - Run linter / typecheck if the repo configures them.
 - Manual smoke of the operator CLI path:
-  - `python -m fullerene --event-type user_message --content "hello nexus" --state-dir .fullerene-state`
-  - Confirm `.fullerene-state/state.json` and `.fullerene-state/runtime-log.jsonl` were written.
+  - `python -m fullerene --event-type user_message --content "hello nexus" --state-dir scratch/.fullerene-state` (or omit `--state-dir` to use the same default)
+  - Confirm `scratch/.fullerene-state/state.json` and `scratch/.fullerene-state/runtime-log.jsonl` were written.
 
 ## Facet and Nexus changes (when applicable)
 

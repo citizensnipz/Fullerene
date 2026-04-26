@@ -1,0 +1,31 @@
+{
+  "created_at": "2026-04-26T09:02:44.399693+00:00",
+  "event_count": 1,
+  "facet_state": {
+    "echo": {
+      "last_user_message": "track my tasks",
+      "seen_messages": 1
+    },
+    "goals": {
+      "last_active_goal_ids": [],
+      "last_relevance_score": 0.0,
+      "last_relevant_goals": []
+    }
+  },
+  "last_decision": {
+    "action": "record",
+    "reason": "Selected RECORD from facet proposals: echo.",
+    "source_facets": [
+      "echo"
+    ],
+    "timestamp": "2026-04-26T09:02:44.406347+00:00"
+  },
+  "last_event": {
+    "content": "track my tasks",
+    "event_id": "c87a3696351048b1a4e538d9f8b3adc9",
+    "event_type": "user_message",
+    "metadata": {},
+    "timestamp": "2026-04-26T09:02:42.935862+00:00"
+  },
+  "updated_at": "2026-04-26T09:02:44.406352+00:00"
+}

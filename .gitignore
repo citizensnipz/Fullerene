@@ -220,10 +220,5 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Fullerene runtime state
-.fullerene-state*/
-mem_storage/
-goals_storage/
-.test-nexus-store*/
-.test-behavior*/
-tmp*/
+# Fullerene: runtime state, tests, smoke, and other process-local ephemera (see fullerene.scratch)
+scratch/

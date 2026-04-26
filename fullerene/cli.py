@@ -12,11 +12,21 @@ from fullerene.facets import (
     EchoFacet,
     GoalsFacet,
     MemoryFacet,
+    PolicyFacet,
     WorldModelFacet,
 )
 from fullerene.goals import Goal, GoalSource, SQLiteGoalStore
 from fullerene.memory import SQLiteMemoryStore, infer_tags, merge_tags, normalize_tags
 from fullerene.nexus import Event, EventType, NexusRuntime
+from fullerene.policy import (
+    PolicyRule,
+    PolicySource,
+    SQLitePolicyStore,
+    coerce_policy_rule_type,
+    coerce_policy_source,
+    coerce_policy_target_type,
+)
+from fullerene.scratch import DEFAULT_STATE_DIR
 from fullerene.state import FileStateStore
 from fullerene.world_model import Belief, BeliefSource, SQLiteWorldModelStore
 
@@ -46,6 +56,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable the SQLite-backed WorldModelFacet for this run.",
     )
     parser.add_argument(
+        "--policy",
+        action="store_true",
+        help="Enable the SQLite-backed PolicyFacet for this run.",
+    )
+    parser.add_argument(
         "--event-type",
         choices=[event_type.value for event_type in EventType],
         default=EventType.USER_MESSAGE.value,
@@ -63,7 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--state-dir",
-        default=".fullerene-state",
+        default=DEFAULT_STATE_DIR,
         help="Local directory for the runtime snapshot and append-only log.",
     )
     parser.add_argument(
@@ -88,6 +103,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "SQLite path used by --world runs. "
             "Defaults to <state-dir>/world.sqlite3 when omitted."
+        ),
+    )
+    parser.add_argument(
+        "--policy-db",
+        default=None,
+        help=(
+            "SQLite path used by --policy runs. "
+            "Defaults to <state-dir>/policy.sqlite3 when omitted."
         ),
     )
     return parser
@@ -128,6 +151,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         facets.append(WorldModelFacet(world_store))
     if args.behavior:
         facets.append(BehaviorFacet())
+    if args.policy:
+        policy_db_path = (
+            Path(args.policy_db) if args.policy_db else state_dir / "policy.sqlite3"
+        )
+        policy_store = SQLitePolicyStore(policy_db_path)
+        try:
+            _create_policy_from_metadata(
+                policy_store,
+                content=args.content,
+                metadata=metadata,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        facets.append(PolicyFacet(policy_store, state_dir=state_dir))
     facets.append(EchoFacet())
 
     runtime = NexusRuntime(facets=facets, store=store)
@@ -231,3 +268,106 @@ def _belief_source_for_event(event_type: EventType) -> BeliefSource:
     if event_type == EventType.USER_MESSAGE:
         return BeliefSource.USER
     return BeliefSource.SYSTEM
+
+
+def _create_policy_from_metadata(
+    store: SQLitePolicyStore,
+    *,
+    content: str,
+    metadata: dict[str, Any],
+) -> PolicyRule | None:
+    if not _metadata_flag(metadata, "create_policy"):
+        return None
+
+    rule_type = coerce_policy_rule_type(metadata.get("rule_type"))
+    if rule_type is None:
+        raise ValueError(
+            "create_policy metadata requires a valid rule_type "
+            "(allow, deny, require_approval, prefer)."
+        )
+
+    target_type = coerce_policy_target_type(metadata.get("target_type"))
+    if target_type is None:
+        raise ValueError(
+            "create_policy metadata requires a valid target_type "
+            "(internal_state, file_write, file_delete, shell, network, "
+            "message, git, tool, decision, tag, general)."
+        )
+
+    conditions = metadata.get("conditions", {})
+    if not isinstance(conditions, dict):
+        raise ValueError("create_policy metadata field 'conditions' must be a JSON object.")
+
+    priority = metadata.get("priority", 0.0)
+    if not isinstance(priority, (int, float)):
+        raise ValueError("create_policy metadata field 'priority' must be numeric.")
+
+    rule = PolicyRule(
+        name=_policy_name_from_metadata(content=content, metadata=metadata),
+        description=_coerce_metadata_string(metadata, "description") or content.strip(),
+        rule_type=rule_type,
+        target_type=target_type,
+        target=_coerce_metadata_string(metadata, "target") or "*",
+        conditions=conditions,
+        priority=float(priority),
+        enabled=_metadata_enabled(metadata),
+        source=coerce_policy_source(metadata.get("source")) or PolicySource.USER,
+        metadata=_policy_metadata_payload(metadata),
+    )
+    store.add_policy(rule)
+    return rule
+
+
+def _policy_name_from_metadata(
+    *,
+    content: str,
+    metadata: dict[str, Any],
+) -> str:
+    for key in ("policy_name", "name"):
+        value = _coerce_metadata_string(metadata, key)
+        if value:
+            return value
+    if content.strip():
+        return content.strip()
+    return "policy-rule"
+
+
+def _coerce_metadata_string(metadata: dict[str, Any], key: str) -> str | None:
+    raw_value = metadata.get(key)
+    if not isinstance(raw_value, str):
+        return None
+    cleaned = raw_value.strip()
+    return cleaned or None
+
+
+def _metadata_enabled(metadata: dict[str, Any]) -> bool:
+    if "enabled" not in metadata:
+        return True
+    return _metadata_flag(metadata, "enabled")
+
+
+def _policy_metadata_payload(metadata: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    raw_policy_metadata = metadata.get("policy_metadata")
+    if isinstance(raw_policy_metadata, dict):
+        payload.update(raw_policy_metadata)
+
+    control_keys = {
+        "create_policy",
+        "rule_type",
+        "target_type",
+        "target",
+        "priority",
+        "enabled",
+        "source",
+        "conditions",
+        "policy_name",
+        "name",
+        "description",
+        "policy_metadata",
+    }
+    for key, value in metadata.items():
+        if key in control_keys:
+            continue
+        payload[key] = value
+    return payload

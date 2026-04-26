@@ -14,6 +14,7 @@ Match whatever the repo already uses once Python code exists. These defaults now
 | `fullerene/` | Library / runtime |
 | `tests/` | Automated tests |
 | `ai/` | Shared AI harness |
+| `scratch/` | Gitignored; default CLI state, tests, and smoke output (see `fullerene.scratch`) |
 
 ## Style and quality
 
@@ -31,7 +32,7 @@ Match whatever the repo already uses once Python code exists. These defaults now
 ## Git
 
 - Small commits; commit message explains **why** when non-obvious.
-- No secrets or local runtime artifacts in VCS - see `ai/operations/env-vars.md`.
+- No secrets or local runtime artifacts in VCS - see `ai/operations/env-vars.md`. Runtime and test output goes under `scratch/`, not ad-hoc folders or dot-directories at the repo root.
 
 ## AI agents
 

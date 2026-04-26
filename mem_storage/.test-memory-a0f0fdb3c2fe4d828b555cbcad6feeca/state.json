@@ -1,0 +1,26 @@
+{
+  "created_at": "2026-04-26T04:30:18.582574+00:00",
+  "event_count": 1,
+  "facet_state": {
+    "echo": {
+      "last_user_message": "hello echo",
+      "seen_messages": 1
+    }
+  },
+  "last_decision": {
+    "action": "record",
+    "reason": "Selected RECORD from facet proposals: echo.",
+    "source_facets": [
+      "echo"
+    ],
+    "timestamp": "2026-04-26T04:30:18.582592+00:00"
+  },
+  "last_event": {
+    "content": "hello echo",
+    "event_id": "7f0da3492bb744ca9b58c4a434da8f14",
+    "event_type": "user_message",
+    "metadata": {},
+    "timestamp": "2026-04-26T04:30:18.582546+00:00"
+  },
+  "updated_at": "2026-04-26T04:30:18.582593+00:00"
+}

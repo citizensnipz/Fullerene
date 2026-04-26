@@ -4,7 +4,6 @@ import io
 import json
 import shutil
 import sqlite3
-import tempfile
 import unittest
 from contextlib import redirect_stdout
 from datetime import timedelta
@@ -12,6 +11,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fullerene.cli import main as cli_main
+from fullerene.scratch import scratch_root
 from fullerene.facets import (
     BehaviorFacet,
     EchoFacet,
@@ -33,11 +33,7 @@ from fullerene.world_model.models import utcnow
 
 
 def make_tempdir_path() -> Path:
-    return (
-        Path(tempfile.gettempdir())
-        / "fullerene-world-model-tests"
-        / f".test-world-model-{uuid4().hex}"
-    )
+    return scratch_root() / f".test-world-model-{uuid4().hex}"
 
 
 class BeliefModelTests(unittest.TestCase):

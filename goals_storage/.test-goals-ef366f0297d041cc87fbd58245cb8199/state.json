@@ -1,0 +1,51 @@
+{
+  "created_at": "2026-04-26T09:02:47.350259+00:00",
+  "event_count": 1,
+  "facet_state": {
+    "echo": {
+      "last_user_message": "track my tasks",
+      "seen_messages": 1
+    },
+    "goals": {
+      "last_active_goal_ids": [
+        "a5a182c8da434719836a5384d50f8669"
+      ],
+      "last_relevance_score": 1.5,
+      "last_relevant_goals": [
+        {
+          "description": "track my tasks",
+          "id": "a5a182c8da434719836a5384d50f8669",
+          "keyword_overlap": 1.0,
+          "priority": 0.5,
+          "score": 1.5,
+          "shared_keywords": [
+            "my",
+            "tasks",
+            "track"
+          ],
+          "shared_tags": [],
+          "source": "user",
+          "tag_overlap": 0.0
+        }
+      ]
+    }
+  },
+  "last_decision": {
+    "action": "record",
+    "reason": "Selected RECORD from facet proposals: echo.",
+    "source_facets": [
+      "echo"
+    ],
+    "timestamp": "2026-04-26T09:02:47.356961+00:00"
+  },
+  "last_event": {
+    "content": "track my tasks",
+    "event_id": "94b16021ba794ac08bb5119c8548c5bd",
+    "event_type": "user_message",
+    "metadata": {
+      "create_goal": true
+    },
+    "timestamp": "2026-04-26T09:02:44.408693+00:00"
+  },
+  "updated_at": "2026-04-26T09:02:47.356965+00:00"
+}

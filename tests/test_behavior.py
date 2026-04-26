@@ -10,13 +10,14 @@ from uuid import uuid4
 
 from fullerene.cli import main as cli_main
 from fullerene.facets import BehaviorFacet, EchoFacet, MemoryFacet
+from fullerene.scratch import scratch_root
 from fullerene.memory import SQLiteMemoryStore
 from fullerene.nexus import DecisionAction, Event, EventType, NexusRuntime, NexusState
 from fullerene.state import FileStateStore, InMemoryStateStore
 
 
 def make_tempdir_path() -> Path:
-    return Path.cwd() / f".test-behavior-{uuid4().hex}"
+    return scratch_root() / f".test-behavior-{uuid4().hex}"
 
 
 class BehaviorFacetRuleTests(unittest.TestCase):

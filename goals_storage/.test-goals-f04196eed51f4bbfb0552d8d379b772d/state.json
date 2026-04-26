@@ -1,0 +1,81 @@
+{
+  "created_at": "2026-04-26T04:30:03.824299+00:00",
+  "event_count": 1,
+  "facet_state": {
+    "behavior": {
+      "last_aligned_belief_ids": [],
+      "last_aligned_goal_ids": [
+        "goal-1"
+      ],
+      "last_confidence": 0.82,
+      "last_goal_alignment_score": 2.567,
+      "last_priority_level": "normal",
+      "last_reasons": [
+        "user_message_default_record"
+      ],
+      "last_salience": 0.5,
+      "last_selected_decision": "record",
+      "last_tags_considered": [
+        "tasks"
+      ],
+      "last_world_alignment_score": 0.0
+    },
+    "echo": {
+      "last_user_message": "work on my tasks",
+      "seen_messages": 1
+    },
+    "goals": {
+      "last_active_goal_ids": [
+        "goal-1"
+      ],
+      "last_relevance_score": 2.567,
+      "last_relevant_goals": [
+        {
+          "description": "Track my tasks",
+          "id": "goal-1",
+          "keyword_overlap": 0.667,
+          "priority": 0.9,
+          "score": 2.567,
+          "shared_keywords": [
+            "my",
+            "tasks"
+          ],
+          "shared_tags": [
+            "tasks"
+          ],
+          "source": "user",
+          "tag_overlap": 1.0
+        }
+      ]
+    },
+    "memory": {
+      "last_relevant_memory_ids": [],
+      "last_stored_memory_id": "08fa352e5ed64453929da5f8462dc7c1",
+      "last_working_memory_ids": [
+        "08fa352e5ed64453929da5f8462dc7c1"
+      ]
+    }
+  },
+  "last_decision": {
+    "action": "record",
+    "reason": "Selected RECORD from facet proposals: memory, behavior, echo.",
+    "source_facets": [
+      "memory",
+      "behavior",
+      "echo"
+    ],
+    "timestamp": "2026-04-26T04:30:05.302852+00:00"
+  },
+  "last_event": {
+    "content": "work on my tasks",
+    "event_id": "300ad37aa5e6479ba49ead0960649753",
+    "event_type": "user_message",
+    "metadata": {
+      "tags": [
+        "tasks"
+      ]
+    },
+    "timestamp": "2026-04-26T04:30:03.824330+00:00"
+  },
+  "updated_at": "2026-04-26T04:30:05.302859+00:00"
+}

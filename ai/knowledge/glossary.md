@@ -23,7 +23,11 @@ Terms for harness and design discussions. Definitions follow the current repo wh
 | **World Model** | Structured belief store for what Fullerene believes about reality or tasks, separate from the event/memory log. World Model v0 is explicit and deterministic: SQLite-backed, inspectable, and does not implement automatic belief inference, graph reasoning, or Bayesian updates. |
 | **Goal** | Explicit persistent record stored in SQLite with description, priority, status, tags, timestamps, source, and metadata. |
 | **Goals** | Deterministic set of explicit goals that bias behavior and later planning. Goals v0 are inspectable and persistent; automatic goal inference is not implemented. |
-| **Policy** | Skills, rules, permission boundaries. |
+| **Policy** | Deterministic permission and approval layer that constrains what Fullerene is allowed to do, forbidden from doing, or required to ask approval for. In v0 it evaluates explicit rules plus built-in sandbox defaults; it does not plan, infer rules, or execute tools. |
+| **PolicyRule** | Explicit persistent policy row with `rule_type` (`allow`, `deny`, `require_approval`, `prefer`), `target_type`, `target`, `conditions`, priority, enabled/source flags, timestamps, and metadata. |
+| **Sandbox** | The boundary around what Fullerene may manage directly without approval. In v0 the configured **state-dir** is the safe internal sandbox for self-managed runtime state. |
+| **Scratch** | Gitignored `scratch/` at the repository root. Holds the default CLI state directory, unit-test and SQLite temp paths, and manual smoke state; see `fullerene.scratch`. Do not add new project-root dot-directories for runtime output. |
+| **State-dir** | Explicit local directory that holds `state.json`, `runtime-log.jsonl`, and SQLite stores such as `memory.sqlite3`, `goals.sqlite3`, `world.sqlite3`, and `policy.sqlite3`. Internal CRUD inside this directory is allowed by default in Policy v0. The CLI default is `scratch/.fullerene-state` when `--state-dir` is omitted. |
 | **Planner** | Produces plans or next steps; may invoke an LLM later. |
 | **Executor** | Runs actions or skills under sandbox and permissions. Not implemented in v0 Nexus. |
 | **Verifier** | Checks plans or outputs against constraints before commit. |

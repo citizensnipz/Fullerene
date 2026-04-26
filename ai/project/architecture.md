@@ -28,7 +28,7 @@ Product vocabulary for modular components:
 11. Behavior
 12. Learning
 
-Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, and `EchoFacet`; `BehaviorFacet v0` currently covers the first deterministic decision-policy role in the long-term twelve-facet model.
+Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, and `EchoFacet`; `BehaviorFacet v0` covers the first deterministic decision-selection role while `PolicyFacet v0` now enforces deterministic permission boundaries.
 
 ## Nexus loop (current v0)
 
@@ -36,15 +36,18 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - Pass the event and state through registered facets.
 - Collect structured `FacetResult` objects.
 - Integrate those results into a small `NexusDecision` (`WAIT`, `ASK`, `ACT`, `RECORD`), using explicit proposal priority `ACT > ASK > RECORD > WAIT` when multiple facets disagree.
+- Apply policy guardrails before finalizing the action: policy `DENIED` results force `RECORD`, and policy `APPROVAL_REQUIRED` results force `ASK`, even if another facet proposed `ACT`.
 - Persist the updated runtime snapshot plus an append-only event log.
 - Avoid autonomous tool execution; `ACT` is only a typed decision for now.
 
 ## Data stores (current v0)
 
+- **Repository scratch** - Process-local files (default CLI `--state-dir`, unit test DBs, manual smoke directories) live under gitignored `scratch/` at the repo root; use `fullerene.scratch` instead of creating new dot-directories beside the project.
 - **Local JSON files** - `state.json` snapshot plus `runtime-log.jsonl` under an explicit state directory.
 - **SQLite memory store** - `memory.sqlite3` under the same state directory is the canonical store for what the system remembers.
 - **SQLite goals store** - `goals.sqlite3` under the same state directory is the canonical store for explicit goals.
 - **SQLite world model store** - `world.sqlite3` under the same state directory is the canonical store for explicit beliefs about reality.
+- **SQLite policy store** - `policy.sqlite3` under the same state directory is the canonical store for explicit user/system policy rules.
 
 ## Memory v0
 
@@ -77,6 +80,14 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - **Inspectable confidence only** - `confidence` and `confidence_breakdown` are deterministic trace fields for inspection/debugging, not probabilistic ML confidence or model uncertainty.
 - **Conservative policy** - empty/no-signal events wait; normal user messages record; response/uncertainty signals ask; explicit low-risk actions can propose `ACT`.
 - **No execution** - `ACT` is only a typed proposal for a future executor; Nexus v0 still performs no autonomous tool execution or irreversible side effects.
+
+## Policy v0 (current)
+
+- **Deterministic constraint layer** - `PolicyFacet` does not plan, reason with an LLM, infer new rules, or execute tools. It only evaluates modeled actions against explicit rules plus built-in sandbox defaults.
+- **Explicit rule store** - user/system policy rules are stored as inspectable SQLite rows with `id`, `name`, `description`, `rule_type`, `target_type`, `target`, `conditions`, `priority`, `enabled`, `source`, timestamps, and metadata.
+- **Built-in sandbox defaults** - Fullerene may create, update, and delete its own internal state inside the configured state directory by default. External side effects such as shell, network, message, git, tool use, and external file writes/deletes require approval by default unless an explicit allow rule matches.
+- **Evaluation precedence** - explicit `deny` wins over everything; explicit `require_approval` wins over explicit `allow` and `prefer`; `prefer` only annotates metadata; fallback sandbox rules apply when no stronger explicit rule matched.
+- **Behavior integration only** - policy can downgrade or block a proposed `ACT` by forcing `ASK` or `RECORD`, but it does not itself execute anything.
 
 ## Goals v0 (current)
 
@@ -123,9 +134,11 @@ flowchart LR
 | Behavior facet | `fullerene/facets/behavior.py` | Deterministic, inspectable decision policy for `WAIT` / `RECORD` / `ASK` / `ACT` |
 | Goals facet | `fullerene/facets/goals.py` | Deterministic active-goal lookup and relevance scoring; no planning or execution |
 | World model facet | `fullerene/facets/world_model.py` | Deterministic active-belief lookup and relevance scoring; no inference or reasoning |
+| Policy facet | `fullerene/facets/policy.py` | Deterministic permission/approval evaluation plus built-in internal-sandbox allowance and external-approval fallback |
 | Memory facet | `fullerene/facets/memory.py` | Deterministic episodic storage with v1 tag/salience inference plus bounded retrieval |
 | Goals models and store | `fullerene/goals/` | `Goal`, `GoalStatus`, `GoalSource`, and SQLite-backed canonical goals store |
 | Memory models and store | `fullerene/memory/` | `MemoryRecord`, scoring helpers, deterministic tag/salience inference (`inference.py`), and SQLite-backed canonical memory |
+| Policy models and store | `fullerene/policy/` | `PolicyRule`, policy enums, and SQLite-backed canonical policy rule storage |
 | World model models and store | `fullerene/world_model/` | `Belief`, `BeliefStatus`, `BeliefSource`, and SQLite-backed canonical world model |
 | State store | `fullerene/state/store.py` | In-memory or file-backed JSON persistence |
 | CLI | `fullerene/cli.py`, `fullerene/__main__.py` | `python -m fullerene` |
