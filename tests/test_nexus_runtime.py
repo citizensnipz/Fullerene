@@ -15,7 +15,7 @@ from fullerene.nexus import (
     NexusRuntime,
     NexusState,
 )
-from fullerene.scratch import scratch_root
+from fullerene.workspace_state import workspace_state_root
 from fullerene.state import FileStateStore, InMemoryStateStore
 
 
@@ -60,7 +60,7 @@ class ActFacet:
 
 class NexusRuntimeTests(unittest.TestCase):
     def make_file_store(self) -> FileStateStore:
-        store_root = scratch_root() / f".test-nexus-store-{uuid4().hex}"
+        store_root = workspace_state_root() / f".test-nexus-store-{uuid4().hex}"
         self.addCleanup(lambda: shutil.rmtree(store_root, ignore_errors=True))
         return FileStateStore(store_root)
 

@@ -220,5 +220,5 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Fullerene: runtime state, tests, smoke, and other process-local ephemera (see fullerene.scratch)
-scratch/
+# Fullerene: runtime, tests, smoke, and other process-local ephemera (see fullerene.workspace_state)
+state/

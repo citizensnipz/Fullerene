@@ -26,7 +26,7 @@ from fullerene.policy import (
     coerce_policy_source,
     coerce_policy_target_type,
 )
-from fullerene.scratch import DEFAULT_STATE_DIR
+from fullerene.workspace_state import DEFAULT_STATE_DIR
 from fullerene.state import FileStateStore
 from fullerene.world_model import Belief, BeliefSource, SQLiteWorldModelStore
 

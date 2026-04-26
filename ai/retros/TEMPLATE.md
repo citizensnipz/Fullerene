@@ -40,5 +40,5 @@ Use after large features, incidents, or messy multi-step AI sessions.
 
 ## Notes for next agent
 
-- **Scratch:** Local runtime output, unit-test SQLite, and manual smoke state belong under gitignored `scratch/` (see `fullerene.scratch` and `ai/logs/CHANGELOG_AI.md` dated 2026-04-26 (scratch)). Avoid new dot-directories or one-off storage folders at the repository root.
+- **Repository state:** Local runtime output, unit-test SQLite, and manual smoke state belong under gitignored `state/` (see `fullerene.workspace_state` and `ai/logs/CHANGELOG_AI.md`). Avoid new dot-directories or one-off storage folders at the repository root.
 - 

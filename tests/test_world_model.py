@@ -11,7 +11,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fullerene.cli import main as cli_main
-from fullerene.scratch import scratch_root
+from fullerene.workspace_state import workspace_state_root
 from fullerene.facets import (
     BehaviorFacet,
     EchoFacet,
@@ -33,7 +33,9 @@ from fullerene.world_model.models import utcnow
 
 
 def make_tempdir_path() -> Path:
-    return scratch_root() / f".test-world-model-{uuid4().hex}"
+    return (
+        workspace_state_root() / "world_model_storage" / f".test-world-model-{uuid4().hex}"
+    )
 
 
 class BeliefModelTests(unittest.TestCase):

@@ -22,10 +22,18 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-26 - Rename `scratch/` → `state/`, world model under `state/world_model_storage/`
+
+- **Context:** Align the gitignored tree with the "state" name; keep world model tests from writing at repo root; mirror `mem_storage` / `goals_storage` with `world_model_storage` so it can be deleted wholesale.
+- **Done:** `fullerene/workspace_state.py` replaces `fullerene/scratch.py` (`state/`, `DEFAULT_STATE_DIR` = `state/.fullerene-state`, `workspace_state_root()`). `.gitignore` and harness docs use `state/`. Glossary "Scratch" → "Repository state". `test_world_model` temp dirs: `state/world_model_storage/.test-world-model-*`.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -v`
+- **Next:** N/A
+- **Blockers:** None
+
 ### 2026-04-26 - Centralize runtime and test output under scratch/
 
 - **Context:** Ad-hoc folders and dot-directories (`.test-behavior-*`, `mem_storage/`, `goals_storage/`, `.smoke-*`, system temp for policy/world tests) were polluting the repo root; needed one conventional location and updated generators/readers.
-- **Done:** Added `fullerene/scratch.py` (`DEFAULT_STATE_DIR`, `scratch_root()`); CLI default `--state-dir` is `scratch/.fullerene-state`; all tests and docs now target `scratch/`.`.gitignore` uses a single `scratch/` rule. Glossary, architecture, conventions, commands, verification, runtime-cli, and this changelog were updated. Older session log lines may still mention historical `.smoke-*` or `.fullerene-state` at repo root—new work should use `scratch/` only.
+- **Done:** Added `fullerene/scratch.py` (`DEFAULT_STATE_DIR`, `scratch_root()`); CLI default `--state-dir` is `scratch/.fullerene-state`; all tests and docs now target `scratch/`.`.gitignore` uses a single `scratch/` rule. Glossary, architecture, conventions, commands, verification, runtime-cli, and this changelog were updated. Older session log lines may still mention historical `.smoke-*` or `.fullerene-state` at repo root—new work should use the gitignored `state/` tree and `fullerene.workspace_state` (see log entry *Rename `scratch/` → `state/`*).
 - **Verified:** `python -m unittest discover -s tests -p "test_*.py" -v`
 - **Next:** N/A
 - **Blockers:** None

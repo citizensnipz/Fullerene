@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fullerene.cli import main as cli_main
-from fullerene.scratch import scratch_root
+from fullerene.workspace_state import workspace_state_root
 from fullerene.facets import (
     BehaviorFacet,
     EchoFacet,
@@ -35,7 +35,7 @@ from fullerene.world_model import Belief, SQLiteWorldModelStore
 
 
 def make_tempdir_path() -> Path:
-    return scratch_root() / f".test-policy-{uuid4().hex}"
+    return workspace_state_root() / f".test-policy-{uuid4().hex}"
 
 
 class PolicyRuleModelTests(unittest.TestCase):

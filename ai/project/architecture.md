@@ -42,7 +42,7 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 
 ## Data stores (current v0)
 
-- **Repository scratch** - Process-local files (default CLI `--state-dir`, unit test DBs, manual smoke directories) live under gitignored `scratch/` at the repo root; use `fullerene.scratch` instead of creating new dot-directories beside the project.
+- **Repository state** - Process-local files (default CLI `--state-dir`, unit test DBs, manual smoke directories) live under gitignored `state/` at the repo root; use `fullerene.workspace_state` instead of creating new dot-directories beside the project. World model test DBs go under `state/world_model_storage/`, parallel to `mem_storage/` and `goals_storage/`.
 - **Local JSON files** - `state.json` snapshot plus `runtime-log.jsonl` under an explicit state directory.
 - **SQLite memory store** - `memory.sqlite3` under the same state directory is the canonical store for what the system remembers.
 - **SQLite goals store** - `goals.sqlite3` under the same state directory is the canonical store for explicit goals.

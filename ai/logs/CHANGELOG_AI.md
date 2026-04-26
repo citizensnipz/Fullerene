@@ -9,6 +9,12 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-26 (repository state / world model)
+
+- Renamed the gitignored workspace tree from `scratch/` to `state/`; `fullerene/scratch.py` is now `fullerene/workspace_state.py` with `WORKSPACE_STATE_DIR_NAME`, `DEFAULT_STATE_DIR` (`state/.fullerene-state`), and `workspace_state_root()` to avoid clashing with the `fullerene.state` store package.
+- `tests/test_world_model.py` now uses `state/world_model_storage/…` (parallel to `mem_storage/` and `goals_storage/`) so world-model test DBs are grouped and the folder can be deleted as a unit.
+- **Agent note:** all local ephemera go under `state/`; do not reintroduce `scratch/` or root-level `world_model_storage/`.
+
 ### 2026-04-26 (scratch)
 
 - Introduced `fullerene/scratch.py` with `DEFAULT_STATE_DIR` (`scratch/.fullerene-state`) and `scratch_root()`; CLI `--state-dir` now defaults to that path so local runs stay under one gitignored tree.

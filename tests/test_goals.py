@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from fullerene.cli import main as cli_main
 from fullerene.facets import BehaviorFacet, EchoFacet, GoalsFacet, MemoryFacet
-from fullerene.scratch import scratch_root
+from fullerene.workspace_state import workspace_state_root
 from fullerene.goals import Goal, GoalSource, GoalStatus, SQLiteGoalStore
 from fullerene.memory import SQLiteMemoryStore
 from fullerene.nexus import Event, EventType, NexusRuntime, NexusState
@@ -20,7 +20,7 @@ from fullerene.state import FileStateStore, InMemoryStateStore
 
 
 def make_tempdir_path() -> Path:
-    return scratch_root() / "goals_storage" / f".test-goals-{uuid4().hex}"
+    return workspace_state_root() / "goals_storage" / f".test-goals-{uuid4().hex}"
 
 
 class GoalModelTests(unittest.TestCase):
