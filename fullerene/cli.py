@@ -62,6 +62,14 @@ def build_parser() -> argparse.ArgumentParser:
             "Defaults to <state-dir>/memory.sqlite3 when omitted."
         ),
     )
+    parser.add_argument(
+        "--goals-db",
+        default=None,
+        help=(
+            "SQLite path used by --goals runs. "
+            "Defaults to <state-dir>/goals.sqlite3 when omitted."
+        ),
+    )
     return parser
 
 
@@ -80,7 +88,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         memory_store = SQLiteMemoryStore(memory_db_path)
         facets.append(MemoryFacet(memory_store))
     if args.goals:
-        goal_store = SQLiteGoalStore(state_dir / "goals.sqlite3")
+        goals_db_path = (
+            Path(args.goals_db) if args.goals_db else state_dir / "goals.sqlite3"
+        )
+        goal_store = SQLiteGoalStore(goals_db_path)
         _create_goal_from_metadata(goal_store, content=args.content, metadata=metadata)
         facets.append(GoalsFacet(goal_store))
     if args.behavior:

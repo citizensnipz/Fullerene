@@ -216,7 +216,7 @@ class GoalsBehaviorIntegrationTests(unittest.TestCase):
 
 
 class CLIGoalsIntegrationTests(unittest.TestCase):
-    def test_cli_with_goals_creates_goal_sqlite_under_state_dir(self) -> None:
+    def test_cli_with_goals_creates_goal_sqlite_under_state_dir_by_default(self) -> None:
         root = make_tempdir_path()
         self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
         stdout = io.StringIO()
@@ -236,6 +236,34 @@ class CLIGoalsIntegrationTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertTrue((root / "goals.sqlite3").exists())
+        self.assertTrue((root / "state.json").exists())
+        self.assertTrue((root / "runtime-log.jsonl").exists())
+        self.assertEqual(payload["decision"]["action"], "record")
+
+    def test_cli_goals_db_flag_overrides_default_path(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        stdout = io.StringIO()
+        custom_db = root / "custom" / "goals.sqlite3"
+
+        with redirect_stdout(stdout):
+            exit_code = cli_main(
+                [
+                    "--goals",
+                    "--content",
+                    "track my tasks",
+                    "--state-dir",
+                    str(root),
+                    "--goals-db",
+                    str(custom_db),
+                ]
+            )
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertTrue(custom_db.exists())
+        self.assertFalse((root / "goals.sqlite3").exists())
         self.assertTrue((root / "state.json").exists())
         self.assertTrue((root / "runtime-log.jsonl").exists())
         self.assertEqual(payload["decision"]["action"], "record")
