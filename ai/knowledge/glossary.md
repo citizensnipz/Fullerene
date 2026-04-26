@@ -19,7 +19,8 @@ Terms for harness and design discussions. Definitions follow the current repo wh
 | **Affect** | Signal layer: intensity, urgency, confidence-like cues from text (voice later); not only "mood." |
 | **Attention** | What the system foregrounds when building context. |
 | **Context** | Assembled view for reasoning or tool steps. |
-| **World Model** | Structured beliefs about the environment or tasks (not raw logs). |
+| **Belief** | Explicit persistent world-model record with `claim`, `confidence`, `status`, `tags`, timestamps, source metadata, and optional source links. |
+| **World Model** | Structured belief store for what Fullerene believes about reality or tasks, separate from the event/memory log. World Model v0 is explicit and deterministic: SQLite-backed, inspectable, and does not implement automatic belief inference, graph reasoning, or Bayesian updates. |
 | **Goal** | Explicit persistent record stored in SQLite with description, priority, status, tags, timestamps, source, and metadata. |
 | **Goals** | Deterministic set of explicit goals that bias behavior and later planning. Goals v0 are inspectable and persistent; automatic goal inference is not implemented. |
 | **Policy** | Skills, rules, permission boundaries. |

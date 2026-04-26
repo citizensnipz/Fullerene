@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-26 - World Model v0 explicit beliefs
+
+- **Context:** Add persistent World Model v0 so Fullerene can store explicit beliefs about reality separately from episodic memory, without adding inference, reasoning, embeddings, or planning.
+- **Done:** Added `fullerene/world_model/` with `Belief`, `BeliefStatus`, `BeliefSource`, and `SQLiteWorldModelStore`; added `fullerene/facets/world_model.py`; exported world-model types through `fullerene/` and `fullerene/facets/`; updated `fullerene/cli.py` with `--world`, `--world-db`, and explicit metadata-driven `create_belief` support; extended `BehaviorFacet` with inspectable world-alignment confidence signals; added `tests/test_world_model.py`; updated architecture and glossary docs.
+- **Verified:** `python -m unittest tests.test_world_model -v`; `python -m unittest discover -s tests -p "test_*.py" -v`; `python -m fullerene --world --content "SQLite is the canonical memory store" --metadata '{"create_belief": true}' --state-dir .smoke-world-v0`; `python -m fullerene --world --content "Should we change memory storage?" --state-dir .smoke-world-v0`
+- **Next:** Add explicit inspection/update commands for beliefs (`list`, `stale`, `contradict`, `retire`, `re-confidence`) so users do not need to open SQLite directly to manage world state.
+- **Blockers:** None.
+
 ### 2026-04-26 - Goals v0 deterministic store and facet
 
 - **Context:** Add persistent Goals v0 so Fullerene can keep explicit directional state without adding planning, LLM calls, embeddings, or automatic goal generation.

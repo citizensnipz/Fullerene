@@ -9,6 +9,15 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-26 (m)
+
+- Added `fullerene/world_model/` with `Belief`, `BeliefStatus`, `BeliefSource`, and `SQLiteWorldModelStore` as the canonical World Model v0 store in `world.sqlite3`.
+- Added `fullerene/facets/world_model.py` and exported `WorldModelFacet` so Nexus can emit deterministic belief-relevance signals from tag overlap, keyword overlap, and belief confidence.
+- Updated `fullerene/facets/behavior.py` so behavior can read inspectable world-model signals and apply a small confidence boost without changing the core decision rules.
+- Updated `fullerene/cli.py` with `--world`, `--world-db`, and explicit metadata-driven `create_belief` support; belief creation remains explicit and deterministic.
+- Added `tests/test_world_model.py` covering belief model/store behavior, world-model facet scoring, CLI DB creation, metadata-driven belief creation, behavior integration, and Memory+Goals+WorldModel+Behavior runtime integration.
+- Updated `ai/project/architecture.md`, `ai/knowledge/glossary.md`, and `ai/logs/SESSION_LOG.md` for World Model v0, including the explicit note that automatic belief inference is not implemented.
+
 ### 2026-04-26 (l)
 
 - Added `fullerene/goals/` with `Goal`, `GoalStatus`, `GoalSource`, and `SQLiteGoalStore` as the canonical Goals v0 store in `goals.sqlite3`.

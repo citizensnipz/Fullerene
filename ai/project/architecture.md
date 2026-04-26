@@ -28,7 +28,7 @@ Product vocabulary for modular components:
 11. Behavior
 12. Learning
 
-Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `GoalsFacet`, `BehaviorFacet v0`, and `EchoFacet`; `BehaviorFacet v0` currently covers the first deterministic decision-policy role in the long-term twelve-facet model.
+Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, and `EchoFacet`; `BehaviorFacet v0` currently covers the first deterministic decision-policy role in the long-term twelve-facet model.
 
 ## Nexus loop (current v0)
 
@@ -44,6 +44,7 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - **Local JSON files** - `state.json` snapshot plus `runtime-log.jsonl` under an explicit state directory.
 - **SQLite memory store** - `memory.sqlite3` under the same state directory is the canonical store for what the system remembers.
 - **SQLite goals store** - `goals.sqlite3` under the same state directory is the canonical store for explicit goals.
+- **SQLite world model store** - `world.sqlite3` under the same state directory is the canonical store for explicit beliefs about reality.
 
 ## Memory v0
 
@@ -85,6 +86,15 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - **Behavior signal only** - goals do not execute actions or generate plans; they provide deterministic relevance signals that can raise `BehaviorFacet` confidence when the current event aligns with active goals.
 - **Explicit creation only** - v0 supports explicit goal creation, including the CLI `create_goal` metadata hook. Automatic goal inference is not implemented.
 
+## World Model v0 (current)
+
+- **Explicit and persistent only** - beliefs are stored as inspectable records with `id`, `claim`, `confidence`, `status`, `tags`, `source`, optional source links, timestamps, and metadata.
+- **Canonical store** - `SQLiteWorldModelStore` persists beliefs in `world.sqlite3`; SQLite is the source of truth.
+- **Deterministic retrieval** - `WorldModelFacet` loads active beliefs only and scores relevance from tag overlap, keyword overlap, and belief confidence. No embeddings, vector DB, graph structure, inference engine, or model calls.
+- **Behavior signal only** - beliefs do not plan, reason, or execute actions; they provide deterministic relevance signals that can raise `BehaviorFacet` confidence when the current event aligns with high-confidence beliefs.
+- **Explicit creation only** - v0 supports explicit belief creation, including the CLI `create_belief` metadata hook. Automatic belief inference is not implemented.
+- **Inspectable boundary** - World Model v0 is explicit and deterministic. It separates "what happened" (memory/event log) from "what is believed" (belief rows).
+
 ## Model integration (current v0)
 
 - None yet. Nexus is model-agnostic and does not call any provider in the first runtime slice.
@@ -112,8 +122,10 @@ flowchart LR
 | Example facet | `fullerene/facets/echo.py` | Small bundled facet for smoke/testing |
 | Behavior facet | `fullerene/facets/behavior.py` | Deterministic, inspectable decision policy for `WAIT` / `RECORD` / `ASK` / `ACT` |
 | Goals facet | `fullerene/facets/goals.py` | Deterministic active-goal lookup and relevance scoring; no planning or execution |
+| World model facet | `fullerene/facets/world_model.py` | Deterministic active-belief lookup and relevance scoring; no inference or reasoning |
 | Memory facet | `fullerene/facets/memory.py` | Deterministic episodic storage with v1 tag/salience inference plus bounded retrieval |
 | Goals models and store | `fullerene/goals/` | `Goal`, `GoalStatus`, `GoalSource`, and SQLite-backed canonical goals store |
 | Memory models and store | `fullerene/memory/` | `MemoryRecord`, scoring helpers, deterministic tag/salience inference (`inference.py`), and SQLite-backed canonical memory |
+| World model models and store | `fullerene/world_model/` | `Belief`, `BeliefStatus`, `BeliefSource`, and SQLite-backed canonical world model |
 | State store | `fullerene/state/store.py` | In-memory or file-backed JSON persistence |
 | CLI | `fullerene/cli.py`, `fullerene/__main__.py` | `python -m fullerene` |

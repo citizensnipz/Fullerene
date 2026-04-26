@@ -1,0 +1,57 @@
+{
+  "created_at": "2026-04-26T04:28:02.511968+00:00",
+  "event_count": 1,
+  "facet_state": {
+    "echo": {
+      "last_user_message": "SQLite is the canonical memory store",
+      "seen_messages": 1
+    },
+    "world_model": {
+      "last_active_belief_ids": [
+        "505675b7d94a4dc489833f8f265d8161"
+      ],
+      "last_relevance_score": 2.7,
+      "last_relevant_beliefs": [
+        {
+          "claim": "SQLite is the canonical memory store",
+          "confidence": 0.7,
+          "id": "505675b7d94a4dc489833f8f265d8161",
+          "keyword_overlap": 1.0,
+          "score": 2.7,
+          "shared_keywords": [
+            "canonical",
+            "is",
+            "memory",
+            "sqlite",
+            "store",
+            "the"
+          ],
+          "shared_tags": [
+            "memory"
+          ],
+          "source": "user",
+          "status": "active",
+          "tag_overlap": 1.0
+        }
+      ]
+    }
+  },
+  "last_decision": {
+    "action": "record",
+    "reason": "Selected RECORD from facet proposals: echo.",
+    "source_facets": [
+      "echo"
+    ],
+    "timestamp": "2026-04-26T04:28:02.518188+00:00"
+  },
+  "last_event": {
+    "content": "SQLite is the canonical memory store",
+    "event_id": "7459b07734b146d8974b3899c57b3343",
+    "event_type": "user_message",
+    "metadata": {
+      "create_belief": true
+    },
+    "timestamp": "2026-04-26T04:27:59.577336+00:00"
+  },
+  "updated_at": "2026-04-26T04:28:02.518194+00:00"
+}

@@ -5,5 +5,13 @@ from fullerene.facets.base import Facet
 from fullerene.facets.echo import EchoFacet
 from fullerene.facets.goals import GoalsFacet
 from fullerene.facets.memory import MemoryFacet
+from fullerene.facets.world_model import WorldModelFacet
 
-__all__ = ["BehaviorFacet", "EchoFacet", "Facet", "GoalsFacet", "MemoryFacet"]
+__all__ = [
+    "BehaviorFacet",
+    "EchoFacet",
+    "Facet",
+    "GoalsFacet",
+    "MemoryFacet",
+    "WorldModelFacet",
+]

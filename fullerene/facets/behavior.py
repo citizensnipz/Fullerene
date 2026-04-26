@@ -63,6 +63,10 @@ class _BehaviorSignals:
     goal_alignment_score: float
     goal_alignment_priority: float
     aligned_goal_ids: list[str]
+    world_signal_available: bool
+    world_alignment_score: float
+    world_alignment_confidence: float
+    aligned_belief_ids: list[str]
 
 
 class BehaviorFacet:
@@ -79,6 +83,8 @@ class BehaviorFacet:
             salience=signals.salience,
             goal_alignment_score=signals.goal_alignment_score,
             goal_alignment_priority=signals.goal_alignment_priority,
+            world_alignment_score=signals.world_alignment_score,
+            world_alignment_confidence=signals.world_alignment_confidence,
         )
         confidence = confidence_breakdown["total"]
         priority_level = "high" if signals.high_priority else "normal"
@@ -99,6 +105,8 @@ class BehaviorFacet:
                 "last_priority_level": priority_level,
                 "last_goal_alignment_score": signals.goal_alignment_score,
                 "last_aligned_goal_ids": list(signals.aligned_goal_ids),
+                "last_world_alignment_score": signals.world_alignment_score,
+                "last_aligned_belief_ids": list(signals.aligned_belief_ids),
             },
             metadata={
                 "selected_decision": selected_decision.value,
@@ -116,6 +124,10 @@ class BehaviorFacet:
                 "goal_alignment_score": signals.goal_alignment_score,
                 "goal_alignment_priority": signals.goal_alignment_priority,
                 "aligned_goal_ids": list(signals.aligned_goal_ids),
+                "world_signal_available": signals.world_signal_available,
+                "world_alignment_score": signals.world_alignment_score,
+                "world_alignment_confidence": signals.world_alignment_confidence,
+                "aligned_belief_ids": list(signals.aligned_belief_ids),
             },
         )
 
@@ -140,6 +152,15 @@ class BehaviorFacet:
             aligned_goals,
         )
         goal_alignment_priority = self._resolve_goal_alignment_priority(aligned_goals)
+        world_context = self._extract_world_context(metadata, state)
+        aligned_beliefs = self._extract_relevant_beliefs(world_context)
+        world_alignment_score = self._resolve_world_alignment_score(
+            world_context,
+            aligned_beliefs,
+        )
+        world_alignment_confidence = self._resolve_world_alignment_confidence(
+            aligned_beliefs
+        )
 
         return _BehaviorSignals(
             tags=tags,
@@ -171,6 +192,14 @@ class BehaviorFacet:
                 for goal in aligned_goals
                 if isinstance(goal.get("id"), str)
             ],
+            world_signal_available=world_context is not None,
+            world_alignment_score=world_alignment_score,
+            world_alignment_confidence=world_alignment_confidence,
+            aligned_belief_ids=[
+                str(belief.get("id"))
+                for belief in aligned_beliefs
+                if isinstance(belief.get("id"), str)
+            ],
         )
 
     @staticmethod
@@ -201,6 +230,19 @@ class BehaviorFacet:
         return state_goals if isinstance(state_goals, dict) else None
 
     @staticmethod
+    def _extract_world_context(
+        metadata: dict[str, Any],
+        state: NexusState,
+    ) -> dict[str, Any] | None:
+        for key in ("world_model", "world_signal", "world_model_facet"):
+            candidate = metadata.get(key)
+            if isinstance(candidate, dict):
+                return candidate
+
+        state_world_model = state.facet_state.get("world_model")
+        return state_world_model if isinstance(state_world_model, dict) else None
+
+    @staticmethod
     def _extract_relevant_goals(
         goal_context: dict[str, Any] | None,
     ) -> list[dict[str, Any]]:
@@ -211,6 +253,19 @@ class BehaviorFacet:
             candidate = goal_context.get(key)
             if isinstance(candidate, list):
                 return [goal for goal in candidate if isinstance(goal, dict)]
+        return []
+
+    @staticmethod
+    def _extract_relevant_beliefs(
+        world_context: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        if world_context is None:
+            return []
+
+        for key in ("last_relevant_beliefs", "relevant_beliefs"):
+            candidate = world_context.get(key)
+            if isinstance(candidate, list):
+                return [belief for belief in candidate if isinstance(belief, dict)]
         return []
 
     @staticmethod
@@ -242,6 +297,38 @@ class BehaviorFacet:
             if goal_priority is not None:
                 best_priority = max(best_priority, goal_priority)
         return best_priority
+
+    @staticmethod
+    def _resolve_world_alignment_score(
+        world_context: dict[str, Any] | None,
+        aligned_beliefs: list[dict[str, Any]],
+    ) -> float:
+        if world_context is not None:
+            raw_score = BehaviorFacet._numeric_score(
+                world_context.get("last_relevance_score")
+            )
+            if raw_score is not None:
+                return raw_score
+
+        best_score = 0.0
+        for belief in aligned_beliefs:
+            belief_score = BehaviorFacet._numeric_score(belief.get("score"))
+            if belief_score is not None:
+                best_score = max(best_score, belief_score)
+        return best_score
+
+    @staticmethod
+    def _resolve_world_alignment_confidence(
+        aligned_beliefs: list[dict[str, Any]],
+    ) -> float:
+        best_confidence = 0.0
+        for belief in aligned_beliefs:
+            belief_confidence = BehaviorFacet._numeric_unit_value(
+                belief.get("confidence")
+            )
+            if belief_confidence is not None:
+                best_confidence = max(best_confidence, belief_confidence)
+        return best_confidence
 
     @staticmethod
     def _resolve_salience(
@@ -351,6 +438,8 @@ class BehaviorFacet:
         salience: float,
         goal_alignment_score: float,
         goal_alignment_priority: float,
+        world_alignment_score: float,
+        world_alignment_confidence: float,
     ) -> dict[str, float]:
         breakdown: dict[str, float] = {"base": DECISION_BASE_CONFIDENCE[action]}
         for reason in reasons:
@@ -369,6 +458,13 @@ class BehaviorFacet:
         )
         if goal_boost > 0.0:
             breakdown["goal_alignment_signal"] = goal_boost
+
+        world_boost = _world_confidence_boost(
+            world_alignment_score=world_alignment_score,
+            world_alignment_confidence=world_alignment_confidence,
+        )
+        if world_boost > 0.0:
+            breakdown["world_alignment_signal"] = world_boost
 
         breakdown["total"] = round(_clamp_unit(sum(breakdown.values())), 2)
         return breakdown
@@ -390,6 +486,23 @@ def _goal_confidence_boost(
     boost = (
         0.02
         + (0.04 * _clamp_unit(goal_alignment_priority))
+        + (0.02 * normalized_alignment)
+    )
+    return round(min(boost, 0.08), 2)
+
+
+def _world_confidence_boost(
+    *,
+    world_alignment_score: float,
+    world_alignment_confidence: float,
+) -> float:
+    if world_alignment_score <= 0.0 or world_alignment_confidence <= 0.0:
+        return 0.0
+
+    normalized_alignment = _clamp_unit(world_alignment_score / 3.0)
+    boost = (
+        0.02
+        + (0.04 * _clamp_unit(world_alignment_confidence))
         + (0.02 * normalized_alignment)
     )
     return round(min(boost, 0.08), 2)

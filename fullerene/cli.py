@@ -7,11 +7,18 @@ import json
 from pathlib import Path
 from typing import Any, Sequence
 
-from fullerene.facets import BehaviorFacet, EchoFacet, GoalsFacet, MemoryFacet
+from fullerene.facets import (
+    BehaviorFacet,
+    EchoFacet,
+    GoalsFacet,
+    MemoryFacet,
+    WorldModelFacet,
+)
 from fullerene.goals import Goal, GoalSource, SQLiteGoalStore
 from fullerene.memory import SQLiteMemoryStore, infer_tags, merge_tags, normalize_tags
 from fullerene.nexus import Event, EventType, NexusRuntime
 from fullerene.state import FileStateStore
+from fullerene.world_model import Belief, BeliefSource, SQLiteWorldModelStore
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--goals",
         action="store_true",
         help="Enable the SQLite-backed GoalsFacet for this run.",
+    )
+    parser.add_argument(
+        "--world",
+        action="store_true",
+        help="Enable the SQLite-backed WorldModelFacet for this run.",
     )
     parser.add_argument(
         "--event-type",
@@ -70,6 +82,14 @@ def build_parser() -> argparse.ArgumentParser:
             "Defaults to <state-dir>/goals.sqlite3 when omitted."
         ),
     )
+    parser.add_argument(
+        "--world-db",
+        default=None,
+        help=(
+            "SQLite path used by --world runs. "
+            "Defaults to <state-dir>/world.sqlite3 when omitted."
+        ),
+    )
     return parser
 
 
@@ -80,6 +100,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     state_dir = Path(args.state_dir)
     store = FileStateStore(state_dir)
+    event = Event(
+        event_type=EventType(args.event_type),
+        content=args.content,
+        metadata=metadata,
+    )
     facets = []
     if args.memory:
         memory_db_path = (
@@ -94,16 +119,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         goal_store = SQLiteGoalStore(goals_db_path)
         _create_goal_from_metadata(goal_store, content=args.content, metadata=metadata)
         facets.append(GoalsFacet(goal_store))
+    if args.world:
+        world_db_path = (
+            Path(args.world_db) if args.world_db else state_dir / "world.sqlite3"
+        )
+        world_store = SQLiteWorldModelStore(world_db_path)
+        _create_belief_from_metadata(world_store, event=event)
+        facets.append(WorldModelFacet(world_store))
     if args.behavior:
         facets.append(BehaviorFacet())
     facets.append(EchoFacet())
 
     runtime = NexusRuntime(facets=facets, store=store)
-    event = Event(
-        event_type=EventType(args.event_type),
-        content=args.content,
-        metadata=metadata,
-    )
     record = runtime.process_event(event)
 
     print(json.dumps(record.to_dict(), indent=2))
@@ -167,3 +194,40 @@ def _metadata_flag(metadata: dict[str, Any], key: str) -> bool:
     if isinstance(raw_value, str):
         return raw_value.strip().lower() in {"1", "true", "yes", "on"}
     return False
+
+
+def _create_belief_from_metadata(
+    store: SQLiteWorldModelStore,
+    *,
+    event: Event,
+) -> Belief | None:
+    if not _metadata_flag(event.metadata, "create_belief"):
+        return None
+    if not event.content.strip():
+        return None
+
+    explicit_tags: list[str] = []
+    raw_tags = event.metadata.get("tags", [])
+    if isinstance(raw_tags, (list, tuple, set, frozenset)):
+        explicit_tags = normalize_tags(raw_tags)
+
+    belief = Belief(
+        claim=event.content,
+        confidence=0.7,
+        tags=merge_tags(explicit_tags, infer_tags(event.content)),
+        source=_belief_source_for_event(event.event_type),
+        source_event_id=event.event_id,
+        metadata={
+            key: value
+            for key, value in event.metadata.items()
+            if key != "create_belief"
+        },
+    )
+    store.add_belief(belief)
+    return belief
+
+
+def _belief_source_for_event(event_type: EventType) -> BeliefSource:
+    if event_type == EventType.USER_MESSAGE:
+        return BeliefSource.USER
+    return BeliefSource.SYSTEM
