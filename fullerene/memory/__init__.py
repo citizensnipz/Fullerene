@@ -15,6 +15,7 @@ from fullerene.memory.inference import (
     merge_tags,
 )
 from fullerene.memory.models import MemoryRecord, MemoryType, normalize_tags
+from fullerene.memory.scoring import extract_event_tags, tokenize
 from fullerene.memory.store import MemoryStore, SQLiteMemoryStore
 
 __all__ = [
@@ -31,8 +32,10 @@ __all__ = [
     "URGENT_BOOST",
     "USER_MESSAGE_BOOST",
     "compute_salience",
+    "extract_event_tags",
     "explain_salience",
     "infer_tags",
     "merge_tags",
     "normalize_tags",
+    "tokenize",
 ]

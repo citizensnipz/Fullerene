@@ -20,7 +20,8 @@ Terms for harness and design discussions. Definitions follow the current repo wh
 | **Attention** | What the system foregrounds when building context. |
 | **Context** | Assembled view for reasoning or tool steps. |
 | **World Model** | Structured beliefs about the environment or tasks (not raw logs). |
-| **Goals** | Persistent objectives that drive planning. |
+| **Goal** | Explicit persistent record stored in SQLite with description, priority, status, tags, timestamps, source, and metadata. |
+| **Goals** | Deterministic set of explicit goals that bias behavior and later planning. Goals v0 are inspectable and persistent; automatic goal inference is not implemented. |
 | **Policy** | Skills, rules, permission boundaries. |
 | **Planner** | Produces plans or next steps; may invoke an LLM later. |
 | **Executor** | Runs actions or skills under sandbox and permissions. Not implemented in v0 Nexus. |

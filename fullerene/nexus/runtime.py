@@ -47,7 +47,12 @@ class Nexus:
         self._facets.append(facet)
 
     def process_event(self, event: Event) -> NexusRecord:
-        facet_results = [self._run_facet(facet, event) for facet in self._facets]
+        working_state = NexusState.from_dict(self.state.to_dict())
+        facet_results: list[FacetResult] = []
+        for facet in self._facets:
+            result = self._run_facet(facet, event, working_state)
+            facet_results.append(result)
+            self._apply_result_to_state(working_state, result)
         decision = self._integrate(event, facet_results)
         self.state.apply(event, facet_results, decision)
 
@@ -60,9 +65,14 @@ class Nexus:
         self._store.append_record(record)
         return record
 
-    def _run_facet(self, facet: Facet, event: Event) -> FacetResult:
+    def _run_facet(
+        self,
+        facet: Facet,
+        event: Event,
+        state: NexusState,
+    ) -> FacetResult:
         try:
-            return facet.process(event, self.state)
+            return facet.process(event, state)
         except Exception as exc:
             facet_name = self._facet_name(facet)
             error_message = str(exc) or "Facet raised without an error message."
@@ -78,6 +88,13 @@ class Nexus:
                     "error_message": error_message,
                 },
             )
+
+    @staticmethod
+    def _apply_result_to_state(state: NexusState, result: FacetResult) -> None:
+        if not result.state_updates:
+            return
+        facet_bucket = state.facet_state.setdefault(result.facet_name, {})
+        facet_bucket.update(result.state_updates)
 
     def _facet_name(self, facet: Facet) -> str:
         raw_name = getattr(facet, "name", "") or facet.__class__.__name__

@@ -9,6 +9,16 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-26 (l)
+
+- Added `fullerene/goals/` with `Goal`, `GoalStatus`, `GoalSource`, and `SQLiteGoalStore` as the canonical Goals v0 store in `goals.sqlite3`.
+- Added `fullerene/facets/goals.py` and exported `GoalsFacet` so Nexus can emit deterministic goal-relevance signals from tag overlap, keyword overlap, and goal priority.
+- Updated `fullerene/facets/behavior.py` so behavior can read inspectable goal signals and apply a small confidence boost without changing the core decision rules.
+- Updated `fullerene/nexus/runtime.py` so later facets can observe earlier facet `state_updates` during the same event pass.
+- Updated `fullerene/cli.py` with `--goals`, `--metadata`, and explicit metadata-driven `create_goal` support; goal creation remains explicit and deterministic.
+- Added `tests/test_goals.py` covering goal model/store behavior, goals facet scoring, CLI goal DB creation, metadata-driven goal creation, and Memory+Goals+Behavior runtime integration.
+- Updated `ai/project/architecture.md`, `ai/knowledge/glossary.md`, and `ai/logs/SESSION_LOG.md` for Goals v0, including the explicit note that automatic goal inference is not implemented.
+
 ### 2026-04-26 (k)
 
 - Updated `fullerene/cli.py` so `--memory` defaults memory DB placement to `<state-dir>/memory.sqlite3` when `--memory-db` is omitted; explicit `--memory-db` override remains supported.

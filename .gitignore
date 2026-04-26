@@ -223,5 +223,7 @@ __marimo__/
 # Fullerene runtime state
 .fullerene-state*/
 mem_storage/
+goals_storage/
 .test-nexus-store*/
+.test-behavior*/
 tmp*/

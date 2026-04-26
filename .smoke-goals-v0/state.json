@@ -1,0 +1,63 @@
+{
+  "created_at": "2026-04-25T18:41:05.703089+00:00",
+  "event_count": 4,
+  "facet_state": {
+    "behavior": {
+      "last_aligned_goal_ids": [
+        "42c28ab91a2f4fe9bc0cc7a063c2c1b6"
+      ],
+      "last_confidence": 0.79,
+      "last_goal_alignment_score": 1.167,
+      "last_priority_level": "normal",
+      "last_reasons": [
+        "user_message_default_record"
+      ],
+      "last_salience": 0.5,
+      "last_selected_decision": "record",
+      "last_tags_considered": []
+    },
+    "echo": {
+      "last_user_message": "work on my tasks",
+      "seen_messages": 4
+    },
+    "goals": {
+      "last_active_goal_ids": [
+        "42c28ab91a2f4fe9bc0cc7a063c2c1b6"
+      ],
+      "last_relevance_score": 1.167,
+      "last_relevant_goals": [
+        {
+          "description": "track my tasks",
+          "id": "42c28ab91a2f4fe9bc0cc7a063c2c1b6",
+          "keyword_overlap": 0.667,
+          "priority": 0.5,
+          "score": 1.167,
+          "shared_keywords": [
+            "my",
+            "tasks"
+          ],
+          "shared_tags": [],
+          "source": "user",
+          "tag_overlap": 0.0
+        }
+      ]
+    }
+  },
+  "last_decision": {
+    "action": "record",
+    "reason": "Selected RECORD from facet proposals: behavior, echo.",
+    "source_facets": [
+      "behavior",
+      "echo"
+    ],
+    "timestamp": "2026-04-25T18:42:59.470931+00:00"
+  },
+  "last_event": {
+    "content": "work on my tasks",
+    "event_id": "e64be1db2b9b4ac8ba0c7ab91e74a7d9",
+    "event_type": "user_message",
+    "metadata": {},
+    "timestamp": "2026-04-25T18:42:59.470231+00:00"
+  },
+  "updated_at": "2026-04-25T18:42:59.470937+00:00"
+}

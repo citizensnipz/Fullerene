@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-26 - Goals v0 deterministic store and facet
+
+- **Context:** Add persistent Goals v0 so Fullerene can keep explicit directional state without adding planning, LLM calls, embeddings, or automatic goal generation.
+- **Done:** Added `fullerene/goals/` with `Goal`, status/source enums, and `SQLiteGoalStore`; added `fullerene/facets/goals.py`; exported goals through `fullerene/` and `fullerene/facets/`; updated `fullerene/cli.py` with `--goals`, `--metadata`, and explicit `create_goal` handling; adjusted `fullerene/nexus/runtime.py` so later facets can observe earlier facet state updates within the same event; extended `BehaviorFacet` with inspectable goal-alignment confidence signals; added `tests/test_goals.py`.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -v`; `python -m fullerene --goals --content "track my tasks" --metadata '{"create_goal": true}' --state-dir .smoke-goals-v0`; `python -m fullerene --goals --content "work on my tasks" --state-dir .smoke-goals-v0`; `python -m fullerene --goals --behavior --content "work on my tasks" --state-dir .smoke-goals-v0`
+- **Next:** Add an inspect/update CLI surface for goals (`list`, `pause`, `complete`, `reprioritize`) so users can manage persistent goals without editing SQLite directly.
+- **Blockers:** None.
+
 ### 2026-04-26 - Behavior v0 integration polish
 
 - **Context:** Polish Behavior v0 integration and stale harness language, and align CLI memory path behavior with state-dir defaults.
