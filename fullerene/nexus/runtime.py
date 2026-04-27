@@ -176,10 +176,33 @@ class Nexus:
             verifier_result.metadata if isinstance(verifier_result.metadata, dict) else {}
         )
         if metadata.get("verification_status") != "failed":
+            metadata["override_applied"] = False
+            metadata["override_reason"] = "verification_did_not_fail"
             return decision
         proposed_decision = verifier_result.proposed_decision
-        if proposed_decision is None or proposed_decision == decision.action:
+        if proposed_decision is None:
+            metadata["override_applied"] = False
+            metadata["override_reason"] = "no_verifier_proposal"
             return decision
+        metadata["current_decision"] = decision.action.value
+        metadata["proposed_override_decision"] = proposed_decision.value
+
+        current_priority = DECISION_PRIORITY[decision.action]
+        proposed_priority = DECISION_PRIORITY[proposed_decision]
+        if proposed_priority > current_priority:
+            metadata["override_applied"] = False
+            metadata["override_reason"] = "ignored_higher_priority_verifier_proposal"
+            return decision
+        if proposed_priority == current_priority:
+            metadata["override_applied"] = False
+            if proposed_decision == decision.action:
+                metadata["override_reason"] = "proposed_decision_matches_current"
+            else:
+                metadata["override_reason"] = "ignored_same_priority_verifier_proposal"
+            return decision
+
+        metadata["override_applied"] = True
+        metadata["override_reason"] = "risk_reducing_downgrade"
         source_facets = list(decision.source_facets)
         if verifier_result.facet_name not in source_facets:
             source_facets.append(verifier_result.facet_name)

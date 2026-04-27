@@ -119,6 +119,62 @@ class UnsafeActFacet:
         )
 
 
+class RecordFacet:
+    name = "recorder"
+
+    def process(self, event: Event, state: NexusState) -> FacetResult:
+        return FacetResult(
+            facet_name=self.name,
+            summary="Proposed a RECORD decision.",
+            proposed_decision=DecisionAction.RECORD,
+        )
+
+
+class AskFacet:
+    name = "asker"
+
+    def process(self, event: Event, state: NexusState) -> FacetResult:
+        return FacetResult(
+            facet_name=self.name,
+            summary="Proposed an ASK decision.",
+            proposed_decision=DecisionAction.ASK,
+        )
+
+
+class ForceVerifierFacet:
+    name = "verifier"
+
+    def __init__(self, proposed_decision: DecisionAction | None) -> None:
+        self.proposed_decision = proposed_decision
+
+    def process(self, event: Event, state: NexusState) -> FacetResult:
+        return FacetResult(
+            facet_name=self.name,
+            summary="Post-decision verifier placeholder.",
+            metadata={"post_processing_only": True},
+        )
+
+    def verify(
+        self,
+        event: Event,
+        state: NexusState,
+        facet_results: list[FacetResult],
+        decision: NexusDecision | None,
+    ) -> FacetResult:
+        return FacetResult(
+            facet_name=self.name,
+            summary="Forced verifier override proposal.",
+            proposed_decision=self.proposed_decision,
+            metadata={
+                "verification_status": "failed",
+                "failed_checks": ["forced_override"],
+                "warnings": [],
+                "results": [],
+                "reasons": ["Forced verifier proposal for runtime hardening tests."],
+            },
+        )
+
+
 class VerifierModelAndCheckTests(unittest.TestCase):
     def test_verification_result_round_trips_through_dict(self) -> None:
         result = VerificationResult(
@@ -345,6 +401,60 @@ class VerifierRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(record.decision.action, DecisionAction.ASK)
         self.assertEqual(verifier_result.metadata["verification_status"], "failed")
         self.assertIn("act_requires_approval", verifier_result.metadata["failed_checks"])
+
+    def test_verifier_can_downgrade_act_to_record(self) -> None:
+        runtime = NexusRuntime(
+            facets=[UnsafeActFacet(), ForceVerifierFacet(DecisionAction.RECORD)],
+            store=InMemoryStateStore(),
+        )
+
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="forced override")
+        )
+        verifier_result = record.facet_results[-1]
+
+        self.assertEqual(record.decision.action, DecisionAction.RECORD)
+        self.assertTrue(verifier_result.metadata["override_applied"])
+        self.assertEqual(
+            verifier_result.metadata["override_reason"],
+            "risk_reducing_downgrade",
+        )
+
+    def test_verifier_cannot_upgrade_record_to_act(self) -> None:
+        runtime = NexusRuntime(
+            facets=[RecordFacet(), ForceVerifierFacet(DecisionAction.ACT)],
+            store=InMemoryStateStore(),
+        )
+
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="forced upgrade")
+        )
+        verifier_result = record.facet_results[-1]
+
+        self.assertEqual(record.decision.action, DecisionAction.RECORD)
+        self.assertFalse(verifier_result.metadata["override_applied"])
+        self.assertEqual(
+            verifier_result.metadata["override_reason"],
+            "ignored_higher_priority_verifier_proposal",
+        )
+
+    def test_verifier_cannot_upgrade_ask_to_act(self) -> None:
+        runtime = NexusRuntime(
+            facets=[AskFacet(), ForceVerifierFacet(DecisionAction.ACT)],
+            store=InMemoryStateStore(),
+        )
+
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="forced upgrade")
+        )
+        verifier_result = record.facet_results[-1]
+
+        self.assertEqual(record.decision.action, DecisionAction.ASK)
+        self.assertFalse(verifier_result.metadata["override_applied"])
+        self.assertEqual(
+            verifier_result.metadata["override_reason"],
+            "ignored_higher_priority_verifier_proposal",
+        )
 
     def test_approval_required_policy_prevents_final_act(self) -> None:
         root = make_tempdir_path()
