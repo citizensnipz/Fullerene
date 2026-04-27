@@ -28,7 +28,7 @@ Product vocabulary for modular components:
 11. Behavior
 12. Learning
 
-Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `ContextFacet`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `VerifierFacet v0`, and `EchoFacet`; `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, and `VerifierFacet v0` runs deterministic post-decision inspection before persistence.
+Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `VerifierFacet v0`, `ContextFacet`, and `EchoFacet`; `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, and `VerifierFacet v0` runs deterministic post-decision inspection before persistence.
 
 ## Nexus loop (current v0)
 

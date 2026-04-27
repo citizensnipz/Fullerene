@@ -89,6 +89,11 @@ class ContextModelTests(unittest.TestCase):
         self.assertEqual(round_tripped, window)
 
 
+class ContextFacetExportTests(unittest.TestCase):
+    def test_context_facet_is_exported_from_fullerene_facets(self) -> None:
+        self.assertEqual(ContextFacet.__name__, "ContextFacet")
+
+
 class StaticContextAssemblerTests(unittest.TestCase):
     def test_returns_empty_context_when_no_memory_records_exist(self) -> None:
         store = TrackingMemoryStore()

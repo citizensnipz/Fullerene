@@ -9,6 +9,11 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-27 (context polish)
+
+- Confirmed `ContextFacet` export remains available from `fullerene.facets` and added explicit coverage in `tests/test_context.py`.
+- Polished `ai/project/architecture.md` wording so the current implemented runtime list explicitly includes Memory, Goals, World Model, Behavior, Policy, Verifier, Context, and Echo without implying Context v1-v3 behavior is implemented.
+
 ### 2026-04-27 (context)
 
 - Added `fullerene/context/` with `ContextItem`, `ContextItemType`, `ContextWindow`, `STATIC_RECENT_EPISODIC_V0`, and `StaticContextAssembler`.
