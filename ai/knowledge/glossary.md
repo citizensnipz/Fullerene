@@ -34,7 +34,10 @@ Terms for harness and design discussions. Definitions follow the current repo wh
 | **Plan** | Inspectable proposed plan record with `id`, timestamps, optional source event / goal linkage, ordered `steps`, deterministic `confidence`, `pressure`, `status`, `reasons`, and metadata. |
 | **PlanStep** | Inspectable ordered step inside a `Plan`, with description, `target_type`, `risk_level`, approval metadata, and step status such as `proposed`, `blocked`, or `requires_approval`. |
 | **RiskLevel** | Deterministic planner/verifier risk label for a plan step: `low`, `medium`, or `high`. High-risk steps require approval before any future execution layer could act on them. |
-| **Executor** | Runs actions or skills under sandbox and permissions. Not implemented in v0 Nexus. |
+| **Executor** | Deterministic action-execution layer that carries out approved internal actions only. Executor v0 is dry-run by default, halts before partial mutation, and refuses shell, network, git, arbitrary file, or other external side effects. |
+| **ExecutionRecord** | Inspectable per-step execution artifact with `action_type`, optional plan linkage, `status`, `dry_run`, a human-readable message, and structured metadata about why the step ran, failed, or was skipped. |
+| **Dry-run** | Executor mode where Fullerene simulates supported actions and records what would happen without mutating state stores. Dry-run is the default for Executor v0. |
+| **Helmet Rule** | Trust ladder for execution scope: v0 self-state only, v1 files and skills, v2 network/git reads, v3 real-world action. Trust is accumulated rather than assumed. |
 | **Verifier** | Deterministic post-decision inspection layer that validates Fullerene's own runtime artifacts before persistence. In v0 it checks decision shape, facet-result shape, policy compliance, and conservative `ACT` safety requirements; it is not an LLM judge, planner, executor, truth-checker, or hallucination detector. |
 | **VerificationResult** | Structured output from one deterministic verifier check: `check_name`, `status` (`passed`, `warning`, `failed`), `severity`, `message`, and metadata. |
 | **Policy compliance** | Whether the final Nexus decision is structurally consistent with explicit policy outcomes such as `denied`, `approval_required`, or explicit `allow`, especially for side-effectful `ACT` decisions. |

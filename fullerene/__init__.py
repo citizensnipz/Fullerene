@@ -16,8 +16,13 @@ __all__ = [
     "DecisionAction",
     "DeterministicPlanBuilder",
     "EchoFacet",
+    "ExecutorFacet",
     "Event",
     "EventType",
+    "ExecutionMode",
+    "ExecutionRecord",
+    "ExecutionResult",
+    "ExecutionStatus",
     "Facet",
     "FacetResult",
     "FileStateStore",
@@ -27,6 +32,7 @@ __all__ = [
     "GoalsFacet",
     "GoalStore",
     "InMemoryStateStore",
+    "InternalActionExecutor",
     "MemoryFacet",
     "MemoryRecord",
     "MemoryStore",
@@ -49,6 +55,7 @@ __all__ = [
     "PolicyStore",
     "PolicyTargetType",
     "RiskLevel",
+    "ActionType",
     "VerificationResult",
     "VerificationSeverity",
     "VerificationStatus",
@@ -72,6 +79,7 @@ def __getattr__(name: str):
         "BehaviorFacet",
         "ContextFacet",
         "EchoFacet",
+        "ExecutorFacet",
         "GoalsFacet",
         "MemoryFacet",
         "PlannerFacet",
@@ -80,6 +88,15 @@ def __getattr__(name: str):
         "WorldModelFacet",
     }:
         return getattr(import_module("fullerene.facets"), name)
+    if name in {
+        "ActionType",
+        "ExecutionMode",
+        "ExecutionRecord",
+        "ExecutionResult",
+        "ExecutionStatus",
+        "InternalActionExecutor",
+    }:
+        return getattr(import_module("fullerene.executor"), name)
     if name in {
         "DeterministicPlanBuilder",
         "Plan",

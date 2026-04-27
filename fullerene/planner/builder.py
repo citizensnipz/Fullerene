@@ -412,7 +412,10 @@ class DeterministicPlanBuilder:
                         order=1,
                         target_type="general",
                         risk_level=RiskLevel.LOW,
-                        metadata={"step_kind": "clarify_objective"},
+                        metadata={
+                            "step_kind": "clarify_objective",
+                            "action_type": "noop",
+                        },
                     ),
                     PlanStep(
                         description="Propose the next safe action.",
@@ -421,6 +424,7 @@ class DeterministicPlanBuilder:
                         risk_level=action_risk,
                         metadata={
                             "step_kind": "propose_next_safe_action",
+                            "action_type": "noop",
                             **shared_metadata,
                         },
                     ),
@@ -431,14 +435,20 @@ class DeterministicPlanBuilder:
                     order=1,
                     target_type="general",
                     risk_level=RiskLevel.LOW,
-                    metadata={"step_kind": "clarify_objective"},
+                    metadata={
+                        "step_kind": "clarify_objective",
+                        "action_type": "noop",
+                    },
                 ),
                 PlanStep(
                     description="Identify constraints.",
                     order=2,
                     target_type="general",
                     risk_level=RiskLevel.LOW,
-                    metadata={"step_kind": "identify_constraints"},
+                    metadata={
+                        "step_kind": "identify_constraints",
+                        "action_type": "noop",
+                    },
                 ),
                 PlanStep(
                     description="Propose the next safe action.",
@@ -447,6 +457,7 @@ class DeterministicPlanBuilder:
                     risk_level=action_risk,
                     metadata={
                         "step_kind": "propose_next_safe_action",
+                        "action_type": "noop",
                         **shared_metadata,
                     },
                 ),
@@ -461,6 +472,7 @@ class DeterministicPlanBuilder:
                     risk_level=RiskLevel.LOW,
                     metadata={
                         "step_kind": "review_goal_context",
+                        "action_type": "noop",
                         "goal_id": matched_goal.goal.id,
                     },
                 ),
@@ -471,6 +483,7 @@ class DeterministicPlanBuilder:
                     risk_level=action_risk,
                     metadata={
                         "step_kind": "propose_next_safe_action_toward_goal",
+                        "action_type": "noop",
                         "goal_id": matched_goal.goal.id,
                         **shared_metadata,
                     },
@@ -482,32 +495,35 @@ class DeterministicPlanBuilder:
                 order=1,
                 target_type="general",
                 risk_level=RiskLevel.LOW,
-                metadata={
-                    "step_kind": "review_goal_context",
-                    "goal_id": matched_goal.goal.id,
-                },
+                    metadata={
+                        "step_kind": "review_goal_context",
+                        "action_type": "noop",
+                        "goal_id": matched_goal.goal.id,
+                    },
             ),
             PlanStep(
                 description="Check relevant beliefs and constraints.",
                 order=2,
                 target_type="general",
                 risk_level=RiskLevel.LOW,
-                metadata={
-                    "step_kind": "check_beliefs_and_constraints",
-                    "goal_id": matched_goal.goal.id,
-                    "belief_ids": [match.belief.id for match in relevant_beliefs],
-                },
+                    metadata={
+                        "step_kind": "check_beliefs_and_constraints",
+                        "action_type": "noop",
+                        "goal_id": matched_goal.goal.id,
+                        "belief_ids": [match.belief.id for match in relevant_beliefs],
+                    },
             ),
             PlanStep(
                 description="Propose the next safe action toward the goal.",
                 order=3,
                 target_type=action_target_type,
                 risk_level=action_risk,
-                metadata={
-                    "step_kind": "propose_next_safe_action_toward_goal",
-                    "goal_id": matched_goal.goal.id,
-                    **shared_metadata,
-                },
+                    metadata={
+                        "step_kind": "propose_next_safe_action_toward_goal",
+                        "action_type": "noop",
+                        "goal_id": matched_goal.goal.id,
+                        **shared_metadata,
+                    },
             ),
         ]
 

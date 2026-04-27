@@ -9,7 +9,7 @@ This file gives shared names and intent from the product description so the harn
 | State | Memory, goals, world model, and other structured runtime state |
 | Control | Behavior, policy, and verification boundaries |
 | Signal | Facets contribute observations, updates, and proposals |
-| Execution | Planner v0 can propose inspectable plans; executor remains future and v0 does not perform autonomous side effects |
+| Execution | Planner v0 proposes inspectable plans; Executor v0 can execute approved internal-only actions with dry-run default and no external side effects |
 
 ## Facets (twelve)
 
@@ -28,7 +28,7 @@ Product vocabulary for modular components:
 11. Behavior
 12. Learning
 
-Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `PlannerFacet v0`, `VerifierFacet v0`, `ContextFacet`, and `EchoFacet`; `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, `PlannerFacet v0` proposes deterministic inspectable plans without execution, and `VerifierFacet v0` runs deterministic post-decision inspection before persistence.
+Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `PlannerFacet v0`, `ExecutorFacet v0`, `VerifierFacet v0`, `ContextFacet`, and `EchoFacet`; `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, `PlannerFacet v0` proposes deterministic inspectable plans, `ExecutorFacet v0` performs approved internal-only execution with dry-run default, and `VerifierFacet v0` runs deterministic post-decision inspection before persistence.
 
 ## Nexus loop (current v0)
 
@@ -39,7 +39,7 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - Apply policy guardrails before finalizing the initial action: policy `DENIED` results force `RECORD`, and policy `APPROVAL_REQUIRED` results force `ASK`, even if another facet proposed `ACT`.
 - Run deterministic verifier checks against the event, facet results, initial decision, and configured state-dir metadata. Unsafe or structurally invalid `ACT` decisions may be downgraded to `ASK` or `RECORD` before persistence.
 - Persist the updated runtime snapshot plus an append-only event log, including verifier metadata as a `FacetResult`.
-- Avoid autonomous tool execution; `ACT` is only a typed decision for now.
+- Avoid autonomous external tool execution; `ACT` is still only a typed decision, and Executor v0 only records or applies approved internal state actions.
 
 ## Data stores (current v0)
 
@@ -116,6 +116,30 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - **v2** - LLM-assisted step generation, hierarchical plans, and world-model uncertainty signals that can require approval. **Future.**
 - **v3** - predictive planning, plan evaluation loops, and adversarial checking. **Future.**
 
+## Executor v0 (current)
+
+- **Internal actions only** - `fullerene/executor/` plus `ExecutorFacet` accept planner output and execute only inspectable internal actions: `noop`, `emit_event`, `update_goal`, `update_belief`, and dry-run-only `update_memory`.
+- **Dry-run default** - execution happens only when `event.metadata["execute_plan"]` is true, and it stays in dry-run mode unless `event.metadata["dry_run"] == false`.
+- **Conservative preflight** - Executor v0 halts before mutation when any step is blocked, requires approval, is high-risk, targets an external side effect, or declares an unsupported action type.
+- **No partial execution** - the runner validates the full plan first, then executes; if one step is refused, later steps are not attempted and earlier live mutations do not occur.
+- **Every action logged** - execution produces structured `ExecutionRecord` / `ExecutionResult` payloads that are persisted through normal facet metadata and `state.json` facet state.
+- **No external side effects** - no shell, network, git, arbitrary file operations, dynamic skill loading, permission modification, or tool execution.
+
+## Executor roadmap
+
+- **v0** - internal actions only; no shell, network, git, or external file writes; dry-run default; every action logged; no partial execution; refuses unapproved, blocked, or unsupported actions. **Current.**
+- **v1** - sandboxed file operations, skill registry, and approval gate. **Future.**
+- **v2** - constrained network/git read access, parallel step execution, resource monitoring, and rollback support. **Future.**
+- **v3** - full skill ecosystem, execution learning, adaptive approval thresholds, and execution identity plus audit trail. **Future.**
+
+## Helmet Rule
+
+- **v0** - Fullerene can update its own state.
+- **v1** - Fullerene can touch files and invoke skills.
+- **v2** - Fullerene can read the network and git.
+- **v3** - Fullerene can act in the world.
+- **Trust is not given. It is accumulated.**
+
 ## Policy v0 (current)
 
 - **Deterministic constraint layer** - `PolicyFacet` does not plan, reason with an LLM, infer new rules, or execute tools. It only evaluates modeled actions against explicit rules plus built-in sandbox defaults.
@@ -181,8 +205,10 @@ flowchart LR
 | World model facet | `fullerene/facets/world_model.py` | Deterministic active-belief lookup and relevance scoring; no inference or reasoning |
 | Policy facet | `fullerene/facets/policy.py` | Deterministic permission/approval evaluation plus built-in internal-sandbox allowance and external-approval fallback |
 | Planner facet | `fullerene/facets/planner.py` | Deterministic plan proposal layer with pressure-aware step shaping, policy filtering, and no execution |
+| Executor facet | `fullerene/facets/executor.py` | Deterministic internal-only execution layer with dry-run default, preflight refusal rules, and inspectable execution records |
 | Verifier facet | `fullerene/facets/verifier.py` | Deterministic post-decision verifier that can downgrade unsafe `ACT` decisions before persistence |
 | Context models and assembler | `fullerene/context/` | `ContextItem`, `ContextWindow`, and `StaticContextAssembler` for Context v0 |
+| Executor models and runner | `fullerene/executor/` | `ExecutionRecord`, `ExecutionResult`, `ExecutionStatus`, and `InternalActionExecutor` for controlled internal action execution |
 | Memory facet | `fullerene/facets/memory.py` | Deterministic episodic storage with v1 tag/salience inference plus bounded retrieval |
 | Goals models and store | `fullerene/goals/` | `Goal`, `GoalStatus`, `GoalSource`, and SQLite-backed canonical goals store |
 | Memory models and store | `fullerene/memory/` | `MemoryRecord`, scoring helpers, deterministic tag/salience inference (`inference.py`), and SQLite-backed canonical memory |

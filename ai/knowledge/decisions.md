@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-04-27 - Executor v0 is an internal-only execution layer with dry-run default and no partial execution
+
+- **Status:** accepted
+- **Context:** Fullerene already had deterministic planning, policy, and verification layers, but it still lacked a controlled place to carry out approved internal actions without collapsing execution into planner logic or opening external side effects.
+- **Decision:** Implement `fullerene/executor/` plus `ExecutorFacet` as a deterministic execution boundary. Executor v0 accepts inspectable plans, validates every step before mutation, defaults to dry-run, executes only supported internal actions, and halts on the first blocked, approval-gated, high-risk, unsupported, or malformed step. It does not run shell commands, network calls, git actions, arbitrary file operations, tool execution, or LLM-driven skills.
+- **Consequences:** Fullerene now has a concrete "hands" layer that remains narrow, inspectable, and policy-constrained. Planner still proposes, Policy still decides allowed vs approval-required vs denied, and Verifier still validates safety. Future executor versions can widen capability behind explicit roadmap and trust-boundary decisions instead of silently expanding v0.
+
 ## 2026-04-27 - Planner v0 is a deterministic plan-proposal facet with policy-filtered steps and no execution
 
 - **Status:** accepted

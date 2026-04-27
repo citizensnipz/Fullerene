@@ -4,6 +4,7 @@ from fullerene.facets.behavior import BehaviorFacet
 from fullerene.facets.base import Facet
 from fullerene.facets.context import ContextFacet
 from fullerene.facets.echo import EchoFacet
+from fullerene.facets.executor import ExecutorFacet
 from fullerene.facets.goals import GoalsFacet
 from fullerene.facets.memory import MemoryFacet
 from fullerene.facets.planner import PlannerFacet
@@ -15,6 +16,7 @@ __all__ = [
     "BehaviorFacet",
     "ContextFacet",
     "EchoFacet",
+    "ExecutorFacet",
     "Facet",
     "GoalsFacet",
     "MemoryFacet",

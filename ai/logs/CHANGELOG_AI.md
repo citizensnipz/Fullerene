@@ -9,6 +9,15 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-27 (executor)
+
+- Added `fullerene/executor/` with `ActionType`, `ExecutionMode`, `ExecutionRecord`, `ExecutionResult`, `ExecutionStatus`, and `InternalActionExecutor` for conservative internal-only plan execution.
+- Added `fullerene/facets/executor.py` and exported `ExecutorFacet`; it executes only when `execute_plan` is requested, defaults to dry-run, reads the latest planner payload from facet state, never proposes `ACT`, and records structured execution metadata.
+- Updated `fullerene/facets/planner.py` so planner state updates now persist `last_plan`, and updated `fullerene/planner/builder.py` so current planner-generated steps declare explicit `noop` action types for safe Executor v0 handling.
+- Updated `fullerene/cli.py` with `--executor`, `--execute-plan`, and `--live`; planner now feeds executor in CLI runs without a broader Nexus rewrite.
+- Added `tests/test_executor.py` covering executor models, runner refusal behavior, no-partial-execution guarantees, facet behavior, Nexus integration, and CLI coverage.
+- Updated `ai/project/architecture.md`, `ai/knowledge/glossary.md`, `ai/knowledge/decisions.md`, and `ai/logs/SESSION_LOG.md` for Executor v0, the Helmet Rule, and the explicit v1-v3 execution roadmap.
+
 ### 2026-04-27 (planner)
 
 - Added `fullerene/planner/` with `Plan`, `PlanStep`, `PlanStatus`, `PlanStepStatus`, `RiskLevel`, and `DeterministicPlanBuilder` for deterministic, inspectable plan proposals.

@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-27 - Executor v0 internal-only execution
+
+- **Context:** Add Executor v0 so planner output can be carried through a controlled execution layer without opening external side effects or blurring planner/policy/verifier boundaries.
+- **Done:** Added `fullerene/executor/` with `ExecutionRecord`, `ExecutionResult`, enums, and `InternalActionExecutor`; added `fullerene/facets/executor.py`; updated `PlannerFacet` state updates so later facets can read the current plan payload without a Nexus API rewrite; marked planner-generated steps as explicit `noop` actions for safe v0 execution; wired `ExecutorFacet` into `fullerene/facets/__init__.py`, `fullerene/__init__.py`, and `fullerene/cli.py` behind `--executor`, `--execute-plan`, and `--live`; added `tests/test_executor.py`; updated architecture, glossary, decisions, and changelog docs with Executor v0, the Helmet Rule, and the v1-v3 roadmap.
+- **Verified:** `python -m unittest tests.test_executor -v`; `python -m unittest discover -s tests -p "test_*.py" -v`; `python -m fullerene --planner --executor --execute-plan --content "make a plan for this"`; `python -m fullerene --planner --executor --execute-plan --live --content "make a plan for this" --metadata "{\"target_type\": \"shell\"}"`
+- **Next:** Decide whether Planner v1 should emit richer explicit internal action payloads beyond `noop`, so Executor can graduate from plan-trace execution to targeted state mutations without overloading v0 heuristics.
+- **Blockers:** Full-suite runtime is long enough that the first `unittest discover` run hit the harness timeout even though the suite finished cleanly; rerun with a larger timeout when the harness cap matters.
+
 ### 2026-04-27 - Planner v0 deterministic plan proposals
 
 - **Context:** Add Planner v0 as a deterministic, inspectable facet that can propose ordered steps without executing anything or adding a full pressure subsystem.

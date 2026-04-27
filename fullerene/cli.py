@@ -11,6 +11,7 @@ from fullerene.facets import (
     BehaviorFacet,
     ContextFacet,
     EchoFacet,
+    ExecutorFacet,
     GoalsFacet,
     MemoryFacet,
     PlannerFacet,
@@ -81,6 +82,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--planner",
         action="store_true",
         help="Enable the deterministic PlannerFacet for this run.",
+    )
+    parser.add_argument(
+        "--executor",
+        action="store_true",
+        help="Enable the deterministic ExecutorFacet for this run.",
+    )
+    parser.add_argument(
+        "--execute-plan",
+        action="store_true",
+        help="Request plan execution through ExecutorFacet for this run.",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Execute plans live instead of the default dry-run simulation.",
     )
     parser.add_argument(
         "--event-type",
@@ -156,6 +172,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     metadata = _parse_metadata(parser, args.metadata)
     if args.pressure is not None:
         metadata["pressure"] = _clamp_unit(args.pressure)
+    if args.execute_plan:
+        metadata["execute_plan"] = True
+    if args.live:
+        metadata["dry_run"] = False
 
     state_dir = Path(args.state_dir)
     store = FileStateStore(state_dir)
@@ -219,6 +239,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 goal_store=goal_store,
                 world_model_store=world_store,
                 policy_store=policy_store,
+                state_dir=state_dir,
+            )
+        )
+    if args.executor:
+        facets.append(
+            ExecutorFacet(
+                goal_store=goal_store,
+                world_model_store=world_store,
+                memory_store=memory_store,
                 state_dir=state_dir,
             )
         )

@@ -45,6 +45,7 @@ class PlannerFacet:
                 summary="Planner facet did not propose a plan for this event.",
                 proposed_decision=DecisionAction.WAIT,
                 state_updates={
+                    "last_plan": None,
                     "last_plan_id": None,
                     "last_trigger_reason": None,
                     "last_plan_confidence": 0.0,
@@ -77,6 +78,7 @@ class PlannerFacet:
             ),
             proposed_decision=DecisionAction.RECORD,
             state_updates={
+                "last_plan": plan.to_dict(),
                 "last_plan_id": plan.id,
                 "last_trigger_reason": trigger_reason,
                 "last_plan_confidence": plan.confidence,
