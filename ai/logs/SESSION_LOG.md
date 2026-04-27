@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-27 - Learning v0 stateless feedback loop
+
+- **Context:** Add Learning v0 so Fullerene can observe explicit feedback and deterministic runtime outcomes, then emit conservative adjustment records without owning its own store.
+- **Done:** Added `fullerene/learning/` (`models.py`, `signals.py`, `adjustments.py`, `__init__.py`) plus `fullerene/facets/learning.py`; wired `LearningFacet` into `fullerene/facets/__init__.py`, `fullerene/__init__.py`, `fullerene/cli.py`, and the `--learning` CLI flag; added the smallest safe memory-store mutation API (`update_memory_salience`) and reused existing goal-store updates for minor nudges; added `tests/test_learning.py` covering models, signal classification, adjustment generation, store integration, facet behavior, runtime integration, and CLI smoke coverage.
+- **Verified:** `python -m unittest tests.test_learning -v`; `python -m unittest discover -s tests -p "test_*.py" -v`; `python -m fullerene --learning --content "that worked" --metadata "{\"feedback\": \"positive\"}"`; `python -m fullerene --learning --goals --content "that was wrong" --metadata "{\"feedback\": \"negative\"}"`; `python -m fullerene --planner --executor --learning --execute-plan --content "make a plan for this"`
+- **Next:** Decide whether Behavior v1 should expose a real threshold/config surface so Learning can move beyond proposal-only behavior adjustments without widening v0 scope.
+- **Blockers:** None
+
 ### 2026-04-27 - Executor v0 hardening pass
 
 - **Context:** Tighten Executor v0 so it stays explicit and conservative without adding any new action capabilities.

@@ -28,7 +28,7 @@ Product vocabulary for modular components:
 11. Behavior
 12. Learning
 
-Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `PlannerFacet v0`, `ExecutorFacet v0`, `VerifierFacet v0`, `ContextFacet`, and `EchoFacet`; `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, `PlannerFacet v0` proposes deterministic inspectable plans, `ExecutorFacet v0` performs approved internal-only execution with dry-run default, and `VerifierFacet v0` runs deterministic post-decision inspection before persistence.
+Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `PlannerFacet v0`, `ExecutorFacet v0`, `VerifierFacet v0`, `LearningFacet v0`, `ContextFacet`, and `EchoFacet`; `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, `PlannerFacet v0` proposes deterministic inspectable plans, `ExecutorFacet v0` performs approved internal-only execution with dry-run default, `VerifierFacet v0` runs deterministic post-decision inspection before persistence, and `LearningFacet v0` classifies deterministic feedback and emits traceable adjustment records without owning its own persistent store.
 
 ## Nexus loop (current v0)
 
@@ -97,6 +97,29 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - **Inspectable confidence only** - `confidence` and `confidence_breakdown` are deterministic trace fields for inspection/debugging, not probabilistic ML confidence or model uncertainty.
 - **Conservative policy** - empty/no-signal events wait; normal user messages record; response/uncertainty signals ask; explicit low-risk actions can propose `ACT`.
 - **No execution** - `ACT` is only a typed proposal for a future executor; Nexus v0 still performs no autonomous tool execution or irreversible side effects.
+
+## Learning v0 (current)
+
+- **Stateless feedback processor only** - `fullerene/learning/` plus `LearningFacet` do not own canonical memory, goals, world-model beliefs, policy rules, or behavior configuration. Learning v0 records signals and adjustment records, but it owns no persistent store of its own.
+- **Signal sources** - Learning v0 classifies explicit user feedback, executor outcomes, and goal lifecycle metadata through deterministic rules only. No LLM calls, embeddings, RAG, graph reasoning, or sentiment model are used.
+- **Outputs** - `LearningSignal`, `AdjustmentRecord`, and `LearningResult` payloads are inspectable, serializable, and traced back to a source signal/event.
+- **Safe mutation boundary** - Learning may apply only minor nudges to existing memory salience or goal priority values when the current store supports that update cleanly. Behavior-related changes are proposal-only in the current runtime because no behavior threshold/config store exists yet.
+- **Conservative update rule** - target values are nudged with a small EMA-style adjustment (`alpha = 0.1`) and capped to minor changes only. Larger changes become proposals instead of silent writes.
+- **No autonomous reconfiguration** - Learning v0 does not mutate policy rules, its own rules, executor permissions, model weights, or any other major control surface.
+
+## Learning roadmap
+
+- **v0** - explicit feedback only; no automatic propagation; no LLM calls; no self-modification; minor nudges only; major changes become proposals; every adjustment is traced to a source signal. **Current.**
+- **v1** - Hebbian edge strengthening, Bayesian confidence updates, salience decay validation, and cross-facet signal routing. **Future.**
+- **v2** - temporal-difference credit assignment, cluster-level learning, skill track records, and an execution pattern library. **Future.**
+- **v3** - meta-learning, behavioral policy refinement, expression outcome tracking, contradiction-driven belief restructuring, and an optional small trained model for signal classification. **Future.**
+
+## Stove Rule
+
+- **v0** - Bob touches the stove, you tell him it was hot, and he notes it down carefully.
+- **v1** - Bob touches the stove, it fails, and he associates that cluster with failure signals.
+- **v2** - Bob traces back through everything that led to touching the stove.
+- **v3** - Bob generalizes that stoves are bad and updates the world model with support.
 
 ## Planner v0 (current)
 
@@ -209,7 +232,9 @@ flowchart LR
 | Policy facet | `fullerene/facets/policy.py` | Deterministic permission/approval evaluation plus built-in internal-sandbox allowance and external-approval fallback |
 | Planner facet | `fullerene/facets/planner.py` | Deterministic plan proposal layer with pressure-aware step shaping, policy filtering, and no execution |
 | Executor facet | `fullerene/facets/executor.py` | Deterministic internal-only execution layer with dry-run default, preflight refusal rules, and inspectable execution records |
+| Learning facet | `fullerene/facets/learning.py` | Stateless feedback processor that classifies signals, emits traceable adjustments, and applies only minor safe nudges when an existing store supports them |
 | Verifier facet | `fullerene/facets/verifier.py` | Deterministic post-decision verifier that can downgrade unsafe `ACT` decisions before persistence |
+| Learning models and rules | `fullerene/learning/` | `LearningSignal`, `AdjustmentRecord`, `LearningResult`, deterministic signal classifiers, and conservative apply-or-propose adjustment logic |
 | Context models and assembler | `fullerene/context/` | `ContextItem`, `ContextWindow`, and `StaticContextAssembler` for Context v0 |
 | Executor models and runner | `fullerene/executor/` | `ExecutionRecord`, `ExecutionResult`, `ExecutionStatus`, and `InternalActionExecutor` for controlled internal action execution |
 | Memory facet | `fullerene/facets/memory.py` | Deterministic episodic storage with v1 tag/salience inference plus bounded retrieval |

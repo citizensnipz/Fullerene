@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-04-27 - Learning v0 is a stateless feedback bus with apply-or-propose adjustment records
+
+- **Status:** accepted
+- **Context:** Fullerene already had deterministic memory, goals, world model, behavior, policy, planner, executor, and verifier layers, but it still lacked a narrow place to close the feedback loop after outcomes were observed.
+- **Decision:** Implement `fullerene/learning/` plus `LearningFacet` as a stateless signal processor and feedback bus. Learning v0 classifies explicit user feedback, executor outcomes, and goal lifecycle metadata through deterministic rules only; it emits `LearningSignal`, `AdjustmentRecord`, and `LearningResult` payloads; it may apply only minor safe nudges to goal priority or memory salience when an existing store already supports that change cleanly; and it emits proposals instead of silently applying larger or unsupported changes. Learning owns no canonical persistent state of its own.
+- **Consequences:** Fullerene now has an explicit post-outcome adjustment boundary without collapsing learning into memory, goals, behavior, or policy ownership. Future richer learning can build on the same traceable artifacts, but v0 remains conservative: no self-modification, no policy mutation, no executor permission changes, and no model calls.
+
 ## 2026-04-27 - Executor v0 is an internal-only execution layer with dry-run default and no partial execution
 
 - **Status:** accepted

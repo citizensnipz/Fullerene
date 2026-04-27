@@ -42,6 +42,10 @@ Terms for harness and design discussions. Definitions follow the current repo wh
 | **VerificationResult** | Structured output from one deterministic verifier check: `check_name`, `status` (`passed`, `warning`, `failed`), `severity`, `message`, and metadata. |
 | **Policy compliance** | Whether the final Nexus decision is structurally consistent with explicit policy outcomes such as `denied`, `approval_required`, or explicit `allow`, especially for side-effectful `ACT` decisions. |
 | **Confidence** | In Behavior v0, confidence is a deterministic inspection score (`confidence` and `confidence_breakdown`) attached to policy output; it is not ML probability or model uncertainty. |
-| **Learning** | Structured updates to policy, goals, or world model from feedback - not neural training. |
+| **Learning** | Stateless feedback processor that observes explicit feedback and deterministic runtime outcomes, then emits traceable adjustment records or proposals. Learning v0 owns no persistent store of its own and does not perform neural training. |
+| **LearningSignal** | Inspectable classified feedback artifact with `signal_type`, `source`, bounded `magnitude`, optional event/record linkage, metadata, and explicit reasons. |
+| **AdjustmentRecord** | Inspectable adjustment artifact that names a target facet/field, records old/new values and delta when known, marks whether the change was applied, proposed, or skipped, and always points back to a `source_signal_id`. |
+| **EMA** | Exponential moving average update rule. Learning v0 uses a conservative `alpha = 0.1` to compute a desired direction of movement before minor-nudge caps and proposal thresholds are applied. |
+| **Proposal** | A non-applied adjustment suggestion emitted when the store/config surface is unavailable, the current value is unknown, or the requested change is too large to apply safely in v0. |
 | **Skill** | Injectable capability (files, git, inbox, and so on) under policy control. |
 | **Bob** | Example agent name from product vision; not a harness term. |

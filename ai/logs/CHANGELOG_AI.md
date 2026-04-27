@@ -9,6 +9,15 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-27 (learning)
+
+- Added `fullerene/learning/` with `LearningSignal`, `AdjustmentRecord`, `LearningResult`, deterministic feedback/execution/goal signal classifiers, and conservative apply-or-propose adjustment logic (`alpha = 0.1`, minor nudges only, major changes become proposals).
+- Added `fullerene/facets/learning.py` and exported `LearningFacet`; it is a stateless feedback processor that never proposes `ACT`, records inspectable learning metadata, and only applies supported minor salience/priority nudges.
+- Updated `fullerene/cli.py` with `--learning`, ordered after executor so Learning can observe current-cycle execution results through existing facet state updates, and reused configured memory/goal stores instead of creating a learning-owned store.
+- Added `update_memory_salience` to `fullerene/memory/store.py` as the smallest safe mutable memory API needed for Learning v0; goal priority nudges reuse the existing `GoalStore.update_goal` path.
+- Added `tests/test_learning.py` for learning models, signal classification, adjustment rules, store integration, full-stack Nexus integration, executor-observed outcomes, and CLI smoke coverage.
+- Updated `ai/project/architecture.md`, `ai/knowledge/glossary.md`, `ai/knowledge/decisions.md`, and `ai/logs/SESSION_LOG.md` for Learning v0, the v1-v3 roadmap, and the stove rule.
+
 ### 2026-04-27 (executor hardening)
 
 - Hardened `fullerene/executor/runner.py` so Executor v0 now uses explicit `ActionType -> handler` registration, refuses unsupported or external `target_type` values with distinct reason codes, never infers actions from step descriptions, and no longer backfills `emit_event` payloads from prose.

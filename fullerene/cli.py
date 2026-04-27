@@ -13,6 +13,7 @@ from fullerene.facets import (
     EchoFacet,
     ExecutorFacet,
     GoalsFacet,
+    LearningFacet,
     MemoryFacet,
     PlannerFacet,
     PolicyFacet,
@@ -87,6 +88,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--executor",
         action="store_true",
         help="Enable the deterministic ExecutorFacet for this run.",
+    )
+    parser.add_argument(
+        "--learning",
+        action="store_true",
+        help="Enable the stateless LearningFacet for this run.",
     )
     parser.add_argument(
         "--execute-plan",
@@ -249,6 +255,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 world_model_store=world_store,
                 memory_store=memory_store,
                 state_dir=state_dir,
+            )
+        )
+    if args.learning:
+        facets.append(
+            LearningFacet(
+                memory_store=memory_store,
+                goal_store=goal_store,
             )
         )
     facets.append(EchoFacet())

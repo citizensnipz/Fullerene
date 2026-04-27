@@ -5,6 +5,9 @@ from __future__ import annotations
 from importlib import import_module
 
 __all__ = [
+    "AdjustmentRecord",
+    "AdjustmentStatus",
+    "AdjustmentTarget",
     "BehaviorFacet",
     "Belief",
     "BeliefSource",
@@ -33,6 +36,9 @@ __all__ = [
     "GoalStore",
     "InMemoryStateStore",
     "InternalActionExecutor",
+    "LearningFacet",
+    "LearningResult",
+    "LearningSignal",
     "MemoryFacet",
     "MemoryRecord",
     "MemoryStore",
@@ -56,6 +62,8 @@ __all__ = [
     "PolicyTargetType",
     "RiskLevel",
     "ActionType",
+    "SignalSource",
+    "SignalType",
     "VerificationResult",
     "VerificationSeverity",
     "VerificationStatus",
@@ -81,6 +89,7 @@ def __getattr__(name: str):
         "EchoFacet",
         "ExecutorFacet",
         "GoalsFacet",
+        "LearningFacet",
         "MemoryFacet",
         "PlannerFacet",
         "PolicyFacet",
@@ -88,6 +97,16 @@ def __getattr__(name: str):
         "WorldModelFacet",
     }:
         return getattr(import_module("fullerene.facets"), name)
+    if name in {
+        "AdjustmentRecord",
+        "AdjustmentStatus",
+        "AdjustmentTarget",
+        "LearningResult",
+        "LearningSignal",
+        "SignalSource",
+        "SignalType",
+    }:
+        return getattr(import_module("fullerene.learning"), name)
     if name in {
         "ActionType",
         "ExecutionMode",

@@ -33,6 +33,9 @@ class MemoryStore(Protocol):
     def retrieve_relevant(self, event: Event, limit: int) -> list[MemoryRecord]:
         """Return a bounded, deterministically ranked set of related memories."""
 
+    def update_memory_salience(self, memory_id: str, salience: float) -> None:
+        """Persist a salience-only edit to an existing memory record."""
+
 
 class SQLiteMemoryStore:
     """SQLite-backed source of truth for Fullerene memory."""
@@ -170,6 +173,21 @@ class SQLiteMemoryStore:
             reverse=True,
         )
         return ranked[:bounded_limit]
+
+    def update_memory_salience(self, memory_id: str, salience: float) -> None:
+        normalized_salience = MemoryRecord._validate_score("salience", salience)
+        with closing(self._connect()) as connection:
+            cursor = connection.execute(
+                """
+                UPDATE memories
+                SET salience = ?
+                WHERE id = ?
+                """,
+                (normalized_salience, memory_id),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"Memory {memory_id!r} does not exist")
+            connection.commit()
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(str(self.path), timeout=30.0)
