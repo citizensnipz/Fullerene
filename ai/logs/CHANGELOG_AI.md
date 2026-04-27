@@ -9,6 +9,14 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-27 (context)
+
+- Added `fullerene/context/` with `ContextItem`, `ContextItemType`, `ContextWindow`, `STATIC_RECENT_EPISODIC_V0`, and `StaticContextAssembler`.
+- Added `fullerene/facets/context.py` and exported `ContextFacet`; it assembles a bounded static context window from `MemoryStore.list_recent(limit, memory_type=episodic)` and returns inspectable window metadata without planning or retrieval heuristics.
+- Updated `fullerene/cli.py` with `--context` and `--context-window-size`; `--memory` and `--context` now share one memory-store instance, and `ContextFacet` is ordered before `MemoryFacet` so the context window reflects prior stored episodic records rather than the current event.
+- Added `tests/test_context.py` for context model serialization, assembler bounds/filtering, empty-store handling, Nexus integration, and CLI multi-run behavior.
+- Updated `ai/project/architecture.md`, `ai/knowledge/glossary.md`, and `ai/logs/SESSION_LOG.md` for Context v0, with v1-v3 explicitly marked future-only.
+
 ### 2026-04-27 (verifier)
 
 - Added `fullerene/verifier/` with `VerificationStatus`, `VerificationSeverity`, `VerificationResult`, `VerificationSummary`, and deterministic checks for decision shape, facet-result shape, policy compliance, and conservative `ACT` approval requirements.

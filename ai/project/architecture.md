@@ -28,7 +28,7 @@ Product vocabulary for modular components:
 11. Behavior
 12. Learning
 
-Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `VerifierFacet v0`, and `EchoFacet`; `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, and `VerifierFacet v0` runs deterministic post-decision inspection before persistence.
+Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `ContextFacet`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `VerifierFacet v0`, and `EchoFacet`; `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, and `VerifierFacet v0` runs deterministic post-decision inspection before persistence.
 
 ## Nexus loop (current v0)
 
@@ -71,6 +71,22 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - **v1** - better deterministic scoring, tagging rules, and salience heuristics. **Current.**
 - **v2** - embeddings / vector retrieval as a non-canonical index layered on top of SQLite.
 - **v3** - memory links / graph structure, reflection or compression, and affect-weighted salience.
+
+## Context v0 (current)
+
+- **Static working packet only** - `ContextFacet` assembles a small inspectable context window for the current run. It is deliberately boring and deterministic.
+- **Source material** - only the recent `N` episodic memory records are included. No goals, world model, policy, planner, or verifier data are assembled into Context v0.
+- **Bounded retrieval only** - context uses `MemoryStore.list_recent(limit=N, memory_type=episodic)` and does not scan or load all memory.
+- **No dynamic assembly** - no salience cutoff, no pressure system, no embeddings, no vector search, no LLM summarization, and no context compression.
+- **Manual runtime scope** - the CLI enables context explicitly with `--context`, and `--context-window-size` controls the static bound.
+- **Read-only role** - Context v0 is the current working packet available to Nexus and future reasoning systems; it is not a planner, reasoning engine, retrieval model, or executor.
+
+## Context roadmap
+
+- **v0** - static working memory window from recent episodic records only. **Current.**
+- **v1** - dynamically assembled from active facets, pulling current goals, recent memories, and a world-model snapshot under deterministic scoping rules. **Future.**
+- **v2** - relevance-filtered and pressure-relevant assembly with cluster-informed inclusion and salience cutoffs instead of arbitrary `N`. **Future.**
+- **v3** - self-editing context, semantic consolidation, predictive loading, and pressure signaling when the context window overloads. **Future.**
 
 ## Behavior v0 (current)
 
@@ -142,10 +158,12 @@ flowchart LR
 | Facet interface | `fullerene/facets/base.py` | `Facet` protocol |
 | Example facet | `fullerene/facets/echo.py` | Small bundled facet for smoke/testing |
 | Behavior facet | `fullerene/facets/behavior.py` | Deterministic, inspectable decision policy for `WAIT` / `RECORD` / `ASK` / `ACT` |
+| Context facet | `fullerene/facets/context.py` | Static recent-episodic working-context assembly; deterministic, inspectable, and read-only |
 | Goals facet | `fullerene/facets/goals.py` | Deterministic active-goal lookup and relevance scoring; no planning or execution |
 | World model facet | `fullerene/facets/world_model.py` | Deterministic active-belief lookup and relevance scoring; no inference or reasoning |
 | Policy facet | `fullerene/facets/policy.py` | Deterministic permission/approval evaluation plus built-in internal-sandbox allowance and external-approval fallback |
 | Verifier facet | `fullerene/facets/verifier.py` | Deterministic post-decision verifier that can downgrade unsafe `ACT` decisions before persistence |
+| Context models and assembler | `fullerene/context/` | `ContextItem`, `ContextWindow`, and `StaticContextAssembler` for Context v0 |
 | Memory facet | `fullerene/facets/memory.py` | Deterministic episodic storage with v1 tag/salience inference plus bounded retrieval |
 | Goals models and store | `fullerene/goals/` | `Goal`, `GoalStatus`, `GoalSource`, and SQLite-backed canonical goals store |
 | Memory models and store | `fullerene/memory/` | `MemoryRecord`, scoring helpers, deterministic tag/salience inference (`inference.py`), and SQLite-backed canonical memory |

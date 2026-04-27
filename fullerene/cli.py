@@ -9,6 +9,7 @@ from typing import Any, Sequence
 
 from fullerene.facets import (
     BehaviorFacet,
+    ContextFacet,
     EchoFacet,
     GoalsFacet,
     MemoryFacet,
@@ -40,6 +41,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--memory",
         action="store_true",
         help="Enable the SQLite-backed MemoryFacet for this run.",
+    )
+    parser.add_argument(
+        "--context",
+        action="store_true",
+        help=(
+            "Enable the static recent-episodic ContextFacet for this run. "
+            "Without --memory it reads from the memory DB but does not store the "
+            "current event."
+        ),
     )
     parser.add_argument(
         "--behavior",
@@ -91,9 +101,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--memory-db",
         default=None,
         help=(
-            "SQLite path used by --memory runs. "
+            "SQLite path used by --memory and --context runs. "
             "Defaults to <state-dir>/memory.sqlite3 when omitted."
         ),
+    )
+    parser.add_argument(
+        "--context-window-size",
+        type=int,
+        default=5,
+        help="Maximum number of recent episodic memories included by --context.",
     )
     parser.add_argument(
         "--goals-db",
@@ -135,11 +151,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         metadata=metadata,
     )
     facets = []
-    if args.memory:
+    memory_store: SQLiteMemoryStore | None = None
+    if args.memory or args.context:
         memory_db_path = (
             Path(args.memory_db) if args.memory_db else state_dir / "memory.sqlite3"
         )
         memory_store = SQLiteMemoryStore(memory_db_path)
+    if args.context:
+        facets.append(
+            ContextFacet(
+                memory_store,
+                window_size=args.context_window_size,
+            )
+        )
+    if args.memory:
         facets.append(MemoryFacet(memory_store))
     if args.goals:
         goals_db_path = (

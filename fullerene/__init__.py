@@ -9,6 +9,10 @@ __all__ = [
     "Belief",
     "BeliefSource",
     "BeliefStatus",
+    "ContextFacet",
+    "ContextItem",
+    "ContextItemType",
+    "ContextWindow",
     "DecisionAction",
     "EchoFacet",
     "Event",
@@ -47,6 +51,7 @@ __all__ = [
     "SQLiteMemoryStore",
     "SQLitePolicyStore",
     "SQLiteWorldModelStore",
+    "StaticContextAssembler",
     "StateStore",
     "WorldModelFacet",
     "WorldModelStore",
@@ -58,6 +63,7 @@ def __getattr__(name: str):
         return getattr(import_module("fullerene.facets.base"), name)
     if name in {
         "BehaviorFacet",
+        "ContextFacet",
         "EchoFacet",
         "GoalsFacet",
         "MemoryFacet",
@@ -66,6 +72,13 @@ def __getattr__(name: str):
         "WorldModelFacet",
     }:
         return getattr(import_module("fullerene.facets"), name)
+    if name in {
+        "ContextItem",
+        "ContextItemType",
+        "ContextWindow",
+        "StaticContextAssembler",
+    }:
+        return getattr(import_module("fullerene.context"), name)
     if name in {"Goal", "GoalSource", "GoalStatus", "GoalStore", "SQLiteGoalStore"}:
         return getattr(import_module("fullerene.goals"), name)
     if name in {"MemoryRecord", "MemoryStore", "MemoryType", "SQLiteMemoryStore"}:

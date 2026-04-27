@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-27 - Context v0 static recent episodic window
+
+- **Context:** Add Context v0 as a simple static working-context facet without dynamic assembly, embeddings, salience filtering, or planner behavior.
+- **Done:** Added `fullerene/context/` (`models.py`, `assembler.py`, `__init__.py`) plus `fullerene/facets/context.py`; wired `ContextFacet` into `fullerene/cli.py` behind `--context` and `--context-window-size`; reused the same memory SQLite store object when `--memory` and `--context` run together; added `tests/test_context.py`; updated architecture and glossary docs for Context v0 and deferred v1-v3 roadmap notes.
+- **Verified:** `python -m unittest tests.test_context -v`; `python -m unittest discover -s tests -p "test_*.py" -v`; `python -m fullerene --memory --context --content "first context memory" --state-dir state/.smoke-context-v0`; `python -m fullerene --memory --context --content "second context memory" --state-dir state/.smoke-context-v0`; `python -m fullerene --memory --context --context-window-size 2 --content "show recent context" --state-dir state/.smoke-context-v0`
+- **Next:** If future behavior or planner work needs more than recent episodic memory, add Context v1 as deterministic multi-facet assembly rather than widening v0.
+- **Blockers:** None
+
 ### 2026-04-27 - Verifier v0 deterministic post-decision checks
 
 - **Context:** Add a deterministic verifier that validates Nexus decisions and facet outputs after aggregation, with special safety checks around `ACT`.
