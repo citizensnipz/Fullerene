@@ -13,6 +13,7 @@ from fullerene.facets import (
     EchoFacet,
     GoalsFacet,
     MemoryFacet,
+    PlannerFacet,
     PolicyFacet,
     VerifierFacet,
     WorldModelFacet,
@@ -77,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable deterministic post-decision verification for this run.",
     )
     parser.add_argument(
+        "--planner",
+        action="store_true",
+        help="Enable the deterministic PlannerFacet for this run.",
+    )
+    parser.add_argument(
         "--event-type",
         choices=[event_type.value for event_type in EventType],
         default=EventType.USER_MESSAGE.value,
@@ -91,6 +97,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--metadata",
         default=None,
         help="Optional JSON object attached to the event metadata.",
+    )
+    parser.add_argument(
+        "--pressure",
+        type=float,
+        default=None,
+        help="Optional deterministic planning pressure override clamped to 0.0-1.0.",
     )
     parser.add_argument(
         "--state-dir",
@@ -142,6 +154,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     metadata = _parse_metadata(parser, args.metadata)
+    if args.pressure is not None:
+        metadata["pressure"] = _clamp_unit(args.pressure)
 
     state_dir = Path(args.state_dir)
     store = FileStateStore(state_dir)
@@ -152,6 +166,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     facets = []
     memory_store: SQLiteMemoryStore | None = None
+    goal_store: SQLiteGoalStore | None = None
+    world_store: SQLiteWorldModelStore | None = None
+    policy_store: SQLitePolicyStore | None = None
     if args.memory or args.context:
         memory_db_path = (
             Path(args.memory_db) if args.memory_db else state_dir / "memory.sqlite3"
@@ -196,6 +213,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         except ValueError as exc:
             parser.error(str(exc))
         facets.append(PolicyFacet(policy_store, state_dir=state_dir))
+    if args.planner:
+        facets.append(
+            PlannerFacet(
+                goal_store=goal_store,
+                world_model_store=world_store,
+                policy_store=policy_store,
+                state_dir=state_dir,
+            )
+        )
     facets.append(EchoFacet())
     if args.verify:
         facets.append(VerifierFacet(state_dir=state_dir))
@@ -404,3 +430,7 @@ def _policy_metadata_payload(metadata: dict[str, Any]) -> dict[str, Any]:
             continue
         payload[key] = value
     return payload
+
+
+def _clamp_unit(value: float) -> float:
+    return max(0.0, min(float(value), 1.0))

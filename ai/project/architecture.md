@@ -9,7 +9,7 @@ This file gives shared names and intent from the product description so the harn
 | State | Memory, goals, world model, and other structured runtime state |
 | Control | Behavior, policy, and verification boundaries |
 | Signal | Facets contribute observations, updates, and proposals |
-| Execution | Planner and executor remain future components; v0 does not perform autonomous side effects |
+| Execution | Planner v0 can propose inspectable plans; executor remains future and v0 does not perform autonomous side effects |
 
 ## Facets (twelve)
 
@@ -28,7 +28,7 @@ Product vocabulary for modular components:
 11. Behavior
 12. Learning
 
-Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `VerifierFacet v0`, `ContextFacet`, and `EchoFacet`; `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, and `VerifierFacet v0` runs deterministic post-decision inspection before persistence.
+Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `PlannerFacet v0`, `VerifierFacet v0`, `ContextFacet`, and `EchoFacet`; `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, `PlannerFacet v0` proposes deterministic inspectable plans without execution, and `VerifierFacet v0` runs deterministic post-decision inspection before persistence.
 
 ## Nexus loop (current v0)
 
@@ -98,6 +98,24 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - **Conservative policy** - empty/no-signal events wait; normal user messages record; response/uncertainty signals ask; explicit low-risk actions can propose `ACT`.
 - **No execution** - `ACT` is only a typed proposal for a future executor; Nexus v0 still performs no autonomous tool execution or irreversible side effects.
 
+## Planner v0 (current)
+
+- **Deterministic and model-free** - `fullerene/planner/` plus `PlannerFacet` do not call an LLM, embedding system, graph engine, executor, or external tool.
+- **Trigger scope only** - Planner v0 runs only for explicit plan requests (`request_plan` or simple planning phrases) or when a high-priority active goal is present and the current event explicitly asks for next steps.
+- **Inputs** - active goals from the optional goals store, active beliefs from the optional world-model store, policy constraints when a policy store is available, and a simple pressure signal taken from `event.metadata["pressure"]`, then `event.metadata["salience"]`, then current behavior confidence, else `0.0`.
+- **Outputs** - a proposed `Plan` with ordered `PlanStep` rows, inspectable `confidence`, `pressure`, `reasons`, and step-level `risk_level` / `requires_approval` / `policy_status` metadata.
+- **Pressure behavior** - pressure >= `0.7` yields a shorter, more direct 2-step plan and lowers the proposal threshold slightly; lower pressure yields up to 3 clarifying or exploratory steps.
+- **Policy filtering** - Planner v0 can evaluate steps through the existing policy logic when a policy store is configured; denied steps are marked `blocked`, approval-gated steps are marked `requires_approval`, and high-risk steps require approval even without an explicit policy match.
+- **Verifier visibility** - Planner does not approve or execute anything. It marks risk and approval requirements so verifier checks and future executor work can inspect them later.
+- **No execution or tool calls** - Planner v0 never emits tool execution, shell/network/git use, or autonomous side effects.
+
+## Planner roadmap
+
+- **v0** - deterministic, no LLM, explicit-request or high-priority-goal trigger, policy-filtered inspectable `Plan` / `PlanStep` output, no execution. **Current.**
+- **v1** - context-aware planning, multi-goal planning, and plan memory. **Future.**
+- **v2** - LLM-assisted step generation, hierarchical plans, and world-model uncertainty signals that can require approval. **Future.**
+- **v3** - predictive planning, plan evaluation loops, and adversarial checking. **Future.**
+
 ## Policy v0 (current)
 
 - **Deterministic constraint layer** - `PolicyFacet` does not plan, reason with an LLM, infer new rules, or execute tools. It only evaluates modeled actions against explicit rules plus built-in sandbox defaults.
@@ -162,11 +180,13 @@ flowchart LR
 | Goals facet | `fullerene/facets/goals.py` | Deterministic active-goal lookup and relevance scoring; no planning or execution |
 | World model facet | `fullerene/facets/world_model.py` | Deterministic active-belief lookup and relevance scoring; no inference or reasoning |
 | Policy facet | `fullerene/facets/policy.py` | Deterministic permission/approval evaluation plus built-in internal-sandbox allowance and external-approval fallback |
+| Planner facet | `fullerene/facets/planner.py` | Deterministic plan proposal layer with pressure-aware step shaping, policy filtering, and no execution |
 | Verifier facet | `fullerene/facets/verifier.py` | Deterministic post-decision verifier that can downgrade unsafe `ACT` decisions before persistence |
 | Context models and assembler | `fullerene/context/` | `ContextItem`, `ContextWindow`, and `StaticContextAssembler` for Context v0 |
 | Memory facet | `fullerene/facets/memory.py` | Deterministic episodic storage with v1 tag/salience inference plus bounded retrieval |
 | Goals models and store | `fullerene/goals/` | `Goal`, `GoalStatus`, `GoalSource`, and SQLite-backed canonical goals store |
 | Memory models and store | `fullerene/memory/` | `MemoryRecord`, scoring helpers, deterministic tag/salience inference (`inference.py`), and SQLite-backed canonical memory |
+| Planner models and builder | `fullerene/planner/` | `Plan`, `PlanStep`, `RiskLevel`, and deterministic `DeterministicPlanBuilder` for inspectable plan generation |
 | Policy models and store | `fullerene/policy/` | `PolicyRule`, policy enums, and SQLite-backed canonical policy rule storage |
 | Verifier models and checks | `fullerene/verifier/` | `VerificationResult` / `VerificationSummary` plus deterministic structural and policy-compliance checks |
 | World model models and store | `fullerene/world_model/` | `Belief`, `BeliefStatus`, `BeliefSource`, and SQLite-backed canonical world model |

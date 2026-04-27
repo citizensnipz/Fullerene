@@ -97,6 +97,7 @@ class BehaviorFacet:
             ),
             proposed_decision=selected_decision,
             state_updates={
+                "last_event_id": event.event_id,
                 "last_selected_decision": selected_decision.value,
                 "last_confidence": confidence,
                 "last_salience": signals.salience,

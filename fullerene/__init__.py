@@ -14,6 +14,7 @@ __all__ = [
     "ContextItemType",
     "ContextWindow",
     "DecisionAction",
+    "DeterministicPlanBuilder",
     "EchoFacet",
     "Event",
     "EventType",
@@ -35,6 +36,11 @@ __all__ = [
     "NexusRecord",
     "NexusRuntime",
     "NexusState",
+    "Plan",
+    "PlannerFacet",
+    "PlanStatus",
+    "PlanStep",
+    "PlanStepStatus",
     "PolicyFacet",
     "PolicyRule",
     "PolicyRuleType",
@@ -42,6 +48,7 @@ __all__ = [
     "PolicyStatus",
     "PolicyStore",
     "PolicyTargetType",
+    "RiskLevel",
     "VerificationResult",
     "VerificationSeverity",
     "VerificationStatus",
@@ -67,11 +74,21 @@ def __getattr__(name: str):
         "EchoFacet",
         "GoalsFacet",
         "MemoryFacet",
+        "PlannerFacet",
         "PolicyFacet",
         "VerifierFacet",
         "WorldModelFacet",
     }:
         return getattr(import_module("fullerene.facets"), name)
+    if name in {
+        "DeterministicPlanBuilder",
+        "Plan",
+        "PlanStatus",
+        "PlanStep",
+        "PlanStepStatus",
+        "RiskLevel",
+    }:
+        return getattr(import_module("fullerene.planner"), name)
     if name in {
         "ContextItem",
         "ContextItemType",

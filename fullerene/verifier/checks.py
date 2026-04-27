@@ -246,6 +246,65 @@ class PolicyComplianceCheck:
         )
 
 
+class PlanSafetyCheck:
+    name = "plan_safety"
+
+    def run(self, context: VerificationContext) -> VerificationResult:
+        planner_plan = _planner_plan(context.facet_results)
+        if planner_plan is None:
+            return VerificationResult(
+                check_name=self.name,
+                status=VerificationStatus.PASSED,
+                severity=VerificationSeverity.INFO,
+                message="No planner output was available to validate.",
+            )
+
+        issues: list[str] = []
+        plan_status = str(planner_plan.get("status", "") or "").strip().lower()
+        raw_steps = planner_plan.get("steps", [])
+        if not isinstance(raw_steps, list):
+            return VerificationResult(
+                check_name=self.name,
+                status=VerificationStatus.FAILED,
+                severity=VerificationSeverity.ERROR,
+                message="Planner metadata contained a malformed steps payload.",
+                metadata={"recommended_action": DecisionAction.RECORD.value},
+            )
+
+        for index, step in enumerate(raw_steps):
+            if not isinstance(step, Mapping):
+                issues.append(f"steps[{index}] is not dict-like")
+                continue
+            step_id = str(step.get("id") or f"steps[{index}]")
+            risk_level = str(step.get("risk_level", "") or "").strip().lower()
+            requires_approval = bool(step.get("requires_approval"))
+            step_status = str(step.get("status", "") or "").strip().lower()
+
+            if risk_level == "high" and not requires_approval:
+                issues.append(f"{step_id}: high-risk step must require approval")
+            if step_status == "blocked" and plan_status == "approved":
+                issues.append(f"{step_id}: blocked step cannot appear in an approved plan")
+
+        if issues:
+            return VerificationResult(
+                check_name=self.name,
+                status=VerificationStatus.FAILED,
+                severity=VerificationSeverity.ERROR,
+                message="Planner output violates deterministic plan safety rules.",
+                metadata={
+                    "issues": issues,
+                    "recommended_action": DecisionAction.RECORD.value,
+                },
+            )
+
+        return VerificationResult(
+            check_name=self.name,
+            status=VerificationStatus.PASSED,
+            severity=VerificationSeverity.INFO,
+            message="Planner output satisfies deterministic risk and approval rules.",
+        )
+
+
 class ActRequiresApprovalCheck:
     name = "act_requires_approval"
 
@@ -304,6 +363,7 @@ DEFAULT_CHECKS: tuple[VerificationCheck, ...] = (
     DecisionShapeCheck(),
     FacetResultShapeCheck(),
     PolicyComplianceCheck(),
+    PlanSafetyCheck(),
     ActRequiresApprovalCheck(),
 )
 
@@ -396,6 +456,17 @@ def _policy_results(facet_results: Sequence[FacetResult]) -> list[FacetResult]:
         if isinstance(metadata, Mapping) and "policy_status" in metadata:
             matches.append(result)
     return matches
+
+
+def _planner_plan(facet_results: Sequence[FacetResult]) -> Mapping[str, Any] | None:
+    for result in facet_results:
+        metadata = getattr(result, "metadata", None)
+        if not isinstance(metadata, Mapping):
+            continue
+        plan = metadata.get("plan")
+        if isinstance(plan, Mapping):
+            return plan
+    return None
 
 
 def _has_policy_status(

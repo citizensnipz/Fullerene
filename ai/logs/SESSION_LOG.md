@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-27 - Planner v0 deterministic plan proposals
+
+- **Context:** Add Planner v0 as a deterministic, inspectable facet that can propose ordered steps without executing anything or adding a full pressure subsystem.
+- **Done:** Added `fullerene/planner/` (`models.py`, `builder.py`, `__init__.py`) plus `fullerene/facets/planner.py`; wired `PlannerFacet` into `fullerene/facets/__init__.py`, `fullerene/__init__.py`, and `fullerene/cli.py` behind `--planner` and `--pressure`; planner can read optional goals/world/policy stores, derive pressure from event metadata or behavior confidence, generate ordered plans, and mark blocked / approval-required steps deterministically; added verifier `PlanSafetyCheck`; added `tests/test_planner.py`; updated architecture, glossary, decisions, and changelog docs for Planner v0 and the v1-v3 roadmap.
+- **Verified:** `python -m unittest tests.test_planner -v`; `python -m unittest discover -s tests -p "test_*.py" -v`; `python -m fullerene --planner --content "make a plan for this"`; `python -m fullerene --planner --pressure 0.8 --content "what are the steps?"`; `python -m fullerene --planner --goals --world --policy --content "what are the next steps?"`
+- **Next:** If Planner v1 lands, keep the current `Plan` / `PlanStep` data model stable and add richer context or multi-goal selection around it instead of widening Planner v0 into execution.
+- **Blockers:** None
+
 ### 2026-04-27 - Context v0 static recent episodic window
 
 - **Context:** Add Context v0 as a simple static working-context facet without dynamic assembly, embeddings, salience filtering, or planner behavior.

@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-04-27 - Planner v0 is a deterministic plan-proposal facet with policy-filtered steps and no execution
+
+- **Status:** accepted
+- **Context:** Fullerene already had deterministic memory, goals, world model, behavior, policy, verifier, and context layers, but it still lacked a first-class place to propose ordered next steps without collapsing planning into behavior or introducing tool execution.
+- **Decision:** Implement `fullerene/planner/` plus `PlannerFacet` as a deterministic, model-free plan proposal layer. Planner v0 triggers only on explicit plan requests or when a high-priority active goal is present and the current event explicitly asks for next steps. It emits inspectable `Plan` / `PlanStep` objects with deterministic confidence, simple pressure handling, step-level risk labels, and policy-filtered approval/blocking metadata. It does not execute steps or call tools.
+- **Consequences:** Fullerene now has a distinct planning boundary that remains transparent and testable in v0. Future richer planning can build on the same plan objects, but execution stays separate and must still pass policy plus verifier checks.
+
 ## 2026-04-27 - Verifier v0 runs deterministic post-decision checks and may downgrade unsafe ACT decisions
 
 - **Status:** accepted

@@ -9,6 +9,15 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-27 (planner)
+
+- Added `fullerene/planner/` with `Plan`, `PlanStep`, `PlanStatus`, `PlanStepStatus`, `RiskLevel`, and `DeterministicPlanBuilder` for deterministic, inspectable plan proposals.
+- Added `fullerene/facets/planner.py` and exported `PlannerFacet`; it triggers on explicit planning requests or high-priority active goals, derives simple pressure from event metadata / salience / behavior confidence, emits ordered steps, and never executes actions.
+- Updated `fullerene/cli.py` with `--planner` and `--pressure`; when planner is enabled it reuses any configured goals/world/policy stores rather than creating separate planner-only storage.
+- Added verifier `PlanSafetyCheck` in `fullerene/verifier/checks.py` so high-risk planner steps must require approval and blocked steps cannot appear inside an approved plan payload.
+- Added `tests/test_planner.py` for planner models, builder behavior, policy filtering, facet behavior, Nexus integration, verifier safety, and CLI coverage.
+- Updated `ai/project/architecture.md`, `ai/knowledge/glossary.md`, `ai/knowledge/decisions.md`, and `ai/logs/SESSION_LOG.md` for Planner v0 plus explicit v1-v3 future roadmap notes.
+
 ### 2026-04-27 (context polish)
 
 - Confirmed `ContextFacet` export remains available from `fullerene.facets` and added explicit coverage in `tests/test_context.py`.
