@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-27 - Executor v0 hardening pass
+
+- **Context:** Tighten Executor v0 so it stays explicit and conservative without adding any new action capabilities.
+- **Done:** Reworked `fullerene/executor/runner.py` to use explicit action-handler maps, removed action inference from `target_type` except explicit `noop`, removed description-based `emit_event` payload fallback, split unsupported failures into clearer reason codes (`unsupported_action_type`, `unsupported_target_type`, `unsupported_live_action`, `execution_failed`), and kept halt-on-first-failure behavior intact; updated `fullerene/executor/models.py` so unresolved failure records can leave `action_type` empty instead of guessing; tightened `fullerene/cli.py` so `--live` only flips execution mode when `--execute-plan` is also set; expanded `tests/test_executor.py` with strict reason-code, no-inference, no-bypass, and no-partial-execution coverage.
+- **Verified:** `python -m unittest tests.test_executor -v`; `python -m unittest discover -s tests -p "test_*.py" -v`; `python -m fullerene --planner --executor --execute-plan --content "make a plan for this"`; `python -m fullerene --planner --executor --execute-plan --live --content "make a plan for this"`
+- **Next:** If Planner v1 needs richer live execution, add explicit internal action payloads instead of widening Executor v0 inference rules.
+- **Blockers:** None
+
 ### 2026-04-27 - Executor v0 internal-only execution
 
 - **Context:** Add Executor v0 so planner output can be carried through a controlled execution layer without opening external side effects or blurring planner/policy/verifier boundaries.

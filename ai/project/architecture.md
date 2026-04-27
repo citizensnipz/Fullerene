@@ -119,10 +119,13 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 ## Executor v0 (current)
 
 - **Internal actions only** - `fullerene/executor/` plus `ExecutorFacet` accept planner output and execute only inspectable internal actions: `noop`, `emit_event`, `update_goal`, `update_belief`, and dry-run-only `update_memory`.
+- **Explicit handler registry only** - Executor v0 uses an explicit `ActionType -> handler` mapping. It does not infer actions from `target_type`, parse natural language descriptions, or guess missing behavior.
 - **Dry-run default** - execution happens only when `event.metadata["execute_plan"]` is true, and it stays in dry-run mode unless `event.metadata["dry_run"] == false`.
-- **Conservative preflight** - Executor v0 halts before mutation when any step is blocked, requires approval, is high-risk, targets an external side effect, or declares an unsupported action type.
+- **Conservative preflight** - Executor v0 halts before mutation when any step is blocked, requires approval, is high-risk, targets an unsupported or external target type, or declares an unsupported action type.
+- **Loud failure semantics** - unknown actions fail with `unsupported_action_type`; unsupported or external targets fail with `unsupported_target_type`; live-only gaps fail with `unsupported_live_action`; runtime handler exceptions fail with `execution_failed`.
 - **No partial execution** - the runner validates the full plan first, then executes; if one step is refused, later steps are not attempted and earlier live mutations do not occur.
 - **Every action logged** - execution produces structured `ExecutionRecord` / `ExecutionResult` payloads that are persisted through normal facet metadata and `state.json` facet state.
+- **Live mode does not broaden permissions** - `--live` only enables already-supported internal mutations for an explicitly requested plan. It does not bypass approval, policy, or risk checks, and it does not unlock shell, network, git, or arbitrary file access.
 - **No external side effects** - no shell, network, git, arbitrary file operations, dynamic skill loading, permission modification, or tool execution.
 
 ## Executor roadmap

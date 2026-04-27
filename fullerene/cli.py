@@ -174,7 +174,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         metadata["pressure"] = _clamp_unit(args.pressure)
     if args.execute_plan:
         metadata["execute_plan"] = True
-    if args.live:
+    if args.live and args.execute_plan:
         metadata["dry_run"] = False
 
     state_dir = Path(args.state_dir)

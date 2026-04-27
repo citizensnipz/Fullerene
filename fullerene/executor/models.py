@@ -66,7 +66,7 @@ def coerce_action_type(raw_value: Any) -> ActionType | None:
 class ExecutionRecord:
     id: str = field(default_factory=lambda: uuid4().hex)
     created_at: datetime = field(default_factory=utcnow)
-    action_type: ActionType = ActionType.NOOP
+    action_type: ActionType | None = None
     plan_id: str | None = None
     plan_step_id: str | None = None
     status: ExecutionStatus = ExecutionStatus.SUCCESS
@@ -83,7 +83,7 @@ class ExecutionRecord:
         return {
             "id": self.id,
             "created_at": self.created_at.isoformat(),
-            "action_type": self.action_type.value,
+            "action_type": self.action_type.value if self.action_type is not None else None,
             "plan_id": self.plan_id,
             "plan_step_id": self.plan_step_id,
             "status": self.status.value,
@@ -94,10 +94,11 @@ class ExecutionRecord:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ExecutionRecord":
+        raw_action_type = data.get("action_type")
         return cls(
             id=data["id"],
             created_at=_parse_datetime(data["created_at"]),
-            action_type=ActionType(data.get("action_type", ActionType.NOOP.value)),
+            action_type=ActionType(raw_action_type) if raw_action_type else None,
             plan_id=data.get("plan_id"),
             plan_step_id=data.get("plan_step_id"),
             status=ExecutionStatus(data.get("status", ExecutionStatus.SUCCESS.value)),

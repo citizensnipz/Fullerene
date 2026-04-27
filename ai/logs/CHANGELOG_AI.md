@@ -9,6 +9,14 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-27 (executor hardening)
+
+- Hardened `fullerene/executor/runner.py` so Executor v0 now uses explicit `ActionType -> handler` registration, refuses unsupported or external `target_type` values with distinct reason codes, never infers actions from step descriptions, and no longer backfills `emit_event` payloads from prose.
+- Updated `fullerene/executor/models.py` so `ExecutionRecord.action_type` can stay unset when execution fails before a supported handler is resolved, avoiding misleading fallback action labels.
+- Tightened `fullerene/cli.py` so `--live` only flips execution mode when `--execute-plan` is also present.
+- Expanded `tests/test_executor.py` with coverage for unknown action/target failures, explicit reason-code assertions, no description-based execution inference, no-bypass `--live` behavior, and halt-on-first-failure semantics.
+- Updated `ai/project/architecture.md`, `ai/knowledge/glossary.md`, and `ai/logs/SESSION_LOG.md` to document explicit handlers, loud unknown-action failure, dry-run default, and the fact that live mode does not broaden Executor v0 permissions.
+
 ### 2026-04-27 (executor)
 
 - Added `fullerene/executor/` with `ActionType`, `ExecutionMode`, `ExecutionRecord`, `ExecutionResult`, `ExecutionStatus`, and `InternalActionExecutor` for conservative internal-only plan execution.
