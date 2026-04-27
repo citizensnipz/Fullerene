@@ -6,6 +6,7 @@ from fullerene.facets.echo import EchoFacet
 from fullerene.facets.goals import GoalsFacet
 from fullerene.facets.memory import MemoryFacet
 from fullerene.facets.policy import PolicyFacet
+from fullerene.facets.verifier import VerifierFacet
 from fullerene.facets.world_model import WorldModelFacet
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     "GoalsFacet",
     "MemoryFacet",
     "PolicyFacet",
+    "VerifierFacet",
     "WorldModelFacet",
 ]

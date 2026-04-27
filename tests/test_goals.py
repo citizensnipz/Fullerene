@@ -20,7 +20,7 @@ from fullerene.state import FileStateStore, InMemoryStateStore
 
 
 def make_tempdir_path() -> Path:
-    return workspace_state_root() / "goals_storage" / f".test-goals-{uuid4().hex}"
+    return workspace_state_root() / f".test-goals-{uuid4().hex}"
 
 
 class GoalModelTests(unittest.TestCase):

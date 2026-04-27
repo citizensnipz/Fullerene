@@ -27,7 +27,7 @@ from fullerene.state import FileStateStore
 
 
 def make_tempdir_path() -> Path:
-    return workspace_state_root() / "mem_storage" / f".test-memory-{uuid4().hex}"
+    return workspace_state_root() / f".test-memory-{uuid4().hex}"
 
 
 class TrackingMemoryStore:

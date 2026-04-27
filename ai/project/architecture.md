@@ -28,16 +28,17 @@ Product vocabulary for modular components:
 11. Behavior
 12. Learning
 
-Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, and `EchoFacet`; `BehaviorFacet v0` covers the first deterministic decision-selection role while `PolicyFacet v0` now enforces deterministic permission boundaries.
+Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `VerifierFacet v0`, and `EchoFacet`; `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, and `VerifierFacet v0` runs deterministic post-decision inspection before persistence.
 
 ## Nexus loop (current v0)
 
 - Accept an event plus the current runtime state.
 - Pass the event and state through registered facets.
 - Collect structured `FacetResult` objects.
-- Integrate those results into a small `NexusDecision` (`WAIT`, `ASK`, `ACT`, `RECORD`), using explicit proposal priority `ACT > ASK > RECORD > WAIT` when multiple facets disagree.
-- Apply policy guardrails before finalizing the action: policy `DENIED` results force `RECORD`, and policy `APPROVAL_REQUIRED` results force `ASK`, even if another facet proposed `ACT`.
-- Persist the updated runtime snapshot plus an append-only event log.
+- Integrate those results into a small initial `NexusDecision` (`WAIT`, `ASK`, `ACT`, `RECORD`), using explicit proposal priority `ACT > ASK > RECORD > WAIT` when multiple facets disagree.
+- Apply policy guardrails before finalizing the initial action: policy `DENIED` results force `RECORD`, and policy `APPROVAL_REQUIRED` results force `ASK`, even if another facet proposed `ACT`.
+- Run deterministic verifier checks against the event, facet results, initial decision, and configured state-dir metadata. Unsafe or structurally invalid `ACT` decisions may be downgraded to `ASK` or `RECORD` before persistence.
+- Persist the updated runtime snapshot plus an append-only event log, including verifier metadata as a `FacetResult`.
 - Avoid autonomous tool execution; `ACT` is only a typed decision for now.
 
 ## Data stores (current v0)
@@ -89,6 +90,15 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - **Evaluation precedence** - explicit `deny` wins over everything; explicit `require_approval` wins over explicit `allow` and `prefer`; `prefer` only annotates metadata; fallback sandbox rules apply when no stronger explicit rule matched.
 - **Behavior integration only** - policy can downgrade or block a proposed `ACT` by forcing `ASK` or `RECORD`, but it does not itself execute anything.
 
+## Verifier v0 (current)
+
+- **Deterministic and model-free** - `VerifierFacet` and `fullerene/verifier/` do not call an LLM, planner, executor, external judge, or truth-checking system.
+- **Post-decision inspection** - verifier runs after Nexus has aggregated an initial decision so it can validate the full decision trace instead of guessing from partial state.
+- **Current checks** - decision shape, facet-result shape, policy compliance, and conservative `ACT` approval requirements.
+- **Safety role** - verifier may downgrade an unsafe or structurally invalid `ACT` to `ASK` or `RECORD` before the record is persisted.
+- **Inspectable output** - verifier emits `verification_status`, `failed_checks`, `warnings`, per-check `results`, and human-readable `reasons` in its own `FacetResult` metadata.
+- **Not an LLM judge** - verifier does not decide truth, quality, or intent by heuristic language-model judgment. It only validates Fullerene's own deterministic runtime artifacts.
+
 ## Goals v0 (current)
 
 - **Explicit and persistent only** - goals are stored as inspectable records with `id`, `description`, `priority`, `status`, `tags`, timestamps, `source`, and `metadata`.
@@ -135,10 +145,12 @@ flowchart LR
 | Goals facet | `fullerene/facets/goals.py` | Deterministic active-goal lookup and relevance scoring; no planning or execution |
 | World model facet | `fullerene/facets/world_model.py` | Deterministic active-belief lookup and relevance scoring; no inference or reasoning |
 | Policy facet | `fullerene/facets/policy.py` | Deterministic permission/approval evaluation plus built-in internal-sandbox allowance and external-approval fallback |
+| Verifier facet | `fullerene/facets/verifier.py` | Deterministic post-decision verifier that can downgrade unsafe `ACT` decisions before persistence |
 | Memory facet | `fullerene/facets/memory.py` | Deterministic episodic storage with v1 tag/salience inference plus bounded retrieval |
 | Goals models and store | `fullerene/goals/` | `Goal`, `GoalStatus`, `GoalSource`, and SQLite-backed canonical goals store |
 | Memory models and store | `fullerene/memory/` | `MemoryRecord`, scoring helpers, deterministic tag/salience inference (`inference.py`), and SQLite-backed canonical memory |
 | Policy models and store | `fullerene/policy/` | `PolicyRule`, policy enums, and SQLite-backed canonical policy rule storage |
+| Verifier models and checks | `fullerene/verifier/` | `VerificationResult` / `VerificationSummary` plus deterministic structural and policy-compliance checks |
 | World model models and store | `fullerene/world_model/` | `Belief`, `BeliefStatus`, `BeliefSource`, and SQLite-backed canonical world model |
 | State store | `fullerene/state/store.py` | In-memory or file-backed JSON persistence |
 | CLI | `fullerene/cli.py`, `fullerene/__main__.py` | `python -m fullerene` |

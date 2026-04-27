@@ -172,6 +172,7 @@ class SQLiteWorldModelStore:
         connection = sqlite3.connect(str(self.path), timeout=30.0)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute("PRAGMA locking_mode = EXCLUSIVE")
         return connection
 
     def _initialize_schema(self) -> None:

@@ -33,9 +33,7 @@ from fullerene.world_model.models import utcnow
 
 
 def make_tempdir_path() -> Path:
-    return (
-        workspace_state_root() / "world_model_storage" / f".test-world-model-{uuid4().hex}"
-    )
+    return workspace_state_root() / f".test-world-model-{uuid4().hex}"
 
 
 class BeliefModelTests(unittest.TestCase):

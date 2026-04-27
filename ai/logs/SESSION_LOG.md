@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-27 - Verifier v0 deterministic post-decision checks
+
+- **Context:** Add a deterministic verifier that validates Nexus decisions and facet outputs after aggregation, with special safety checks around `ACT`.
+- **Done:** Added `fullerene/verifier/` (`models.py`, `checks.py`, `__init__.py`) plus `fullerene/facets/verifier.py`; wired `NexusRuntime` to run verifier facets after initial decision aggregation and allow them to downgrade unsafe `ACT` decisions before persistence; added CLI `--verify`; added `tests/test_verifier.py`; updated `fullerene/world_model/store.py` to use `PRAGMA locking_mode = EXCLUSIVE` so multi-store integration tests run cleanly on this filesystem.
+- **Verified:** `python -m unittest tests.test_verifier -v`; `python -m unittest tests.test_policy.PolicyRuntimeIntegrationTests.test_nexus_runs_with_memory_goals_world_behavior_policy_and_echo_facets -v`
+- **Next:** Consider whether verifier should eventually emit a first-class decision-trace object instead of only facet metadata once executor/planner work adds more intermediate artifacts.
+- **Blockers:** None
+
 ### 2026-04-26 - Rename `scratch/` → `state/`, world model under `state/world_model_storage/`
 
 - **Context:** Align the gitignored tree with the "state" name; keep world model tests from writing at repo root; mirror `mem_storage` / `goals_storage` with `world_model_storage` so it can be deleted wholesale.

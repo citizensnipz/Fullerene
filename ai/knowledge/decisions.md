@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-04-27 - Verifier v0 runs deterministic post-decision checks and may downgrade unsafe ACT decisions
+
+- **Status:** accepted
+- **Context:** Fullerene already had deterministic Behavior and Policy layers, but it still needed a final inspectable safeguard that could validate the aggregated decision trace itself before records were persisted.
+- **Decision:** Implement `fullerene/verifier/` plus `VerifierFacet` as a deterministic post-decision validation pass. Nexus now runs normal facets, aggregates an initial decision, then runs verifier checks against the event, facet results, initial decision, and configured state-dir metadata. If verifier finds an unsafe or structurally invalid `ACT`, it may downgrade that decision to `ASK` or `RECORD` before persistence.
+- **Consequences:** Fullerene gains a small internal test runner for its own decision process without adding model calls or autonomous execution. Verifier metadata is persisted as a normal `FacetResult`, so callers can inspect which checks failed and why. Future executor work can rely on both Policy and Verifier guardrails instead of behavior heuristics alone.
+
 ## 2026-04-26 - Policy v0 allows internal state CRUD and requires approval for external side effects
 
 - **Status:** accepted

@@ -38,6 +38,11 @@ __all__ = [
     "PolicyStatus",
     "PolicyStore",
     "PolicyTargetType",
+    "VerificationResult",
+    "VerificationSeverity",
+    "VerificationStatus",
+    "VerificationSummary",
+    "VerifierFacet",
     "SQLiteGoalStore",
     "SQLiteMemoryStore",
     "SQLitePolicyStore",
@@ -57,6 +62,7 @@ def __getattr__(name: str):
         "GoalsFacet",
         "MemoryFacet",
         "PolicyFacet",
+        "VerifierFacet",
         "WorldModelFacet",
     }:
         return getattr(import_module("fullerene.facets"), name)
@@ -74,6 +80,13 @@ def __getattr__(name: str):
         "SQLitePolicyStore",
     }:
         return getattr(import_module("fullerene.policy"), name)
+    if name in {
+        "VerificationResult",
+        "VerificationSeverity",
+        "VerificationStatus",
+        "VerificationSummary",
+    }:
+        return getattr(import_module("fullerene.verifier"), name)
     if name in {
         "Belief",
         "BeliefSource",

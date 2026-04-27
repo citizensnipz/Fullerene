@@ -9,6 +9,15 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-27 (verifier)
+
+- Added `fullerene/verifier/` with `VerificationStatus`, `VerificationSeverity`, `VerificationResult`, `VerificationSummary`, and deterministic checks for decision shape, facet-result shape, policy compliance, and conservative `ACT` approval requirements.
+- Added `fullerene/facets/verifier.py` and exported `VerifierFacet`; it runs after initial Nexus aggregation and persists inspectable verifier metadata as a normal `FacetResult`.
+- Updated `fullerene/nexus/runtime.py` so post-decision verifier facets can downgrade unsafe or structurally invalid `ACT` decisions to `ASK` or `RECORD` before persistence.
+- Updated `fullerene/cli.py` with `--verify`.
+- Added `tests/test_verifier.py` for verifier models, checks, Nexus integration, persisted metadata, and CLI smoke coverage.
+- Updated `fullerene/world_model/store.py` to use `PRAGMA locking_mode = EXCLUSIVE`, matching the other SQLite stores on this filesystem and fixing multi-store integration test stability.
+
 ### 2026-04-26 (repository state / world model)
 
 - Renamed the gitignored workspace tree from `scratch/` to `state/`; `fullerene/scratch.py` is now `fullerene/workspace_state.py` with `WORKSPACE_STATE_DIR_NAME`, `DEFAULT_STATE_DIR` (`state/.fullerene-state`), and `workspace_state_root()` to avoid clashing with the `fullerene.state` store package.

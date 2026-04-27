@@ -13,6 +13,7 @@ from fullerene.facets import (
     GoalsFacet,
     MemoryFacet,
     PolicyFacet,
+    VerifierFacet,
     WorldModelFacet,
 )
 from fullerene.goals import Goal, GoalSource, SQLiteGoalStore
@@ -59,6 +60,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--policy",
         action="store_true",
         help="Enable the SQLite-backed PolicyFacet for this run.",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Enable deterministic post-decision verification for this run.",
     )
     parser.add_argument(
         "--event-type",
@@ -166,6 +172,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error(str(exc))
         facets.append(PolicyFacet(policy_store, state_dir=state_dir))
     facets.append(EchoFacet())
+    if args.verify:
+        facets.append(VerifierFacet(state_dir=state_dir))
 
     runtime = NexusRuntime(facets=facets, store=store)
     record = runtime.process_event(event)

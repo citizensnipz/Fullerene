@@ -50,11 +50,26 @@ class Nexus:
     def process_event(self, event: Event) -> NexusRecord:
         working_state = NexusState.from_dict(self.state.to_dict())
         facet_results: list[FacetResult] = []
+        verifier_facets: list[Facet] = []
         for facet in self._facets:
+            if self._is_post_decision_verifier(facet):
+                verifier_facets.append(facet)
+                continue
             result = self._run_facet(facet, event, working_state)
             facet_results.append(result)
             self._apply_result_to_state(working_state, result)
         decision = self._integrate(event, facet_results)
+        for verifier in verifier_facets:
+            verifier_result = self._run_verifier(
+                verifier,
+                event,
+                working_state,
+                facet_results,
+                decision,
+            )
+            facet_results.append(verifier_result)
+            self._apply_result_to_state(working_state, verifier_result)
+            decision = self._apply_verifier_decision(decision, verifier_result)
         self.state.apply(event, facet_results, decision)
 
         record = NexusRecord(
@@ -100,6 +115,82 @@ class Nexus:
     def _facet_name(self, facet: Facet) -> str:
         raw_name = getattr(facet, "name", "") or facet.__class__.__name__
         return str(raw_name)
+
+    @staticmethod
+    def _is_post_decision_verifier(facet: Facet) -> bool:
+        return (
+            callable(getattr(facet, "verify", None))
+            and str(getattr(facet, "name", "") or "").strip().casefold() == "verifier"
+        )
+
+    def _run_verifier(
+        self,
+        facet: Facet,
+        event: Event,
+        state: NexusState,
+        facet_results: list[FacetResult],
+        decision: NexusDecision,
+    ) -> FacetResult:
+        verify = getattr(facet, "verify", None)
+        if not callable(verify):
+            return self._run_facet(facet, event, state)
+        try:
+            return verify(event, state, list(facet_results), decision)
+        except Exception as exc:
+            facet_name = self._facet_name(facet)
+            error_message = str(exc) or "Verifier raised without an error message."
+            return FacetResult(
+                facet_name=facet_name,
+                summary=(
+                    f"Verifier '{facet_name}' failed while validating the decision: "
+                    f"{error_message}"
+                ),
+                proposed_decision=DecisionAction.RECORD,
+                metadata={
+                    "verification_status": "failed",
+                    "failed_checks": ["verifier_runtime_error"],
+                    "warnings": [],
+                    "results": [
+                        {
+                            "check_name": "verifier_runtime_error",
+                            "status": "failed",
+                            "severity": "critical",
+                            "message": error_message,
+                            "metadata": {
+                                "recommended_action": DecisionAction.RECORD.value
+                            },
+                        }
+                    ],
+                    "reasons": [error_message],
+                    "error_type": exc.__class__.__name__,
+                    "error_message": error_message,
+                },
+            )
+
+    @staticmethod
+    def _apply_verifier_decision(
+        decision: NexusDecision,
+        verifier_result: FacetResult,
+    ) -> NexusDecision:
+        metadata = (
+            verifier_result.metadata if isinstance(verifier_result.metadata, dict) else {}
+        )
+        if metadata.get("verification_status") != "failed":
+            return decision
+        proposed_decision = verifier_result.proposed_decision
+        if proposed_decision is None or proposed_decision == decision.action:
+            return decision
+        source_facets = list(decision.source_facets)
+        if verifier_result.facet_name not in source_facets:
+            source_facets.append(verifier_result.facet_name)
+        return NexusDecision(
+            action=proposed_decision,
+            reason=(
+                f"Verifier downgraded {decision.action.value.upper()} to "
+                f"{proposed_decision.value.upper()}: {verifier_result.summary}"
+            ),
+            source_facets=source_facets,
+        )
 
     def _integrate(
         self,

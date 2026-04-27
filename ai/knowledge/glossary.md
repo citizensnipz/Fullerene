@@ -30,7 +30,9 @@ Terms for harness and design discussions. Definitions follow the current repo wh
 | **State-dir** | Explicit local directory that holds `state.json`, `runtime-log.jsonl`, and SQLite stores such as `memory.sqlite3`, `goals.sqlite3`, `world.sqlite3`, and `policy.sqlite3`. Internal CRUD inside this directory is allowed by default in Policy v0. The CLI default is `state/.fullerene-state` when `--state-dir` is omitted. |
 | **Planner** | Produces plans or next steps; may invoke an LLM later. |
 | **Executor** | Runs actions or skills under sandbox and permissions. Not implemented in v0 Nexus. |
-| **Verifier** | Checks plans or outputs against constraints before commit. |
+| **Verifier** | Deterministic post-decision inspection layer that validates Fullerene's own runtime artifacts before persistence. In v0 it checks decision shape, facet-result shape, policy compliance, and conservative `ACT` safety requirements; it is not an LLM judge, planner, executor, truth-checker, or hallucination detector. |
+| **VerificationResult** | Structured output from one deterministic verifier check: `check_name`, `status` (`passed`, `warning`, `failed`), `severity`, `message`, and metadata. |
+| **Policy compliance** | Whether the final Nexus decision is structurally consistent with explicit policy outcomes such as `denied`, `approval_required`, or explicit `allow`, especially for side-effectful `ACT` decisions. |
 | **Confidence** | In Behavior v0, confidence is a deterministic inspection score (`confidence` and `confidence_breakdown`) attached to policy output; it is not ML probability or model uncertainty. |
 | **Learning** | Structured updates to policy, goals, or world model from feedback - not neural training. |
 | **Skill** | Injectable capability (files, git, inbox, and so on) under policy control. |
