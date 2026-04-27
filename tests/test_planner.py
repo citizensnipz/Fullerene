@@ -90,6 +90,13 @@ class PlannerModelTests(unittest.TestCase):
         self.assertEqual(round_tripped, plan)
 
 
+class PlannerFacetExportTests(unittest.TestCase):
+    def test_planner_facet_is_exported_from_fullerene_facets(self) -> None:
+        from fullerene.facets import PlannerFacet as exported_planner_facet
+
+        self.assertIs(exported_planner_facet, PlannerFacet)
+
+
 class DeterministicPlanBuilderTests(unittest.TestCase):
     def setUp(self) -> None:
         self.root = make_tempdir_path()
@@ -605,6 +612,7 @@ class CLIPlannerIntegrationTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(planner_result["metadata"]["trigger_reason"], "explicit_request")
+        self.assertEqual(planner_result["proposed_decision"], "record")
 
     def test_cli_pressure_is_reflected_in_planner_metadata(self) -> None:
         stdout = io.StringIO()
@@ -656,6 +664,28 @@ class CLIPlannerIntegrationTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIsNotNone(planner_result["metadata"]["plan"])
         self.assertEqual(planner_result["proposed_decision"], "record")
+
+    def test_cli_planner_never_produces_act(self) -> None:
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            exit_code = cli_main(
+                [
+                    "--planner",
+                    "--content",
+                    "make a plan for this",
+                    "--state-dir",
+                    str(self.root),
+                ]
+            )
+
+        payload = json.loads(stdout.getvalue())
+        planner_result = next(
+            result for result in payload["facet_results"] if result["facet_name"] == "planner"
+        )
+
+        self.assertEqual(exit_code, 0)
+        self.assertNotEqual(planner_result["proposed_decision"], "act")
 
 
 if __name__ == "__main__":
