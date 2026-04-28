@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-28 - Attention v0 deterministic focus scoring
+
+- **Context:** Add Attention v0 as a deterministic, inspectable focus-scoring facet that can rank event, memory, goal, belief, and execution candidates without introducing broadcast, embeddings, or learned weighting.
+- **Done:** Added `fullerene/attention/` (`models.py`, `scoring.py`, `__init__.py`) plus `fullerene/facets/attention.py`; wired `AttentionFacet` into `fullerene/facets/__init__.py`, `fullerene/__init__.py`, and `fullerene/cli.py` behind `--attention`, `--attention-top-n`, and `--novelty`; Attention reads the current event plus available memory-store / goals-state / world-model-state / executor-state signals, emits `AttentionResult` metadata, selects top-N focus items with fixed weights, never proposes `ACT`, and does not broadcast; added `tests/test_attention.py` covering models, scoring, facet behavior, runtime integration, store non-mutation, and CLI smoke coverage.
+- **Verified:** `python -m unittest tests.test_attention -v`
+- **Next:** If Attention v1 lands, add an explicit broadcast contract from Attention to the other facets instead of overloading Context or Behavior with spotlight delivery.
+- **Blockers:** None
+
 ### 2026-04-27 - Learning v0 stateless feedback loop
 
 - **Context:** Add Learning v0 so Fullerene can observe explicit feedback and deterministic runtime outcomes, then emit conservative adjustment records without owning its own store.

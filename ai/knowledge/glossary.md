@@ -17,7 +17,11 @@ Terms for harness and design discussions. Definitions follow the current repo wh
 | **Salience** | Deterministic importance score in `[0.0, 1.0]` attached to a memory record. Memory v1 sums transparent signal boosts (user message, hard-rule-candidate, urgent, correction, authority, communication) over a base score and clamps. |
 | **Hard-rule-candidate** | Tag for content that uses absolute language (`never`, `always`, `must`, `don't ever`); a flag for content that may eventually become a stored hard rule. |
 | **Affect** | Signal layer: intensity, urgency, confidence-like cues from text (voice later); not only "mood." |
-| **Attention** | What the system foregrounds when building context. |
+| **Attention** | Deterministic focus selection for what deserves foregrounding right now. Attention v0 is a fixed-weight, metadata-only spotlight selector; it does not broadcast yet. |
+| **AttentionItem** | Inspectable scored focus candidate with `id`, `source`, optional `source_id`, `content`, weighted `components`, total `score`, a `dominant_component`, and metadata. |
+| **AttentionResult** | Inspectable Attention v0 output containing the selected top-N `focus_items`, per-candidate `scores`, optional `dominant_source`, strategy string, and metadata. |
+| **Focus item** | A candidate that survives Attention v0 competition and lands in the selected top-N list for the current cycle. |
+| **Broadcast** | Future Attention v1+ mechanism where the winning focus item is pushed back into the rest of the system. Not implemented in Attention v0. |
 | **Context** | Current working packet of information available to Nexus and future reasoning systems. Context v0 is deliberately small, deterministic, inspectable, and assembled only from recent episodic memory. |
 | **ContextWindow** | Serialized Context v0 packet with `id`, `created_at`, `items`, `max_items`, `strategy`, and metadata. The current strategy is `static_recent_episodic_v0`. |
 | **ContextItem** | One inspectable item inside a `ContextWindow`, with `id`, `item_type`, `content`, optional `source_id` / `created_at`, and metadata. Context v0 currently emits memory-backed items only. |
@@ -49,3 +53,9 @@ Terms for harness and design discussions. Definitions follow the current repo wh
 | **Proposal** | A non-applied adjustment suggestion emitted when the store/config surface is unavailable, the current value is unknown, or the requested change is too large to apply safely in v0. |
 | **Skill** | Injectable capability (files, git, inbox, and so on) under policy control. |
 | **Bob** | Example agent name from product vision; not a harness term. |
+| **Stage** | Theater-model shorthand for Context. |
+| **Spotlight** | Theater-model shorthand for Attention. |
+| **Audience** | Theater-model shorthand for the facets that may eventually receive attention broadcast. |
+| **Director** | Theater-model shorthand for Nexus as the global integration loop. |
+| **Script** | Theater-model shorthand for Goals. |
+| **Improvisation** | Theater-model shorthand for bottom-up salience and novelty signals that compete with top-down structure. |

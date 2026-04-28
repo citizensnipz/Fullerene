@@ -1,5 +1,6 @@
 """Facet interfaces and bundled example facets."""
 
+from fullerene.facets.attention import AttentionFacet
 from fullerene.facets.behavior import BehaviorFacet
 from fullerene.facets.base import Facet
 from fullerene.facets.context import ContextFacet
@@ -14,6 +15,7 @@ from fullerene.facets.verifier import VerifierFacet
 from fullerene.facets.world_model import WorldModelFacet
 
 __all__ = [
+    "AttentionFacet",
     "BehaviorFacet",
     "ContextFacet",
     "EchoFacet",

@@ -8,7 +8,7 @@ This file gives shared names and intent from the product description so the harn
 |--------|---------|
 | State | Memory, goals, world model, and other structured runtime state |
 | Control | Behavior, policy, and verification boundaries |
-| Signal | Facets contribute observations, updates, and proposals |
+| Signal | Facets contribute observations, updates, and proposals; Attention is the current spotlight selector for what should be foregrounded next |
 | Execution | Planner v0 proposes inspectable plans; Executor v0 can execute approved internal-only actions with dry-run default and no external side effects |
 
 ## Facets (twelve)
@@ -28,12 +28,13 @@ Product vocabulary for modular components:
 11. Behavior
 12. Learning
 
-Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `PlannerFacet v0`, `ExecutorFacet v0`, `VerifierFacet v0`, `LearningFacet v0`, `ContextFacet`, and `EchoFacet`; `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, `PlannerFacet v0` proposes deterministic inspectable plans, `ExecutorFacet v0` performs approved internal-only execution with dry-run default, `VerifierFacet v0` runs deterministic post-decision inspection before persistence, and `LearningFacet v0` classifies deterministic feedback and emits traceable adjustment records without owning its own persistent store.
+Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `AttentionFacet v0`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `PlannerFacet v0`, `ExecutorFacet v0`, `VerifierFacet v0`, `LearningFacet v0`, `ContextFacet`, and `EchoFacet`; `AttentionFacet v0` covers deterministic fixed-weight focus scoring without broadcast, `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, `PlannerFacet v0` proposes deterministic inspectable plans, `ExecutorFacet v0` performs approved internal-only execution with dry-run default, `VerifierFacet v0` runs deterministic post-decision inspection before persistence, and `LearningFacet v0` classifies deterministic feedback and emits traceable adjustment records without owning its own persistent store.
 
 ## Nexus loop (current v0)
 
 - Accept an event plus the current runtime state.
 - Pass the event and state through registered facets.
+- When enabled, Attention runs after the signal-producing facets already registered for the current run and scores candidate focus items from the current event plus available memory / goals / world-model / execution metadata.
 - Collect structured `FacetResult` objects.
 - Integrate those results into a small initial `NexusDecision` (`WAIT`, `ASK`, `ACT`, `RECORD`), using explicit proposal priority `ACT > ASK > RECORD > WAIT` when multiple facets disagree.
 - Apply policy guardrails before finalizing the initial action: policy `DENIED` results force `RECORD`, and policy `APPROVAL_REQUIRED` results force `ASK`, even if another facet proposed `ACT`.
@@ -71,6 +72,48 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - **v1** - better deterministic scoring, tagging rules, and salience heuristics. **Current.**
 - **v2** - embeddings / vector retrieval as a non-canonical index layered on top of SQLite.
 - **v3** - memory links / graph structure, reflection or compression, and affect-weighted salience.
+
+## Attention v0 (current)
+
+- **Deterministic spotlight only** - `fullerene/attention/` plus `AttentionFacet` implement a fixed-weight competition that scores what should receive focus right now. No LLM calls, embeddings, graph reasoning, RAG, or learned weights are involved.
+- **Metadata-only output** - Attention emits inspectable `AttentionItem` and `AttentionResult` payloads with weighted component breakdowns, per-candidate scores, dominant components, and top-N focus items. The default `top_n` is `3`.
+- **Current inputs** - the current event always becomes an attention candidate; relevant memories come from the optional memory store; relevant goals, beliefs, and execution outcomes are read from already-produced facet state when those facets are enabled earlier in the same run.
+- **No broadcast yet** - Attention v0 selects focus items but does not broadcast a winner to other facets, modify Context, or change stores. This keeps Attention separate from planning, execution, and decision authority.
+- **Global Workspace inspiration** - conceptually, Nexus is the director and Attention is the spotlight in a global-workspace-style loop. v0 implements only spotlight selection; the later broadcast mechanism remains future work.
+
+### Attention scoring formula
+
+```
+score = (
+    memory_salience     * 0.25 +
+    goal_priority       * 0.25 +
+    pressure            * 0.20 +
+    novelty             * 0.15 +
+    belief_uncertainty  * 0.10 +
+    execution_recency   * 0.05
+)
+```
+
+- Missing signals are treated as `0.0`.
+- Scores are clamped to `[0.0, 1.0]`.
+- `pressure` comes from `event.metadata["pressure"]` when present.
+- `novelty` comes from `event.metadata["novelty"]` when present, else a weak deterministic heuristic.
+
+### Attention roadmap
+
+- **v0** - deterministic fixed-weight scoring, top-N focus items, metadata only, no broadcast. **Current.**
+- **v1** - broadcast to facets, bottom-up vs top-down competition, conflict detection, and attention history. **Future.**
+- **v2** - ignition threshold, refractory period, cluster attention, and pressure modification. **Future.**
+- **v3** - learned weights, predictive attention, meta-attention, and an optional local classifier. **Future.**
+
+### Theater model metaphor
+
+- **Stage** = Context
+- **Spotlight** = Attention
+- **Audience** = facets
+- **Director** = Nexus
+- **Script** = Goals
+- **Improvisation** = bottom-up salience and novelty
 
 ## Context v0 (current)
 
@@ -236,8 +279,10 @@ flowchart LR
 | Verifier facet | `fullerene/facets/verifier.py` | Deterministic post-decision verifier that can downgrade unsafe `ACT` decisions before persistence |
 | Learning models and rules | `fullerene/learning/` | `LearningSignal`, `AdjustmentRecord`, `LearningResult`, deterministic signal classifiers, and conservative apply-or-propose adjustment logic |
 | Context models and assembler | `fullerene/context/` | `ContextItem`, `ContextWindow`, and `StaticContextAssembler` for Context v0 |
+| Attention models and scorer | `fullerene/attention/` | `AttentionItem`, `AttentionResult`, `AttentionSource`, and `FixedWeightAttentionScorer` for deterministic focus scoring |
 | Executor models and runner | `fullerene/executor/` | `ExecutionRecord`, `ExecutionResult`, `ExecutionStatus`, and `InternalActionExecutor` for controlled internal action execution |
 | Memory facet | `fullerene/facets/memory.py` | Deterministic episodic storage with v1 tag/salience inference plus bounded retrieval |
+| Attention facet | `fullerene/facets/attention.py` | Deterministic top-N focus scoring from event, memory, goals, world-model, and execution signals; no broadcast in v0 |
 | Goals models and store | `fullerene/goals/` | `Goal`, `GoalStatus`, `GoalSource`, and SQLite-backed canonical goals store |
 | Memory models and store | `fullerene/memory/` | `MemoryRecord`, scoring helpers, deterministic tag/salience inference (`inference.py`), and SQLite-backed canonical memory |
 | Planner models and builder | `fullerene/planner/` | `Plan`, `PlanStep`, `RiskLevel`, and deterministic `DeterministicPlanBuilder` for inspectable plan generation |

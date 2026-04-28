@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from fullerene.facets import (
+    AttentionFacet,
     BehaviorFacet,
     ContextFacet,
     EchoFacet,
@@ -53,6 +54,17 @@ def build_parser() -> argparse.ArgumentParser:
             "Without --memory it reads from the memory DB but does not store the "
             "current event."
         ),
+    )
+    parser.add_argument(
+        "--attention",
+        action="store_true",
+        help="Enable the deterministic AttentionFacet for this run.",
+    )
+    parser.add_argument(
+        "--attention-top-n",
+        type=int,
+        default=3,
+        help="Maximum number of focus items emitted by --attention.",
     )
     parser.add_argument(
         "--behavior",
@@ -143,6 +155,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional deterministic planning pressure override clamped to 0.0-1.0.",
     )
     parser.add_argument(
+        "--novelty",
+        type=float,
+        default=None,
+        help="Optional deterministic attention novelty override clamped to 0.0-1.0.",
+    )
+    parser.add_argument(
         "--state-dir",
         default=DEFAULT_STATE_DIR,
         help="Local directory for the runtime snapshot and append-only log.",
@@ -200,10 +218,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         metadata["target_goal_id"] = args.target_goal_id
     if args.pressure is not None:
         metadata["pressure"] = _clamp_unit(args.pressure)
+    if args.novelty is not None:
+        metadata["novelty"] = _clamp_unit(args.novelty)
     if args.execute_plan:
         metadata["execute_plan"] = True
     if args.live and args.execute_plan:
         metadata["dry_run"] = False
+    if args.attention_top_n < 1:
+        parser.error("--attention-top-n must be at least 1.")
 
     state_dir = Path(args.state_dir)
     store = FileStateStore(state_dir)
@@ -284,6 +306,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             LearningFacet(
                 memory_store=memory_store,
                 goal_store=goal_store,
+            )
+        )
+    if args.attention:
+        facets.append(
+            AttentionFacet(
+                memory_store=memory_store,
+                top_n=args.attention_top_n,
             )
         )
     facets.append(EchoFacet())

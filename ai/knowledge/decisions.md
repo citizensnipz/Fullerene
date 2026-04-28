@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-04-28 - Attention v0 is a deterministic metadata-only focus scorer with no broadcast
+
+- **Status:** accepted
+- **Context:** Fullerene already had deterministic memory, goals, world model, planner, executor, and learning signals, but it still lacked a narrow place to score what should receive foreground focus before any future broadcast mechanism exists.
+- **Decision:** Implement `fullerene/attention/` plus `AttentionFacet` as a fixed-weight, inspectable scoring layer. Attention v0 always considers the current event, can score additional memory / goal / belief / execution candidates when those signals are already available, emits `AttentionItem` and `AttentionResult` metadata, selects top-N focus items, and never proposes `ACT`. It does not broadcast a winner, mutate Context, or own a learned model.
+- **Consequences:** Fullerene now has an explicit spotlight boundary that is separate from behavior, planning, execution, and context assembly. Future attention broadcast, ignition, and learned weighting can build on the same inspectable artifacts without widening v0 into a decision-maker.
+
 ## 2026-04-27 - Learning v0 is a stateless feedback bus with apply-or-propose adjustment records
 
 - **Status:** accepted

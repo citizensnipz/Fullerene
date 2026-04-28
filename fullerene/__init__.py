@@ -8,6 +8,10 @@ __all__ = [
     "AdjustmentRecord",
     "AdjustmentStatus",
     "AdjustmentTarget",
+    "AttentionFacet",
+    "AttentionItem",
+    "AttentionResult",
+    "AttentionSource",
     "BehaviorFacet",
     "Belief",
     "BeliefSource",
@@ -29,6 +33,7 @@ __all__ = [
     "Facet",
     "FacetResult",
     "FileStateStore",
+    "FixedWeightAttentionScorer",
     "Goal",
     "GoalSource",
     "GoalStatus",
@@ -84,6 +89,7 @@ def __getattr__(name: str):
     if name in {"Facet"}:
         return getattr(import_module("fullerene.facets.base"), name)
     if name in {
+        "AttentionFacet",
         "BehaviorFacet",
         "ContextFacet",
         "EchoFacet",
@@ -97,6 +103,13 @@ def __getattr__(name: str):
         "WorldModelFacet",
     }:
         return getattr(import_module("fullerene.facets"), name)
+    if name in {
+        "AttentionItem",
+        "AttentionResult",
+        "AttentionSource",
+        "FixedWeightAttentionScorer",
+    }:
+        return getattr(import_module("fullerene.attention"), name)
     if name in {
         "AdjustmentRecord",
         "AdjustmentStatus",

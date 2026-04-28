@@ -9,6 +9,15 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-28 (attention)
+
+- Added `fullerene/attention/` with `AttentionSource`, `AttentionItem`, `AttentionResult`, fixed component weights, and `FixedWeightAttentionScorer` for deterministic focus scoring.
+- Added `fullerene/facets/attention.py` and exported `AttentionFacet`; it scores the current event plus any cleanly available memory / goals / world-model / execution candidates, emits top-N focus metadata, never proposes `ACT`, and does not broadcast in v0.
+- Updated `fullerene/cli.py` with `--attention`, `--attention-top-n`, and `--novelty`; `--pressure` is now reused by both planner and attention scoring, and Attention is appended after learning/executor signals but before `EchoFacet`.
+- Updated `fullerene/__init__.py` and `fullerene/facets/__init__.py` so attention models, scorer, and facet are part of the public runtime API.
+- Added `tests/test_attention.py` for attention model serialization, scorer math, facet behavior, non-broadcast/non-mutation guarantees, Nexus integration, and CLI smoke coverage.
+- Updated `ai/project/architecture.md`, `ai/knowledge/glossary.md`, `ai/knowledge/decisions.md`, and `ai/logs/SESSION_LOG.md` for Attention v0, its v1-v3 roadmap, Global Workspace inspiration, and the theater-model mapping.
+
 ### 2026-04-27 (learning)
 
 - Added `fullerene/learning/` with `LearningSignal`, `AdjustmentRecord`, `LearningResult`, deterministic feedback/execution/goal signal classifiers, and conservative apply-or-propose adjustment logic (`alpha = 0.1`, minor nudges only, major changes become proposals).
