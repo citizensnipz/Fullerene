@@ -718,6 +718,58 @@ class CLILearningIntegrationTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertTrue(learning_result["metadata"]["signals"])
 
+    def test_feedback_positive_flag_creates_user_feedback_positive_signal(self) -> None:
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            exit_code = cli_main(
+                [
+                    "--learning",
+                    "--feedback",
+                    "positive",
+                    "--content",
+                    "ignored by explicit flag",
+                    "--state-dir",
+                    str(self.root),
+                ]
+            )
+
+        payload = json.loads(stdout.getvalue())
+        learning_result = next(
+            result for result in payload["facet_results"] if result["facet_name"] == "learning"
+        )
+        signal = learning_result["metadata"]["signals"][0]
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(signal["source"], SignalSource.USER_FEEDBACK.value)
+        self.assertEqual(signal["signal_type"], SignalType.POSITIVE.value)
+
+    def test_feedback_negative_flag_creates_user_feedback_negative_signal(self) -> None:
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            exit_code = cli_main(
+                [
+                    "--learning",
+                    "--feedback",
+                    "negative",
+                    "--content",
+                    "ignored by explicit flag",
+                    "--state-dir",
+                    str(self.root),
+                ]
+            )
+
+        payload = json.loads(stdout.getvalue())
+        learning_result = next(
+            result for result in payload["facet_results"] if result["facet_name"] == "learning"
+        )
+        signal = learning_result["metadata"]["signals"][0]
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(signal["source"], SignalSource.USER_FEEDBACK.value)
+        self.assertEqual(signal["signal_type"], SignalType.NEGATIVE.value)
+
     def test_negative_feedback_smoke_command_creates_learning_metadata(self) -> None:
         stdout = io.StringIO()
 
@@ -742,6 +794,48 @@ class CLILearningIntegrationTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertTrue(learning_result["metadata"]["signals"])
+
+    def test_target_goal_id_flag_is_passed_into_metadata(self) -> None:
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            exit_code = cli_main(
+                [
+                    "--learning",
+                    "--target-goal-id",
+                    "goal-123",
+                    "--content",
+                    "that worked",
+                    "--state-dir",
+                    str(self.root),
+                ]
+            )
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["event"]["metadata"]["target_goal_id"], "goal-123")
+
+    def test_target_memory_id_flag_is_passed_into_metadata(self) -> None:
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            exit_code = cli_main(
+                [
+                    "--learning",
+                    "--target-memory-id",
+                    "mem-123",
+                    "--content",
+                    "that worked",
+                    "--state-dir",
+                    str(self.root),
+                ]
+            )
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["event"]["metadata"]["target_memory_id"], "mem-123")
 
 
 if __name__ == "__main__":

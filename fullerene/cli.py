@@ -121,6 +121,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional JSON object attached to the event metadata.",
     )
     parser.add_argument(
+        "--feedback",
+        choices=("positive", "negative"),
+        default=None,
+        help="Convenience shortcut for event.metadata['feedback'].",
+    )
+    parser.add_argument(
+        "--target-memory-id",
+        default=None,
+        help="Convenience shortcut for event.metadata['target_memory_id'].",
+    )
+    parser.add_argument(
+        "--target-goal-id",
+        default=None,
+        help="Convenience shortcut for event.metadata['target_goal_id'].",
+    )
+    parser.add_argument(
         "--pressure",
         type=float,
         default=None,
@@ -176,6 +192,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     metadata = _parse_metadata(parser, args.metadata)
+    if args.feedback is not None:
+        metadata["feedback"] = args.feedback
+    if args.target_memory_id is not None:
+        metadata["target_memory_id"] = args.target_memory_id
+    if args.target_goal_id is not None:
+        metadata["target_goal_id"] = args.target_goal_id
     if args.pressure is not None:
         metadata["pressure"] = _clamp_unit(args.pressure)
     if args.execute_plan:
