@@ -16,7 +16,12 @@ Terms for harness and design discussions. Definitions follow the current repo wh
 | **Tag inference** | Deterministic, lowercase-rule mapping from event content to memory tags (Memory v1). No model calls. |
 | **Salience** | Deterministic importance score in `[0.0, 1.0]` attached to a memory record. Memory v1 sums transparent signal boosts (user message, hard-rule-candidate, urgent, correction, authority, communication) over a base score and clamps. |
 | **Hard-rule-candidate** | Tag for content that uses absolute language (`never`, `always`, `must`, `don't ever`); a flag for content that may eventually become a stored hard rule. |
-| **Affect** | Signal layer: intensity, urgency, confidence-like cues from text (voice later); not only "mood." |
+| **Affect** | Fullerene's internal affective state vector, derived from its own cognitive activity rather than the user's emotions. Affect v0 is deterministic, inspectable, observation-only, and not sentiment analysis, emotion recognition, or a personality layer. |
+| **VAD** | Common affect-space shorthand for **valence**, **arousal**, and **dominance**. Fullerene Affect v0 uses VAD plus novelty. |
+| **Valence** | Internal positive-to-negative tone in `[-1.0, 1.0]`, derived in Affect v0 from goal progress, goal failure/staleness, feedback, and executor outcomes. |
+| **Arousal** | Internal calm-to-activated level in `[0.0, 1.0]`, derived in Affect v0 from pressure, urgency/salience, and attention spikes when available. |
+| **Dominance** | Internal sense of control vs overwhelm in `[0.0, 1.0]`, derived in Affect v0 from executor success/failure and world-model confidence signals when available. |
+| **Novelty** | Internal familiar-to-novel score in `[0.0, 1.0]`, derived in Affect v0 from explicit novelty metadata or inverse memory retrieval hit rate when available. |
 | **Attention** | Deterministic focus selection for what deserves foregrounding right now. Attention v0 is a fixed-weight, metadata-only spotlight selector; it does not broadcast yet. |
 | **AttentionItem** | Inspectable scored focus candidate with `id`, `source`, optional `source_id`, `content`, weighted `components`, total `score`, a `dominant_component`, and metadata. |
 | **AttentionResult** | Inspectable Attention v0 output containing the selected top-N `focus_items`, per-candidate `scores`, optional `dominant_source`, strategy string, and metadata. |

@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-04-28 - Affect v0 deterministic internal state
+
+- **Context:** Add Affect v0 as a deterministic internal VAD + novelty facet derived from Fullerene's own runtime signals, without emotion recognition, sentiment analysis, or any downstream modulation yet.
+- **Done:** Added `fullerene/affect/` (`models.py`, `derivation.py`, `history.py`, `__init__.py`) plus `fullerene/facets/affect.py`; wired `AffectFacet` into `fullerene/facets/__init__.py`, `fullerene/__init__.py`, and `fullerene/cli.py` behind `--affect` and `--affect-history-size`; Affect v0 reads deterministic feedback / goal-lifecycle / execution signals, pressure, attention scores, world-model confidence, and memory retrieval state when available, records inspectable `AffectState` / `AffectResult` metadata, keeps bounded history in facet state, always proposes `RECORD`, and does not mutate or influence other facets; added `tests/test_affect.py` covering models, derivation, history, facet behavior, full-stack Nexus integration, and CLI smoke coverage.
+- **Verified:** `python -m unittest tests.test_affect -v`; `python -m unittest discover -s tests -p "test_*.py" -v`; `python -m fullerene --affect --content "that worked" --metadata "{\"feedback\": \"positive\"}"`; `python -m fullerene --affect --pressure 0.8 --novelty 0.9 --content "something new happened"`; `python -m fullerene --learning --attention --affect --content "that was wrong" --metadata "{\"feedback\": \"negative\"}"`
+- **Next:** If Affect v1 lands, keep affect-derived modulation explicit and inspectable instead of letting other facets read ad-hoc affect fields directly.
+- **Blockers:** None
+
 ### 2026-04-28 - Attention v0 deterministic focus scoring
 
 - **Context:** Add Attention v0 as a deterministic, inspectable focus-scoring facet that can rank event, memory, goal, belief, and execution candidates without introducing broadcast, embeddings, or learned weighting.

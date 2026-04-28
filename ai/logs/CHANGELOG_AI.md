@@ -9,6 +9,15 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-28 (affect)
+
+- Added `fullerene/affect/` with `AffectState`, `AffectResult`, `AffectHistoryBuffer`, and `DeterministicAffectDeriver` for deterministic internal VAD + novelty derivation.
+- Added `fullerene/facets/affect.py` and exported `AffectFacet`; it records per-cycle affect state plus bounded history, always proposes `RECORD`, never proposes `ACT`, and does not mutate or influence other facets in v0.
+- Updated `fullerene/cli.py` with `--affect` and `--affect-history-size`; existing `--pressure` and `--novelty` flags are now shared with Affect as signal inputs.
+- Updated `fullerene/__init__.py` and `fullerene/facets/__init__.py` so affect models, deriver, history helper, and facet are part of the public runtime API.
+- Added `tests/test_affect.py` for affect model serialization, value clamping, derivation rules, history truncation, non-mutation guarantees, Nexus integration, persisted metadata, and CLI smoke coverage.
+- Updated `ai/project/architecture.md`, `ai/knowledge/glossary.md`, `ai/knowledge/decisions.md`, and `ai/logs/SESSION_LOG.md` for Affect v0, its future roadmap, and the explicit note that Affect is internal state rather than emotion recognition.
+
 ### 2026-04-28 (attention)
 
 - Added `fullerene/attention/` with `AttentionSource`, `AttentionItem`, `AttentionResult`, fixed component weights, and `FixedWeightAttentionScorer` for deterministic focus scoring.

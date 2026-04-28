@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from fullerene.facets import (
+    AffectFacet,
     AttentionFacet,
     BehaviorFacet,
     ContextFacet,
@@ -54,6 +55,17 @@ def build_parser() -> argparse.ArgumentParser:
             "Without --memory it reads from the memory DB but does not store the "
             "current event."
         ),
+    )
+    parser.add_argument(
+        "--affect",
+        action="store_true",
+        help="Enable deterministic internal affect-state observation for this run.",
+    )
+    parser.add_argument(
+        "--affect-history-size",
+        type=int,
+        default=20,
+        help="Maximum number of recent affect states retained by --affect.",
     )
     parser.add_argument(
         "--attention",
@@ -152,13 +164,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--pressure",
         type=float,
         default=None,
-        help="Optional deterministic planning pressure override clamped to 0.0-1.0.",
+        help=(
+            "Optional deterministic pressure override clamped to 0.0-1.0 and "
+            "shared by planner, attention, and affect."
+        ),
     )
     parser.add_argument(
         "--novelty",
         type=float,
         default=None,
-        help="Optional deterministic attention novelty override clamped to 0.0-1.0.",
+        help=(
+            "Optional deterministic novelty override clamped to 0.0-1.0 and "
+            "shared by attention and affect."
+        ),
     )
     parser.add_argument(
         "--state-dir",
@@ -226,6 +244,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         metadata["dry_run"] = False
     if args.attention_top_n < 1:
         parser.error("--attention-top-n must be at least 1.")
+    if args.affect_history_size < 1:
+        parser.error("--affect-history-size must be at least 1.")
 
     state_dir = Path(args.state_dir)
     store = FileStateStore(state_dir)
@@ -315,6 +335,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 top_n=args.attention_top_n,
             )
         )
+    if args.affect:
+        facets.append(AffectFacet(history_size=args.affect_history_size))
     facets.append(EchoFacet())
     if args.verify:
         facets.append(VerifierFacet(state_dir=state_dir))

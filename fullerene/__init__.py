@@ -5,9 +5,14 @@ from __future__ import annotations
 from importlib import import_module
 
 __all__ = [
+    "AFFECT_STRATEGY_DETERMINISTIC_VAD_NOVELTY_V0",
     "AdjustmentRecord",
     "AdjustmentStatus",
     "AdjustmentTarget",
+    "AffectFacet",
+    "AffectHistoryBuffer",
+    "AffectResult",
+    "AffectState",
     "AttentionFacet",
     "AttentionItem",
     "AttentionResult",
@@ -69,6 +74,7 @@ __all__ = [
     "ActionType",
     "SignalSource",
     "SignalType",
+    "DeterministicAffectDeriver",
     "VerificationResult",
     "VerificationSeverity",
     "VerificationStatus",
@@ -89,6 +95,7 @@ def __getattr__(name: str):
     if name in {"Facet"}:
         return getattr(import_module("fullerene.facets.base"), name)
     if name in {
+        "AffectFacet",
         "AttentionFacet",
         "BehaviorFacet",
         "ContextFacet",
@@ -103,6 +110,14 @@ def __getattr__(name: str):
         "WorldModelFacet",
     }:
         return getattr(import_module("fullerene.facets"), name)
+    if name in {
+        "AFFECT_STRATEGY_DETERMINISTIC_VAD_NOVELTY_V0",
+        "AffectHistoryBuffer",
+        "AffectResult",
+        "AffectState",
+        "DeterministicAffectDeriver",
+    }:
+        return getattr(import_module("fullerene.affect"), name)
     if name in {
         "AttentionItem",
         "AttentionResult",

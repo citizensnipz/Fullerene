@@ -28,7 +28,7 @@ Product vocabulary for modular components:
 11. Behavior
 12. Learning
 
-Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `AttentionFacet v0`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `PlannerFacet v0`, `ExecutorFacet v0`, `VerifierFacet v0`, `LearningFacet v0`, `ContextFacet`, and `EchoFacet`; `AttentionFacet v0` covers deterministic fixed-weight focus scoring without broadcast, `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, `PlannerFacet v0` proposes deterministic inspectable plans, `ExecutorFacet v0` performs approved internal-only execution with dry-run default, `VerifierFacet v0` runs deterministic post-decision inspection before persistence, and `LearningFacet v0` classifies deterministic feedback and emits traceable adjustment records without owning its own persistent store.
+Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `AffectFacet v0`, `AttentionFacet v0`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `PlannerFacet v0`, `ExecutorFacet v0`, `VerifierFacet v0`, `LearningFacet v0`, `ContextFacet`, and `EchoFacet`; `AffectFacet v0` covers deterministic internal VAD + novelty observation only, `AttentionFacet v0` covers deterministic fixed-weight focus scoring without broadcast, `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, `PlannerFacet v0` proposes deterministic inspectable plans, `ExecutorFacet v0` performs approved internal-only execution with dry-run default, `VerifierFacet v0` runs deterministic post-decision inspection before persistence, and `LearningFacet v0` classifies deterministic feedback and emits traceable adjustment records without owning its own persistent store.
 
 ## Nexus loop (current v0)
 
@@ -72,6 +72,21 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - **v1** - better deterministic scoring, tagging rules, and salience heuristics. **Current.**
 - **v2** - embeddings / vector retrieval as a non-canonical index layered on top of SQLite.
 - **v3** - memory links / graph structure, reflection or compression, and affect-weighted salience.
+
+## Affect v0 (current)
+
+- **Internal state only** - `fullerene/affect/` plus `AffectFacet` derive Fullerene's own affective state vector from its runtime signals. Affect v0 is not emotion recognition, not sentiment analysis, and not a chatbot personality layer.
+- **Current state shape** - Affect v0 emits inspectable `AffectState` and `AffectResult` payloads with `valence` in `[-1.0, 1.0]`, `arousal` / `dominance` / `novelty` in `[0.0, 1.0]`, component breakdowns, reasons, and metadata.
+- **Signal sources** - valence comes from deterministic goal / feedback / execution success-or-failure signals; arousal comes from pressure, urgency, salience, and attention peaks when available; dominance comes from executor-control and world-confidence signals; novelty comes from explicit metadata or inverse memory hit rate when memory retrieval state is available.
+- **Observation only** - Affect v0 records state each cycle and may keep a short bounded history in Nexus facet state, but it does not change Memory, Goals, World Model, Attention, Context, Behavior, Policy, Planner, or Executor behavior.
+- **No learned inference** - no LLM calls, embeddings, prosody, user-emotion detection, or sentiment model are involved.
+
+## Affect roadmap
+
+- **v0** - deterministic internal VAD + novelty derivation, bounded inspectable history, observation only. **Current.**
+- **v1** - salience modulation, expression-threshold modulation, affect-tagged memories, and affect trajectory contributing to pressure. **Future.**
+- **v2** - deterministic appraisal layer (`goal relevance`, `goal congruence`, `agency`, `coping potential`), expression-character influence, and a possible small local regression model later. **Future.**
+- **v3** - goal-priority influence, memory-decay influence, attention-competition influence, system-health signaling, and cross-facet affect broadcast. **Future.**
 
 ## Attention v0 (current)
 
@@ -268,6 +283,7 @@ flowchart LR
 | Event and decision models | `fullerene/nexus/models.py` | Typed dataclasses for events, results, decisions, state, and records |
 | Facet interface | `fullerene/facets/base.py` | `Facet` protocol |
 | Example facet | `fullerene/facets/echo.py` | Small bundled facet for smoke/testing |
+| Affect facet | `fullerene/facets/affect.py` | Deterministic internal VAD + novelty observation; records state and bounded history only |
 | Behavior facet | `fullerene/facets/behavior.py` | Deterministic, inspectable decision policy for `WAIT` / `RECORD` / `ASK` / `ACT` |
 | Context facet | `fullerene/facets/context.py` | Static recent-episodic working-context assembly; deterministic, inspectable, and read-only |
 | Goals facet | `fullerene/facets/goals.py` | Deterministic active-goal lookup and relevance scoring; no planning or execution |
@@ -277,6 +293,7 @@ flowchart LR
 | Executor facet | `fullerene/facets/executor.py` | Deterministic internal-only execution layer with dry-run default, preflight refusal rules, and inspectable execution records |
 | Learning facet | `fullerene/facets/learning.py` | Stateless feedback processor that classifies signals, emits traceable adjustments, and applies only minor safe nudges when an existing store supports them |
 | Verifier facet | `fullerene/facets/verifier.py` | Deterministic post-decision verifier that can downgrade unsafe `ACT` decisions before persistence |
+| Affect models and derivation | `fullerene/affect/` | `AffectState`, `AffectResult`, `AffectHistoryBuffer`, and `DeterministicAffectDeriver` for observation-only affect state |
 | Learning models and rules | `fullerene/learning/` | `LearningSignal`, `AdjustmentRecord`, `LearningResult`, deterministic signal classifiers, and conservative apply-or-propose adjustment logic |
 | Context models and assembler | `fullerene/context/` | `ContextItem`, `ContextWindow`, and `StaticContextAssembler` for Context v0 |
 | Attention models and scorer | `fullerene/attention/` | `AttentionItem`, `AttentionResult`, `AttentionSource`, and `FixedWeightAttentionScorer` for deterministic focus scoring |

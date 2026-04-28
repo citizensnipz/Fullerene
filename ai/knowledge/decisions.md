@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-04-28 - Affect v0 is a deterministic internal VAD + novelty observer with no downstream influence
+
+- **Status:** accepted
+- **Context:** Fullerene already had deterministic memory, goals, world model, planning, execution, learning, and attention signals, but it still lacked a narrow place to summarize its own internal state from those signals without collapsing affect into user-emotion detection or behavior modulation.
+- **Decision:** Implement `fullerene/affect/` plus `AffectFacet` as a deterministic internal observation layer. Affect v0 derives `valence`, `arousal`, `dominance`, and `novelty` from existing runtime signals only, records an inspectable `AffectState` and `AffectResult`, and may keep a short bounded history in Nexus facet state. It never proposes `ACT`, never mutates other stores, and does not modulate memory, attention, planning, execution, policy, or expression yet.
+- **Consequences:** Fullerene now has an explicit affect boundary and a traceable data-collection layer for future work. Later salience modulation, affect-tagged memories, appraisal logic, or pressure integration can reuse the same inspectable artifacts, but v0 remains observational: no emotion recognition, no sentiment model, no prosody, and no learned affect inference.
+
 ## 2026-04-28 - Attention v0 is a deterministic metadata-only focus scorer with no broadcast
 
 - **Status:** accepted
