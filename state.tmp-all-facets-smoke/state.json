@@ -1,0 +1,958 @@
+{
+  "created_at": "2026-04-29T02:56:29.454810+00:00",
+  "event_count": 1,
+  "facet_state": {
+    "affect": {
+      "history": [
+        {
+          "arousal": 0.406,
+          "components": {
+            "arousal": {
+              "attention_peak": 0.51,
+              "pressure": 0.6,
+              "raw": 0.406,
+              "salience": 0.0,
+              "urgent": 0.0,
+              "value": 0.406,
+              "weighted_attention_peak": 0.076,
+              "weighted_pressure": 0.33,
+              "weighted_salience": 0.0,
+              "weighted_urgent": 0.0
+            },
+            "dominance": {
+              "current_execution_signal": 1.0,
+              "current_world_signal": 0.7,
+              "execution_penalty": 0.0,
+              "execution_signal": 1.0,
+              "raw": 0.85,
+              "rolling_execution_signal": null,
+              "rolling_world_signal": null,
+              "total_penalty": 0.0,
+              "value": 0.85,
+              "world_penalty": 0.0,
+              "world_signal": 0.7
+            },
+            "novelty": {
+              "memory_hit_rate": null,
+              "raw": 0.4,
+              "relevant_memory_count": 0,
+              "source": "explicit_metadata",
+              "value": 0.4,
+              "working_memory_count": 1
+            },
+            "valence": {
+              "negative_signals": [],
+              "negative_total": 0.0,
+              "positive_signals": [
+                {
+                  "created_at": "2026-04-29T02:56:29.474533+00:00",
+                  "id": "0920c5dcdf29439ca5daf6aeb14fc176",
+                  "magnitude": 0.3,
+                  "metadata": {
+                    "dry_run": true,
+                    "execution_status": "success",
+                    "plan_id": "plan-6579fb0eb3934b81",
+                    "reasons": [
+                      "execution_completed"
+                    ]
+                  },
+                  "reasons": [
+                    "execution_status_success"
+                  ],
+                  "signal_type": "positive",
+                  "source": "execution_result",
+                  "source_event_id": "0acce76e9a494566a49b85d260825b8d",
+                  "source_record_id": "749d48078d3445fd8a458c894def1baa"
+                }
+              ],
+              "positive_total": 0.3,
+              "raw": 0.3,
+              "value": 0.3
+            }
+          },
+          "created_at": "2026-04-29T02:56:29.474726+00:00",
+          "dominance": 0.85,
+          "id": "bf6720cc52f646e790cd44e55a41036c",
+          "metadata": {
+            "history_count": 0,
+            "learning_signal_count": 1,
+            "strategy": "deterministic_vad_novelty_v0"
+          },
+          "novelty": 0.4,
+          "valence": 0.3
+        }
+      ],
+      "history_count": 1,
+      "history_max_size": 20,
+      "last_affect_result": {
+        "current_state": {
+          "arousal": 0.406,
+          "components": {
+            "arousal": {
+              "attention_peak": 0.51,
+              "pressure": 0.6,
+              "raw": 0.406,
+              "salience": 0.0,
+              "urgent": 0.0,
+              "value": 0.406,
+              "weighted_attention_peak": 0.076,
+              "weighted_pressure": 0.33,
+              "weighted_salience": 0.0,
+              "weighted_urgent": 0.0
+            },
+            "dominance": {
+              "current_execution_signal": 1.0,
+              "current_world_signal": 0.7,
+              "execution_penalty": 0.0,
+              "execution_signal": 1.0,
+              "raw": 0.85,
+              "rolling_execution_signal": null,
+              "rolling_world_signal": null,
+              "total_penalty": 0.0,
+              "value": 0.85,
+              "world_penalty": 0.0,
+              "world_signal": 0.7
+            },
+            "novelty": {
+              "memory_hit_rate": null,
+              "raw": 0.4,
+              "relevant_memory_count": 0,
+              "source": "explicit_metadata",
+              "value": 0.4,
+              "working_memory_count": 1
+            },
+            "valence": {
+              "negative_signals": [],
+              "negative_total": 0.0,
+              "positive_signals": [
+                {
+                  "created_at": "2026-04-29T02:56:29.474533+00:00",
+                  "id": "0920c5dcdf29439ca5daf6aeb14fc176",
+                  "magnitude": 0.3,
+                  "metadata": {
+                    "dry_run": true,
+                    "execution_status": "success",
+                    "plan_id": "plan-6579fb0eb3934b81",
+                    "reasons": [
+                      "execution_completed"
+                    ]
+                  },
+                  "reasons": [
+                    "execution_status_success"
+                  ],
+                  "signal_type": "positive",
+                  "source": "execution_result",
+                  "source_event_id": "0acce76e9a494566a49b85d260825b8d",
+                  "source_record_id": "749d48078d3445fd8a458c894def1baa"
+                }
+              ],
+              "positive_total": 0.3,
+              "raw": 0.3,
+              "value": 0.3
+            }
+          },
+          "created_at": "2026-04-29T02:56:29.474726+00:00",
+          "dominance": 0.85,
+          "id": "bf6720cc52f646e790cd44e55a41036c",
+          "metadata": {
+            "history_count": 0,
+            "learning_signal_count": 1,
+            "strategy": "deterministic_vad_novelty_v0"
+          },
+          "novelty": 0.4,
+          "valence": 0.3
+        },
+        "history": [
+          {
+            "arousal": 0.406,
+            "components": {
+              "arousal": {
+                "attention_peak": 0.51,
+                "pressure": 0.6,
+                "raw": 0.406,
+                "salience": 0.0,
+                "urgent": 0.0,
+                "value": 0.406,
+                "weighted_attention_peak": 0.076,
+                "weighted_pressure": 0.33,
+                "weighted_salience": 0.0,
+                "weighted_urgent": 0.0
+              },
+              "dominance": {
+                "current_execution_signal": 1.0,
+                "current_world_signal": 0.7,
+                "execution_penalty": 0.0,
+                "execution_signal": 1.0,
+                "raw": 0.85,
+                "rolling_execution_signal": null,
+                "rolling_world_signal": null,
+                "total_penalty": 0.0,
+                "value": 0.85,
+                "world_penalty": 0.0,
+                "world_signal": 0.7
+              },
+              "novelty": {
+                "memory_hit_rate": null,
+                "raw": 0.4,
+                "relevant_memory_count": 0,
+                "source": "explicit_metadata",
+                "value": 0.4,
+                "working_memory_count": 1
+              },
+              "valence": {
+                "negative_signals": [],
+                "negative_total": 0.0,
+                "positive_signals": [
+                  {
+                    "created_at": "2026-04-29T02:56:29.474533+00:00",
+                    "id": "0920c5dcdf29439ca5daf6aeb14fc176",
+                    "magnitude": 0.3,
+                    "metadata": {
+                      "dry_run": true,
+                      "execution_status": "success",
+                      "plan_id": "plan-6579fb0eb3934b81",
+                      "reasons": [
+                        "execution_completed"
+                      ]
+                    },
+                    "reasons": [
+                      "execution_status_success"
+                    ],
+                    "signal_type": "positive",
+                    "source": "execution_result",
+                    "source_event_id": "0acce76e9a494566a49b85d260825b8d",
+                    "source_record_id": "749d48078d3445fd8a458c894def1baa"
+                  }
+                ],
+                "positive_total": 0.3,
+                "raw": 0.3,
+                "value": 0.3
+              }
+            },
+            "created_at": "2026-04-29T02:56:29.474726+00:00",
+            "dominance": 0.85,
+            "id": "bf6720cc52f646e790cd44e55a41036c",
+            "metadata": {
+              "history_count": 0,
+              "learning_signal_count": 1,
+              "strategy": "deterministic_vad_novelty_v0"
+            },
+            "novelty": 0.4,
+            "valence": 0.3
+          }
+        ],
+        "metadata": {
+          "history_count": 1,
+          "history_max_size": 20,
+          "learning_signals": [
+            {
+              "created_at": "2026-04-29T02:56:29.474533+00:00",
+              "id": "0920c5dcdf29439ca5daf6aeb14fc176",
+              "magnitude": 0.3,
+              "metadata": {
+                "dry_run": true,
+                "execution_status": "success",
+                "plan_id": "plan-6579fb0eb3934b81",
+                "reasons": [
+                  "execution_completed"
+                ]
+              },
+              "reasons": [
+                "execution_status_success"
+              ],
+              "signal_type": "positive",
+              "source": "execution_result",
+              "source_event_id": "0acce76e9a494566a49b85d260825b8d",
+              "source_record_id": "749d48078d3445fd8a458c894def1baa"
+            }
+          ],
+          "signal_counts": {
+            "learning": 1,
+            "memory_relevant": 0,
+            "memory_working": 1,
+            "world_model": 1
+          }
+        },
+        "reasons": [
+          "execution_status_success",
+          "arousal_pressure_signal",
+          "arousal_attention_peak_signal",
+          "dominance_executor_signal",
+          "execution_completed",
+          "dominance_world_confidence_signal",
+          "dominance_derived_from_available_control_signals",
+          "novelty_explicit_metadata"
+        ],
+        "strategy": "deterministic_vad_novelty_v0"
+      },
+      "last_affect_state": {
+        "arousal": 0.406,
+        "components": {
+          "arousal": {
+            "attention_peak": 0.51,
+            "pressure": 0.6,
+            "raw": 0.406,
+            "salience": 0.0,
+            "urgent": 0.0,
+            "value": 0.406,
+            "weighted_attention_peak": 0.076,
+            "weighted_pressure": 0.33,
+            "weighted_salience": 0.0,
+            "weighted_urgent": 0.0
+          },
+          "dominance": {
+            "current_execution_signal": 1.0,
+            "current_world_signal": 0.7,
+            "execution_penalty": 0.0,
+            "execution_signal": 1.0,
+            "raw": 0.85,
+            "rolling_execution_signal": null,
+            "rolling_world_signal": null,
+            "total_penalty": 0.0,
+            "value": 0.85,
+            "world_penalty": 0.0,
+            "world_signal": 0.7
+          },
+          "novelty": {
+            "memory_hit_rate": null,
+            "raw": 0.4,
+            "relevant_memory_count": 0,
+            "source": "explicit_metadata",
+            "value": 0.4,
+            "working_memory_count": 1
+          },
+          "valence": {
+            "negative_signals": [],
+            "negative_total": 0.0,
+            "positive_signals": [
+              {
+                "created_at": "2026-04-29T02:56:29.474533+00:00",
+                "id": "0920c5dcdf29439ca5daf6aeb14fc176",
+                "magnitude": 0.3,
+                "metadata": {
+                  "dry_run": true,
+                  "execution_status": "success",
+                  "plan_id": "plan-6579fb0eb3934b81",
+                  "reasons": [
+                    "execution_completed"
+                  ]
+                },
+                "reasons": [
+                  "execution_status_success"
+                ],
+                "signal_type": "positive",
+                "source": "execution_result",
+                "source_event_id": "0acce76e9a494566a49b85d260825b8d",
+                "source_record_id": "749d48078d3445fd8a458c894def1baa"
+              }
+            ],
+            "positive_total": 0.3,
+            "raw": 0.3,
+            "value": 0.3
+          }
+        },
+        "created_at": "2026-04-29T02:56:29.474726+00:00",
+        "dominance": 0.85,
+        "id": "bf6720cc52f646e790cd44e55a41036c",
+        "metadata": {
+          "history_count": 0,
+          "learning_signal_count": 1,
+          "strategy": "deterministic_vad_novelty_v0"
+        },
+        "novelty": 0.4,
+        "valence": 0.3
+      },
+      "last_affect_state_id": "bf6720cc52f646e790cd44e55a41036c",
+      "last_strategy": "deterministic_vad_novelty_v0"
+    },
+    "attention": {
+      "last_attention_result": {
+        "dominant_source": "event",
+        "focus_items": [
+          {
+            "components": {
+              "belief_uncertainty": 0.030000000000000006,
+              "execution_recency": 0.05,
+              "goal_priority": 0.125,
+              "memory_salience": 0.125,
+              "novelty": 0.06,
+              "pressure": 0.12
+            },
+            "content": "what are the next steps to finish the tasks work?",
+            "dominant_component": "memory_salience",
+            "id": "event:0acce76e9a494566a49b85d260825b8d",
+            "metadata": {
+              "dominant_component_value": 0.125,
+              "event_tags": [
+                "tasks",
+                "work"
+              ],
+              "event_type": "user_message",
+              "execution_recency": 1.0,
+              "has_stored_event_memory": true,
+              "novelty_reason": "explicit_metadata",
+              "raw_signals": {
+                "belief_uncertainty": 0.30000000000000004,
+                "execution_recency": 1.0,
+                "goal_priority": 0.5,
+                "memory_salience": 0.5,
+                "novelty": 0.4,
+                "pressure": 0.6
+              },
+              "top_belief_uncertainty": 0.30000000000000004,
+              "top_goal_priority": 0.5,
+              "weights": {
+                "belief_uncertainty": 0.1,
+                "execution_recency": 0.05,
+                "goal_priority": 0.25,
+                "memory_salience": 0.25,
+                "novelty": 0.15,
+                "pressure": 0.2
+              }
+            },
+            "score": 0.51,
+            "source": "event",
+            "source_id": "0acce76e9a494566a49b85d260825b8d"
+          },
+          {
+            "components": {
+              "belief_uncertainty": 0.0,
+              "execution_recency": 0.0,
+              "goal_priority": 0.125,
+              "memory_salience": 0.0,
+              "novelty": 0.0,
+              "pressure": 0.12
+            },
+            "content": "what are the next steps to finish the tasks work?",
+            "dominant_component": "goal_priority",
+            "id": "goal:fa5be23bfa1840d89704b2b332c0415d",
+            "metadata": {
+              "dominant_component_value": 0.125,
+              "goal_match": {
+                "description": "what are the next steps to finish the tasks work?",
+                "id": "fa5be23bfa1840d89704b2b332c0415d",
+                "keyword_overlap": 1.0,
+                "priority": 0.5,
+                "score": 2.5,
+                "shared_keywords": [
+                  "are",
+                  "finish",
+                  "next",
+                  "steps",
+                  "tasks",
+                  "the",
+                  "to",
+                  "what",
+                  "work"
+                ],
+                "shared_tags": [
+                  "tasks",
+                  "work"
+                ],
+                "source": "user",
+                "tag_overlap": 1.0
+              },
+              "raw_signals": {
+                "belief_uncertainty": 0.0,
+                "execution_recency": 0.0,
+                "goal_priority": 0.5,
+                "memory_salience": 0.0,
+                "novelty": 0.0,
+                "pressure": 0.6
+              },
+              "weights": {
+                "belief_uncertainty": 0.1,
+                "execution_recency": 0.05,
+                "goal_priority": 0.25,
+                "memory_salience": 0.25,
+                "novelty": 0.15,
+                "pressure": 0.2
+              }
+            },
+            "score": 0.245,
+            "source": "goal",
+            "source_id": "fa5be23bfa1840d89704b2b332c0415d"
+          },
+          {
+            "components": {
+              "belief_uncertainty": 0.0,
+              "execution_recency": 0.05,
+              "goal_priority": 0.0,
+              "memory_salience": 0.0,
+              "novelty": 0.0,
+              "pressure": 0.12
+            },
+            "content": "Execution success (dry-run)",
+            "dominant_component": "pressure",
+            "id": "execution:plan-6579fb0eb3934b81",
+            "metadata": {
+              "dominant_component_value": 0.12,
+              "execution_result": {
+                "dry_run": true,
+                "halted": false,
+                "metadata": {
+                  "emitted_events": [],
+                  "mode": "dry_run",
+                  "preflight_failed": false
+                },
+                "overall_status": "success",
+                "plan_id": "plan-6579fb0eb3934b81",
+                "reasons": [
+                  "execution_completed"
+                ],
+                "records": [
+                  {
+                    "action_type": "noop",
+                    "created_at": "2026-04-29T02:56:29.471689+00:00",
+                    "dry_run": true,
+                    "id": "749d48078d3445fd8a458c894def1baa",
+                    "message": "Dry-run validated noop action.",
+                    "metadata": {
+                      "step_description": "Review goal context.",
+                      "step_order": 1,
+                      "target_type": "general"
+                    },
+                    "plan_id": "plan-6579fb0eb3934b81",
+                    "plan_step_id": "plan-step-48bb14b218b39844",
+                    "status": "success"
+                  },
+                  {
+                    "action_type": "noop",
+                    "created_at": "2026-04-29T02:56:29.471703+00:00",
+                    "dry_run": true,
+                    "id": "e061858d23184ee1b4451f38e014912a",
+                    "message": "Dry-run validated noop action.",
+                    "metadata": {
+                      "step_description": "Check relevant beliefs and constraints.",
+                      "step_order": 2,
+                      "target_type": "general"
+                    },
+                    "plan_id": "plan-6579fb0eb3934b81",
+                    "plan_step_id": "plan-step-c0ccd1ad68b43232",
+                    "status": "success"
+                  },
+                  {
+                    "action_type": "noop",
+                    "created_at": "2026-04-29T02:56:29.471710+00:00",
+                    "dry_run": true,
+                    "id": "6535169b14334a41a52c931b93c8830d",
+                    "message": "Dry-run validated noop action.",
+                    "metadata": {
+                      "step_description": "Propose the next safe action toward the goal.",
+                      "step_order": 3,
+                      "target_type": "internal_state"
+                    },
+                    "plan_id": "plan-6579fb0eb3934b81",
+                    "plan_step_id": "plan-step-1167bb7fa68a3d89",
+                    "status": "success"
+                  }
+                ]
+              },
+              "raw_signals": {
+                "belief_uncertainty": 0.0,
+                "execution_recency": 1.0,
+                "goal_priority": 0.0,
+                "memory_salience": 0.0,
+                "novelty": 0.0,
+                "pressure": 0.6
+              },
+              "reasons": [
+                "execution_completed"
+              ],
+              "weights": {
+                "belief_uncertainty": 0.1,
+                "execution_recency": 0.05,
+                "goal_priority": 0.25,
+                "memory_salience": 0.25,
+                "novelty": 0.15,
+                "pressure": 0.2
+              }
+            },
+            "score": 0.16999999999999998,
+            "source": "execution",
+            "source_id": "plan-6579fb0eb3934b81"
+          }
+        ],
+        "metadata": {
+          "available_sources": [
+            "belief",
+            "event",
+            "execution",
+            "goal"
+          ],
+          "candidate_count": 4,
+          "limitations": [
+            "memory_candidates_unavailable_or_no_matches"
+          ],
+          "ranked_item_ids": [
+            "event:0acce76e9a494566a49b85d260825b8d",
+            "goal:fa5be23bfa1840d89704b2b332c0415d",
+            "execution:plan-6579fb0eb3934b81",
+            "belief:3fa893e8822c4a66be76e4fa6e720744"
+          ],
+          "selected_count": 3,
+          "weights": {
+            "belief_uncertainty": 0.1,
+            "execution_recency": 0.05,
+            "goal_priority": 0.25,
+            "memory_salience": 0.25,
+            "novelty": 0.15,
+            "pressure": 0.2
+          }
+        },
+        "scores": {
+          "belief:3fa893e8822c4a66be76e4fa6e720744": 0.15,
+          "event:0acce76e9a494566a49b85d260825b8d": 0.51,
+          "execution:plan-6579fb0eb3934b81": 0.16999999999999998,
+          "goal:fa5be23bfa1840d89704b2b332c0415d": 0.245
+        },
+        "strategy": "fixed_weight_competition_v0"
+      },
+      "last_dominant_source": "event",
+      "last_focus_item_ids": [
+        "event:0acce76e9a494566a49b85d260825b8d",
+        "goal:fa5be23bfa1840d89704b2b332c0415d",
+        "execution:plan-6579fb0eb3934b81"
+      ],
+      "last_scores": {
+        "belief:3fa893e8822c4a66be76e4fa6e720744": 0.15,
+        "event:0acce76e9a494566a49b85d260825b8d": 0.51,
+        "execution:plan-6579fb0eb3934b81": 0.16999999999999998,
+        "goal:fa5be23bfa1840d89704b2b332c0415d": 0.245
+      },
+      "last_strategy": "fixed_weight_competition_v0"
+    },
+    "behavior": {
+      "last_aligned_belief_ids": [
+        "3fa893e8822c4a66be76e4fa6e720744"
+      ],
+      "last_aligned_goal_ids": [
+        "fa5be23bfa1840d89704b2b332c0415d"
+      ],
+      "last_confidence": 0.87,
+      "last_event_id": "0acce76e9a494566a49b85d260825b8d",
+      "last_goal_alignment_score": 2.5,
+      "last_priority_level": "normal",
+      "last_reasons": [
+        "user_message_default_record"
+      ],
+      "last_salience": 0.5,
+      "last_selected_decision": "record",
+      "last_tags_considered": [
+        "tasks",
+        "work"
+      ],
+      "last_world_alignment_score": 2.7
+    },
+    "context": {
+      "last_context_item_count": 0,
+      "last_context_item_ids": [],
+      "last_context_strategy": "static_recent_episodic_v0",
+      "last_context_window_id": "911e7fb925c14af0ba8679d279e85639"
+    },
+    "echo": {
+      "last_user_message": "what are the next steps to finish the tasks work?",
+      "seen_messages": 1
+    },
+    "executor": {
+      "last_execution_dry_run": true,
+      "last_execution_halted": false,
+      "last_execution_plan_id": "plan-6579fb0eb3934b81",
+      "last_execution_requested": true,
+      "last_execution_result": {
+        "dry_run": true,
+        "halted": false,
+        "metadata": {
+          "emitted_events": [],
+          "mode": "dry_run",
+          "preflight_failed": false
+        },
+        "overall_status": "success",
+        "plan_id": "plan-6579fb0eb3934b81",
+        "reasons": [
+          "execution_completed"
+        ],
+        "records": [
+          {
+            "action_type": "noop",
+            "created_at": "2026-04-29T02:56:29.471689+00:00",
+            "dry_run": true,
+            "id": "749d48078d3445fd8a458c894def1baa",
+            "message": "Dry-run validated noop action.",
+            "metadata": {
+              "step_description": "Review goal context.",
+              "step_order": 1,
+              "target_type": "general"
+            },
+            "plan_id": "plan-6579fb0eb3934b81",
+            "plan_step_id": "plan-step-48bb14b218b39844",
+            "status": "success"
+          },
+          {
+            "action_type": "noop",
+            "created_at": "2026-04-29T02:56:29.471703+00:00",
+            "dry_run": true,
+            "id": "e061858d23184ee1b4451f38e014912a",
+            "message": "Dry-run validated noop action.",
+            "metadata": {
+              "step_description": "Check relevant beliefs and constraints.",
+              "step_order": 2,
+              "target_type": "general"
+            },
+            "plan_id": "plan-6579fb0eb3934b81",
+            "plan_step_id": "plan-step-c0ccd1ad68b43232",
+            "status": "success"
+          },
+          {
+            "action_type": "noop",
+            "created_at": "2026-04-29T02:56:29.471710+00:00",
+            "dry_run": true,
+            "id": "6535169b14334a41a52c931b93c8830d",
+            "message": "Dry-run validated noop action.",
+            "metadata": {
+              "step_description": "Propose the next safe action toward the goal.",
+              "step_order": 3,
+              "target_type": "internal_state"
+            },
+            "plan_id": "plan-6579fb0eb3934b81",
+            "plan_step_id": "plan-step-1167bb7fa68a3d89",
+            "status": "success"
+          }
+        ]
+      },
+      "last_execution_status": "success"
+    },
+    "goals": {
+      "last_active_goal_ids": [
+        "fa5be23bfa1840d89704b2b332c0415d"
+      ],
+      "last_relevance_score": 2.5,
+      "last_relevant_goals": [
+        {
+          "description": "what are the next steps to finish the tasks work?",
+          "id": "fa5be23bfa1840d89704b2b332c0415d",
+          "keyword_overlap": 1.0,
+          "priority": 0.5,
+          "score": 2.5,
+          "shared_keywords": [
+            "are",
+            "finish",
+            "next",
+            "steps",
+            "tasks",
+            "the",
+            "to",
+            "what",
+            "work"
+          ],
+          "shared_tags": [
+            "tasks",
+            "work"
+          ],
+          "source": "user",
+          "tag_overlap": 1.0
+        }
+      ]
+    },
+    "memory": {
+      "last_relevant_memory_ids": [],
+      "last_stored_memory_id": "797c8b506c0f41cea8311929ac8f9776",
+      "last_working_memory_ids": [
+        "797c8b506c0f41cea8311929ac8f9776"
+      ]
+    },
+    "planner": {
+      "last_plan": {
+        "confidence": 0.99,
+        "created_at": "2026-04-29T02:56:29.395994+00:00",
+        "goal_id": "fa5be23bfa1840d89704b2b332c0415d",
+        "id": "plan-6579fb0eb3934b81",
+        "metadata": {
+          "approval_required_steps": [],
+          "belief_confidence_average": 0.7,
+          "blocked_steps": [],
+          "confidence_breakdown": {
+            "base": 0.4,
+            "belief_confidence": 0.14,
+            "explicit_request": 0.2,
+            "goal_priority": 0.15,
+            "policy_satisfied": 0.1,
+            "total": 0.99
+          },
+          "generation_mode": "low_pressure_exploratory",
+          "goal_priority": 0.5,
+          "policy_satisfied": true,
+          "pressure_source": "event_metadata.pressure",
+          "relevant_belief_ids": [
+            "3fa893e8822c4a66be76e4fa6e720744"
+          ],
+          "relevant_goal_ids": [
+            "fa5be23bfa1840d89704b2b332c0415d"
+          ],
+          "trigger_reason": "explicit_request"
+        },
+        "pressure": 0.6,
+        "reasons": [
+          "explicit_plan_request",
+          "goal:fa5be23bfa1840d89704b2b332c0415d",
+          "beliefs:3fa893e8822c4a66be76e4fa6e720744",
+          "policy_constraints_satisfied",
+          "low_pressure_exploratory_path"
+        ],
+        "source_event_id": "0acce76e9a494566a49b85d260825b8d",
+        "status": "proposed",
+        "steps": [
+          {
+            "description": "Review goal context.",
+            "id": "plan-step-48bb14b218b39844",
+            "metadata": {
+              "action_type": "noop",
+              "goal_id": "fa5be23bfa1840d89704b2b332c0415d",
+              "step_kind": "review_goal_context"
+            },
+            "order": 1,
+            "policy_status": "allowed",
+            "requires_approval": false,
+            "risk_level": "low",
+            "status": "proposed",
+            "target_type": "general"
+          },
+          {
+            "description": "Check relevant beliefs and constraints.",
+            "id": "plan-step-c0ccd1ad68b43232",
+            "metadata": {
+              "action_type": "noop",
+              "belief_ids": [
+                "3fa893e8822c4a66be76e4fa6e720744"
+              ],
+              "goal_id": "fa5be23bfa1840d89704b2b332c0415d",
+              "step_kind": "check_beliefs_and_constraints"
+            },
+            "order": 2,
+            "policy_status": "allowed",
+            "requires_approval": false,
+            "risk_level": "low",
+            "status": "proposed",
+            "target_type": "general"
+          },
+          {
+            "description": "Propose the next safe action toward the goal.",
+            "id": "plan-step-1167bb7fa68a3d89",
+            "metadata": {
+              "action_type": "noop",
+              "belief_ids": [
+                "3fa893e8822c4a66be76e4fa6e720744"
+              ],
+              "goal_id": "fa5be23bfa1840d89704b2b332c0415d",
+              "step_kind": "propose_next_safe_action_toward_goal",
+              "target": "state-dir"
+            },
+            "order": 3,
+            "policy_status": "allowed",
+            "requires_approval": false,
+            "risk_level": "low",
+            "status": "proposed",
+            "target_type": "internal_state"
+          }
+        ],
+        "title": "Proposed plan for goal: what are the next steps to finish the tasks work?"
+      },
+      "last_plan_confidence": 0.99,
+      "last_plan_id": "plan-6579fb0eb3934b81",
+      "last_plan_pressure": 0.6,
+      "last_relevant_belief_ids": [
+        "3fa893e8822c4a66be76e4fa6e720744"
+      ],
+      "last_relevant_goal_ids": [
+        "fa5be23bfa1840d89704b2b332c0415d"
+      ],
+      "last_trigger_reason": "explicit_request"
+    },
+    "policy": {
+      "last_approval_required": false,
+      "last_denied": false,
+      "last_effective_policy_id": "2219dfce7e554438ad5c29f552546582",
+      "last_matched_policy_ids": [
+        "2219dfce7e554438ad5c29f552546582"
+      ],
+      "last_policy_status": "allowed"
+    },
+    "verifier": {
+      "last_checked_action": "record",
+      "last_failed_checks": [],
+      "last_verification_status": "passed",
+      "last_warnings": []
+    },
+    "world_model": {
+      "last_active_belief_ids": [
+        "3fa893e8822c4a66be76e4fa6e720744"
+      ],
+      "last_relevance_score": 2.7,
+      "last_relevant_beliefs": [
+        {
+          "claim": "what are the next steps to finish the tasks work?",
+          "confidence": 0.7,
+          "id": "3fa893e8822c4a66be76e4fa6e720744",
+          "keyword_overlap": 1.0,
+          "score": 2.7,
+          "shared_keywords": [
+            "are",
+            "finish",
+            "next",
+            "steps",
+            "tasks",
+            "the",
+            "to",
+            "what",
+            "work"
+          ],
+          "shared_tags": [
+            "tasks",
+            "work"
+          ],
+          "source": "user",
+          "status": "active",
+          "tag_overlap": 1.0
+        }
+      ]
+    }
+  },
+  "last_decision": {
+    "action": "record",
+    "reason": "Selected RECORD from facet proposals: memory, behavior, planner, executor, learning, attention, affect, echo.",
+    "source_facets": [
+      "memory",
+      "behavior",
+      "planner",
+      "executor",
+      "learning",
+      "attention",
+      "affect",
+      "echo"
+    ],
+    "timestamp": "2026-04-29T02:56:29.474882+00:00"
+  },
+  "last_event": {
+    "content": "what are the next steps to finish the tasks work?",
+    "event_id": "0acce76e9a494566a49b85d260825b8d",
+    "event_type": "user_message",
+    "metadata": {
+      "create_belief": true,
+      "create_goal": true,
+      "create_policy": true,
+      "execute_plan": true,
+      "novelty": 0.4,
+      "pressure": 0.6,
+      "request_plan": true,
+      "rule_type": "allow",
+      "tags": [
+        "tasks",
+        "work"
+      ],
+      "target": "state-dir",
+      "target_type": "internal_state"
+    },
+    "timestamp": "2026-04-29T02:56:29.395994+00:00"
+  },
+  "updated_at": "2026-04-29T02:56:29.475047+00:00"
+}

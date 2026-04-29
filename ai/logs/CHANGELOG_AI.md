@@ -9,6 +9,11 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-29 (behavior v1)
+
+- Updated `fullerene/facets/behavior.py` to keep the existing `WAIT` / `RECORD` / `ASK` / `ACT` interface while selecting decisions through deterministic weighted scores using pressure, goal relevance, memory retrieval strength, salience, and explicit confidence breakdown metadata.
+- Expanded `tests/test_behavior.py` with Behavior v1 coverage for pressure biasing, high-priority goals, low retrieval ambiguity, confidence clamping, explicit factor reasons, no-signal defaults, and missing-store robustness.
+
 ### 2026-04-28 (affect)
 
 - Added `fullerene/affect/` with `AffectState`, `AffectResult`, `AffectHistoryBuffer`, and `DeterministicAffectDeriver` for deterministic internal VAD + novelty derivation.

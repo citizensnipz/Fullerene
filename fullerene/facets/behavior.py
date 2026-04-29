@@ -1,4 +1,4 @@
-"""Deterministic behavior facet for Fullerene Behavior v0."""
+"""Deterministic behavior facet for Fullerene Behavior v1."""
 
 from __future__ import annotations
 
@@ -24,25 +24,20 @@ RESPONSE_PHRASES = (
     "help me",
     "how do i",
 )
-DECISION_BASE_CONFIDENCE = {
-    DecisionAction.WAIT: 0.88,
-    DecisionAction.RECORD: 0.68,
-    DecisionAction.ASK: 0.78,
-    DecisionAction.ACT: 0.84,
+DECISION_BASE_SCORES = {
+    DecisionAction.WAIT: 0.1,
+    DecisionAction.RECORD: 0.4,
+    DecisionAction.ASK: 0.3,
+    DecisionAction.ACT: 0.2,
 }
-REASON_CONFIDENCE_BOOSTS = {
-    "empty_content_wait": 0.08,
-    "user_message_default_record": 0.06,
-    "system_note_default_record": 0.04,
-    "high_priority_tags": 0.04,
-    "high_priority_record": 0.02,
-    "question_phrase_response_needed": 0.06,
-    "requires_response_metadata": 0.1,
-    "uncertainty_metadata": 0.08,
-    "explicit_action_without_low_risk": 0.08,
-    "explicit_action_low_risk": 0.1,
-    "system_tick_or_idle_wait": 0.04,
+DECISION_PRIORITY = {
+    DecisionAction.WAIT: 0,
+    DecisionAction.RECORD: 1,
+    DecisionAction.ASK: 2,
+    DecisionAction.ACT: 3,
 }
+LOW_RETRIEVAL_THRESHOLD = 0.2
+HIGH_GOAL_RELEVANCE_THRESHOLD = 0.7
 
 
 @dataclass(slots=True)
@@ -58,6 +53,9 @@ class _BehaviorSignals:
     low_risk: bool
     uncertainty: bool
     high_priority: bool
+    pressure: float
+    goal_relevance: float
+    retrieval_strength: float
     memory_signal_available: bool
     goal_signal_available: bool
     goal_alignment_score: float
@@ -76,17 +74,23 @@ class BehaviorFacet:
 
     def process(self, event: Event, state: NexusState) -> FacetResult:
         signals = self._collect_signals(event, state)
-        selected_decision, reasons = self._select_decision(event, signals)
+        selected_decision, reasons, decision_scores = self._select_decision(
+            event,
+            signals,
+        )
         confidence_breakdown = self._score_confidence(
             selected_decision,
-            reasons,
             salience=signals.salience,
+            pressure=signals.pressure,
+            goal_relevance=signals.goal_relevance,
+            retrieval_strength=signals.retrieval_strength,
             goal_alignment_score=signals.goal_alignment_score,
             goal_alignment_priority=signals.goal_alignment_priority,
             world_alignment_score=signals.world_alignment_score,
             world_alignment_confidence=signals.world_alignment_confidence,
         )
         confidence = confidence_breakdown["total"]
+        reasons.extend(self._contribution_reasons(signals, confidence_breakdown))
         priority_level = "high" if signals.high_priority else "normal"
 
         return FacetResult(
@@ -101,8 +105,12 @@ class BehaviorFacet:
                 "last_selected_decision": selected_decision.value,
                 "last_confidence": confidence,
                 "last_salience": signals.salience,
+                "last_pressure": signals.pressure,
+                "last_goal_relevance": signals.goal_relevance,
+                "last_retrieval_strength": signals.retrieval_strength,
                 "last_tags_considered": list(signals.tags),
                 "last_reasons": list(reasons),
+                "last_decision_scores": dict(decision_scores),
                 "last_priority_level": priority_level,
                 "last_goal_alignment_score": signals.goal_alignment_score,
                 "last_aligned_goal_ids": list(signals.aligned_goal_ids),
@@ -113,8 +121,12 @@ class BehaviorFacet:
                 "selected_decision": selected_decision.value,
                 "confidence": confidence,
                 "confidence_breakdown": confidence_breakdown,
+                "decision_scores": dict(decision_scores),
                 "salience": signals.salience,
                 "salience_source": signals.salience_source,
+                "pressure": signals.pressure,
+                "goal_relevance": signals.goal_relevance,
+                "retrieval_strength": signals.retrieval_strength,
                 "tags_considered": list(signals.tags),
                 "reasons": list(reasons),
                 "high_priority": signals.high_priority,
@@ -135,7 +147,7 @@ class BehaviorFacet:
     def _collect_signals(self, event: Event, state: NexusState) -> _BehaviorSignals:
         metadata = event.metadata if isinstance(event.metadata, dict) else {}
         metadata_tags = self._normalize_tag_group(metadata.get("tags"))
-        memory_context = self._extract_memory_context(metadata)
+        memory_context = self._extract_memory_context(metadata, state)
         memory_tags = self._normalize_tag_group(
             memory_context.get("tags") if memory_context else []
         )
@@ -153,6 +165,7 @@ class BehaviorFacet:
             aligned_goals,
         )
         goal_alignment_priority = self._resolve_goal_alignment_priority(aligned_goals)
+        goal_relevance = self._resolve_goal_relevance(goal_context, aligned_goals)
         world_context = self._extract_world_context(metadata, state)
         aligned_beliefs = self._extract_relevant_beliefs(world_context)
         world_alignment_score = self._resolve_world_alignment_score(
@@ -161,6 +174,12 @@ class BehaviorFacet:
         )
         world_alignment_confidence = self._resolve_world_alignment_confidence(
             aligned_beliefs
+        )
+        pressure = self._numeric_unit_value(metadata.get("pressure")) or 0.0
+        retrieval_strength = self._resolve_retrieval_strength(
+            metadata=metadata,
+            state=state,
+            memory_context=memory_context,
         )
 
         return _BehaviorSignals(
@@ -176,6 +195,7 @@ class BehaviorFacet:
                 or self._metadata_flag(metadata, "low_risk")
                 or self._metadata_flag(metadata, "uncertainty")
                 or "salience" in metadata
+                or "pressure" in metadata
             ),
             question_like=self._contains_response_phrase(event.content),
             requires_response=self._metadata_flag(metadata, "requires_response"),
@@ -183,6 +203,9 @@ class BehaviorFacet:
             low_risk=self._metadata_flag(metadata, "low_risk"),
             uncertainty=self._metadata_flag(metadata, "uncertainty"),
             high_priority=bool(HIGH_PRIORITY_TAGS & set(tags)),
+            pressure=pressure,
+            goal_relevance=goal_relevance,
+            retrieval_strength=retrieval_strength,
             memory_signal_available=bool(memory_context)
             or isinstance(state.facet_state.get("memory"), dict),
             goal_signal_available=goal_context is not None,
@@ -210,12 +233,17 @@ class BehaviorFacet:
         return []
 
     @staticmethod
-    def _extract_memory_context(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    def _extract_memory_context(
+        metadata: dict[str, Any],
+        state: NexusState,
+    ) -> dict[str, Any] | None:
         for key in ("memory", "memory_facet", "stored_memory", "relevant_memory"):
             candidate = metadata.get(key)
             if isinstance(candidate, dict):
                 return candidate
-        return None
+
+        state_memory = state.facet_state.get("memory")
+        return state_memory if isinstance(state_memory, dict) else None
 
     @staticmethod
     def _extract_goal_context(
@@ -298,6 +326,95 @@ class BehaviorFacet:
             if goal_priority is not None:
                 best_priority = max(best_priority, goal_priority)
         return best_priority
+
+    @staticmethod
+    def _resolve_goal_relevance(
+        goal_context: dict[str, Any] | None,
+        aligned_goals: list[dict[str, Any]],
+    ) -> float:
+        best_priority = BehaviorFacet._resolve_goal_alignment_priority(aligned_goals)
+        if goal_context is None:
+            return best_priority
+
+        for key in ("active_goals", "last_active_goals", "goals"):
+            candidate = goal_context.get(key)
+            if not isinstance(candidate, list):
+                continue
+            for goal in candidate:
+                if not isinstance(goal, dict):
+                    continue
+                goal_priority = BehaviorFacet._numeric_unit_value(
+                    goal.get("priority")
+                )
+                if goal_priority is not None:
+                    best_priority = max(best_priority, goal_priority)
+        return best_priority
+
+    @staticmethod
+    def _resolve_retrieval_strength(
+        *,
+        metadata: dict[str, Any],
+        state: NexusState,
+        memory_context: dict[str, Any] | None,
+    ) -> float:
+        explicit_strength = BehaviorFacet._numeric_unit_value(
+            metadata.get("retrieval_strength")
+        )
+        if explicit_strength is not None:
+            return explicit_strength
+
+        candidates: list[float] = []
+        if memory_context is not None:
+            memory_strength = BehaviorFacet._numeric_unit_value(
+                memory_context.get("retrieval_strength")
+            )
+            if memory_strength is not None:
+                candidates.append(memory_strength)
+            candidates.extend(
+                [
+                    _normalized_count(memory_context.get("relevant_memories"), 3),
+                    _normalized_count(memory_context.get("last_relevant_memory_ids"), 3),
+                    _normalized_count(memory_context.get("working_memories"), 5),
+                    _normalized_count(memory_context.get("last_working_memory_ids"), 5),
+                ]
+            )
+
+        context_state = state.facet_state.get("context")
+        if isinstance(context_state, dict):
+            candidates.append(
+                _normalized_count(context_state.get("last_context_item_ids"), 5)
+            )
+            context_item_count = BehaviorFacet._numeric_score(
+                context_state.get("last_context_item_count")
+            )
+            if context_item_count is not None:
+                candidates.append(_clamp_unit(context_item_count / 5.0))
+
+        attention_state = state.facet_state.get("attention")
+        if isinstance(attention_state, dict):
+            candidates.append(
+                BehaviorFacet._attention_memory_strength(attention_state)
+            )
+
+        return round(max(candidates, default=0.0), 3)
+
+    @staticmethod
+    def _attention_memory_strength(attention_state: dict[str, Any]) -> float:
+        raw_result = attention_state.get("last_attention_result")
+        if not isinstance(raw_result, dict):
+            return 0.0
+        focus_items = raw_result.get("focus_items")
+        if not isinstance(focus_items, list):
+            return 0.0
+
+        memory_scores: list[float] = []
+        for item in focus_items:
+            if not isinstance(item, dict) or item.get("source") != "memory":
+                continue
+            score = BehaviorFacet._numeric_unit_value(item.get("score"))
+            if score is not None:
+                memory_scores.append(score)
+        return max(memory_scores, default=0.0)
 
     @staticmethod
     def _resolve_world_alignment_score(
@@ -388,78 +505,221 @@ class BehaviorFacet:
     def _select_decision(
         event: Event,
         signals: _BehaviorSignals,
-    ) -> tuple[DecisionAction, list[str]]:
+    ) -> tuple[DecisionAction, list[str], dict[str, float]]:
         reasons: list[str] = []
+        score_breakdown: dict[DecisionAction, dict[str, float]] = {
+            action: {"base": base_score}
+            for action, base_score in DECISION_BASE_SCORES.items()
+        }
+
+        def add(action: DecisionAction, reason: str, value: float) -> None:
+            if value == 0.0:
+                return
+            score_breakdown[action][reason] = (
+                score_breakdown[action].get(reason, 0.0) + value
+            )
+
         if signals.high_priority:
             reasons.append("high_priority_tags")
+            add(DecisionAction.RECORD, "high_priority_record_bias", 0.15)
+            add(DecisionAction.ASK, "high_priority_ask_bias", 0.05)
 
         if not signals.meaningful_content and not signals.has_metadata_signal:
             reasons.append("empty_content_wait")
-            return DecisionAction.WAIT, reasons
+            add(DecisionAction.WAIT, "empty_content_wait", 0.55)
 
         if signals.explicit_action:
             if signals.low_risk:
                 reasons.append("explicit_action_low_risk")
-                return DecisionAction.ACT, reasons
-            reasons.append("explicit_action_without_low_risk")
-            return DecisionAction.ASK, reasons
+                add(DecisionAction.ACT, "explicit_action_low_risk", 0.45)
+            else:
+                reasons.append("explicit_action_without_low_risk")
+                add(DecisionAction.ASK, "explicit_action_without_low_risk", 0.45)
 
         if signals.requires_response:
             reasons.append("requires_response_metadata")
-            return DecisionAction.ASK, reasons
+            add(DecisionAction.ASK, "requires_response_metadata", 0.4)
 
         if signals.uncertainty:
             reasons.append("uncertainty_metadata")
-            return DecisionAction.ASK, reasons
+            add(DecisionAction.ASK, "uncertainty_metadata", 0.35)
 
         if signals.question_like:
             reasons.append("question_phrase_response_needed")
-            return DecisionAction.ASK, reasons
+            add(DecisionAction.ASK, "question_phrase_response_needed", 0.3)
 
         if event.event_type == EventType.USER_MESSAGE:
             reasons.append("user_message_default_record")
-            return DecisionAction.RECORD, reasons
+            add(DecisionAction.RECORD, "user_message_default_record", 0.15)
 
         if signals.high_priority:
             reasons.append("high_priority_record")
-            return DecisionAction.RECORD, reasons
+            add(DecisionAction.RECORD, "high_priority_record", 0.05)
 
         if signals.meaningful_content and event.event_type == EventType.SYSTEM_NOTE:
             reasons.append("system_note_default_record")
-            return DecisionAction.RECORD, reasons
+            add(DecisionAction.RECORD, "system_note_default_record", 0.15)
 
-        reasons.append("system_tick_or_idle_wait")
-        return DecisionAction.WAIT, reasons
+        if event.event_type == EventType.SYSTEM_TICK:
+            reasons.append("system_tick_or_idle_wait")
+            add(DecisionAction.WAIT, "system_tick_or_idle_wait", 0.3)
+
+        BehaviorFacet._apply_pressure_biases(score_breakdown, reasons, signals)
+        BehaviorFacet._apply_goal_biases(score_breakdown, reasons, signals)
+        BehaviorFacet._apply_memory_biases(score_breakdown, reasons, signals)
+        BehaviorFacet._apply_low_signal_bias(score_breakdown, reasons, signals)
+
+        decision_scores = {
+            action: round(_clamp_unit(sum(breakdown.values())), 3)
+            for action, breakdown in score_breakdown.items()
+        }
+        selected_decision = max(
+            DECISION_BASE_SCORES,
+            key=lambda action: (decision_scores[action], DECISION_PRIORITY[action]),
+        )
+        reasons.append(f"selected_highest_weighted_score:{selected_decision.value}")
+        return (
+            selected_decision,
+            reasons,
+            {action.value: decision_scores[action] for action in DECISION_BASE_SCORES},
+        )
+
+    @staticmethod
+    def _apply_pressure_biases(
+        score_breakdown: dict[DecisionAction, dict[str, float]],
+        reasons: list[str],
+        signals: _BehaviorSignals,
+    ) -> None:
+        pressure = signals.pressure
+        if pressure <= 0.0:
+            reasons.append("pressure contribution: 0.000 no pressure bias applied")
+            return
+
+        actionable = signals.explicit_action and signals.low_risk
+        unclear = BehaviorFacet._is_unclear(signals)
+        score_breakdown[DecisionAction.ACT]["pressure_act_bias"] = pressure * (
+            0.3 if actionable else 0.15
+        )
+        score_breakdown[DecisionAction.ASK]["pressure_ask_bias"] = pressure * (
+            0.25 if unclear else 0.1
+        )
+        score_breakdown[DecisionAction.WAIT]["pressure_wait_penalty"] = pressure * -0.2
+        reasons.append("high pressure increased ACT score")
+        reasons.append("high pressure increased ASK score")
+        reasons.append("pressure reduced WAIT score")
+
+    @staticmethod
+    def _apply_goal_biases(
+        score_breakdown: dict[DecisionAction, dict[str, float]],
+        reasons: list[str],
+        signals: _BehaviorSignals,
+    ) -> None:
+        goal_relevance = signals.goal_relevance
+        if goal_relevance <= 0.0:
+            reasons.append("goal relevance contribution: 0.000 no goal bias applied")
+            return
+
+        actionable = signals.explicit_action and signals.low_risk
+        unclear = BehaviorFacet._is_unclear(signals)
+        if actionable:
+            score_breakdown[DecisionAction.ACT]["goal_relevance_act_bias"] = (
+                goal_relevance * 0.35
+            )
+            reasons.append("goal priority boosted ACT score")
+        if unclear:
+            score_breakdown[DecisionAction.ASK]["goal_relevance_ask_bias"] = (
+                goal_relevance * 0.25
+            )
+            reasons.append("goal priority boosted ASK score")
+        if (
+            goal_relevance >= HIGH_GOAL_RELEVANCE_THRESHOLD
+            and signals.retrieval_strength < LOW_RETRIEVAL_THRESHOLD
+        ):
+            score_breakdown[DecisionAction.ASK]["goal_relevant_low_context_ask_bias"] = (
+                goal_relevance * (1.0 - signals.retrieval_strength) * 0.35
+            )
+            reasons.append("goal relevant but insufficient context")
+            reasons.append("low retrieval caused ASK preference")
+        if goal_relevance < LOW_RETRIEVAL_THRESHOLD:
+            score_breakdown[DecisionAction.RECORD]["low_goal_relevance_record_bias"] = 0.08
+            score_breakdown[DecisionAction.WAIT]["low_goal_relevance_wait_bias"] = 0.04
+            reasons.append("low goal relevance favored RECORD or WAIT")
+        reasons.append("goal priority boosted decision confidence")
+
+    @staticmethod
+    def _apply_memory_biases(
+        score_breakdown: dict[DecisionAction, dict[str, float]],
+        reasons: list[str],
+        signals: _BehaviorSignals,
+    ) -> None:
+        retrieval_strength = signals.retrieval_strength
+        if retrieval_strength <= 0.0:
+            reasons.append("memory contribution: 0.000 no retrieval bias applied")
+            return
+
+        if signals.explicit_action and signals.low_risk:
+            score_breakdown[DecisionAction.ACT]["memory_retrieval_act_bias"] = (
+                retrieval_strength * 0.1
+            )
+        if BehaviorFacet._is_unclear(signals):
+            score_breakdown[DecisionAction.ASK]["memory_retrieval_ask_bias"] = (
+                retrieval_strength * 0.1
+            )
+        reasons.append("memory retrieval strength increased decision confidence")
+
+    @staticmethod
+    def _apply_low_signal_bias(
+        score_breakdown: dict[DecisionAction, dict[str, float]],
+        reasons: list[str],
+        signals: _BehaviorSignals,
+    ) -> None:
+        low_signal = (
+            signals.pressure <= 0.0
+            and signals.goal_relevance <= 0.0
+            and signals.retrieval_strength <= 0.0
+            and signals.salience < 0.6
+            and not signals.explicit_action
+            and not BehaviorFacet._is_unclear(signals)
+        )
+        if not low_signal:
+            return
+        if signals.meaningful_content:
+            score_breakdown[DecisionAction.RECORD]["low_signal_record_bias"] = 0.1
+            reasons.append("low signal environment favored RECORD")
+        else:
+            score_breakdown[DecisionAction.WAIT]["low_signal_wait_bias"] = 0.15
+            reasons.append("low signal environment favored WAIT")
 
     @staticmethod
     def _score_confidence(
         action: DecisionAction,
-        reasons: list[str],
         *,
         salience: float,
+        pressure: float,
+        goal_relevance: float,
+        retrieval_strength: float,
         goal_alignment_score: float,
         goal_alignment_priority: float,
         world_alignment_score: float,
         world_alignment_confidence: float,
     ) -> dict[str, float]:
-        breakdown: dict[str, float] = {"base": DECISION_BASE_CONFIDENCE[action]}
-        for reason in reasons:
-            boost = REASON_CONFIDENCE_BOOSTS.get(reason)
-            if boost is not None:
-                breakdown[reason] = boost
-
-        if salience >= 0.8:
-            breakdown["salience_signal"] = 0.05
-        elif salience >= 0.6:
-            breakdown["salience_signal"] = 0.03
-
-        goal_boost = _goal_confidence_boost(
-            goal_alignment_score=goal_alignment_score,
-            goal_alignment_priority=goal_alignment_priority,
-        )
-        if goal_boost > 0.0:
-            breakdown["goal_alignment_signal"] = goal_boost
-
+        breakdown: dict[str, float] = {
+            "base": DECISION_BASE_SCORES[action],
+            "pressure_contribution": round(_clamp_unit(pressure) * 0.25, 3),
+            "goal_relevance_contribution": round(
+                _clamp_unit(goal_relevance) * 0.30,
+                3,
+            ),
+            "memory_retrieval_contribution": round(
+                _clamp_unit(retrieval_strength) * 0.20,
+                3,
+            ),
+            "salience_contribution": round(_clamp_unit(salience) * 0.25, 3),
+        }
+        if goal_alignment_score > 0.0 and goal_alignment_priority > 0.0:
+            breakdown["goal_alignment_signal"] = breakdown[
+                "goal_relevance_contribution"
+            ]
         world_boost = _world_confidence_boost(
             world_alignment_score=world_alignment_score,
             world_alignment_confidence=world_alignment_confidence,
@@ -467,29 +727,69 @@ class BehaviorFacet:
         if world_boost > 0.0:
             breakdown["world_alignment_signal"] = world_boost
 
-        breakdown["total"] = round(_clamp_unit(sum(breakdown.values())), 2)
+        total_keys = (
+            "base",
+            "pressure_contribution",
+            "goal_relevance_contribution",
+            "memory_retrieval_contribution",
+            "salience_contribution",
+            "world_alignment_signal",
+        )
+        breakdown["total"] = round(
+            _clamp_unit(sum(breakdown.get(key, 0.0) for key in total_keys)),
+            3,
+        )
         return breakdown
+
+    @staticmethod
+    def _contribution_reasons(
+        signals: _BehaviorSignals,
+        confidence_breakdown: dict[str, float],
+    ) -> list[str]:
+        return [
+            (
+                f"pressure contribution: {signals.pressure:.3f} -> "
+                f"{confidence_breakdown['pressure_contribution']:.3f}"
+            ),
+            (
+                f"goal relevance contribution: {signals.goal_relevance:.3f} -> "
+                f"{confidence_breakdown['goal_relevance_contribution']:.3f}"
+            ),
+            (
+                f"memory contribution: {signals.retrieval_strength:.3f} -> "
+                f"{confidence_breakdown['memory_retrieval_contribution']:.3f}"
+            ),
+            (
+                "final confidence breakdown: "
+                f"base={confidence_breakdown['base']:.3f}, "
+                f"pressure={confidence_breakdown['pressure_contribution']:.3f}, "
+                f"goal={confidence_breakdown['goal_relevance_contribution']:.3f}, "
+                f"memory={confidence_breakdown['memory_retrieval_contribution']:.3f}, "
+                f"salience={confidence_breakdown['salience_contribution']:.3f}, "
+                f"total={confidence_breakdown['total']:.3f}"
+            ),
+        ]
+
+    @staticmethod
+    def _is_unclear(signals: _BehaviorSignals) -> bool:
+        return (
+            signals.requires_response
+            or signals.uncertainty
+            or signals.question_like
+            or (signals.explicit_action and not signals.low_risk)
+        )
 
 
 def _clamp_unit(score: float) -> float:
     return max(0.0, min(float(score), 1.0))
 
 
-def _goal_confidence_boost(
-    *,
-    goal_alignment_score: float,
-    goal_alignment_priority: float,
-) -> float:
-    if goal_alignment_score <= 0.0 or goal_alignment_priority <= 0.0:
-        return 0.0
-
-    normalized_alignment = _clamp_unit(goal_alignment_score / 2.0)
-    boost = (
-        0.02
-        + (0.04 * _clamp_unit(goal_alignment_priority))
-        + (0.02 * normalized_alignment)
-    )
-    return round(min(boost, 0.08), 2)
+def _normalized_count(raw_value: Any, denominator: int) -> float:
+    if isinstance(raw_value, list):
+        return _clamp_unit(len(raw_value) / max(float(denominator), 1.0))
+    if isinstance(raw_value, (int, float)):
+        return _clamp_unit(float(raw_value) / max(float(denominator), 1.0))
+    return 0.0
 
 
 def _world_confidence_boost(
@@ -506,4 +806,4 @@ def _world_confidence_boost(
         + (0.04 * _clamp_unit(world_alignment_confidence))
         + (0.02 * normalized_alignment)
     )
-    return round(min(boost, 0.08), 2)
+    return round(min(boost, 0.08), 3)
