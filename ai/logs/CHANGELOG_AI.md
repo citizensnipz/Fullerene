@@ -9,6 +9,12 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-29 (CLI usability)
+
+- Updated `fullerene/cli.py` with `--full`, positional prompt input, `--json` / `--debug` full-record output, and deterministic concise default output.
+- Updated `fullerene/state/store.py` so `state.json` remains the live snapshot while prior snapshots rotate under `snapshots/state-1.json` through `state-5.json`.
+- Added `tests/test_cli.py` for CLI usability coverage and moved existing CLI JSON assertions behind explicit `--json`.
+
 ### 2026-04-29 (behavior v1)
 
 - Updated `fullerene/facets/behavior.py` to keep the existing `WAIT` / `RECORD` / `ASK` / `ACT` interface while selecting decisions through deterministic weighted scores using pressure, goal relevance, memory retrieval strength, salience, and explicit confidence breakdown metadata.

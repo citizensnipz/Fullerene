@@ -38,9 +38,36 @@ from fullerene.state import FileStateStore
 from fullerene.world_model import Belief, BeliefSource, SQLiteWorldModelStore
 
 
+FULL_PRESET_FLAGS = (
+    "memory",
+    "context",
+    "goals",
+    "world",
+    "behavior",
+    "policy",
+    "planner",
+    "executor",
+    "learning",
+    "attention",
+    "affect",
+    "verify",
+)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Process a single event through the Fullerene Nexus runtime."
+    )
+    parser.add_argument(
+        "prompt",
+        nargs="?",
+        default=None,
+        help="Optional prompt content. Equivalent to --content when --content is omitted.",
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Enable all implemented runtime facets for this run.",
     )
     parser.add_argument(
         "--memory",
@@ -104,6 +131,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable deterministic post-decision verification for this run.",
     )
     parser.add_argument(
+        "--verifier",
+        action="store_true",
+        dest="verify",
+        help="Alias for --verify.",
+    )
+    parser.add_argument(
         "--planner",
         action="store_true",
         help="Enable the deterministic PlannerFacet for this run.",
@@ -136,8 +169,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--content",
-        default="",
+        default=None,
         help="Event content for user message or system note events.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the full NexusRecord JSON.",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print the full NexusRecord JSON for debugging.",
     )
     parser.add_argument(
         "--metadata",
@@ -227,6 +270,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.full:
+        _apply_full_preset(args)
+    content = args.content if args.content is not None else args.prompt or ""
     metadata = _parse_metadata(parser, args.metadata)
     if args.feedback is not None:
         metadata["feedback"] = args.feedback
@@ -251,7 +297,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     store = FileStateStore(state_dir)
     event = Event(
         event_type=EventType(args.event_type),
-        content=args.content,
+        content=content,
         metadata=metadata,
     )
     facets = []
@@ -278,7 +324,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             Path(args.goals_db) if args.goals_db else state_dir / "goals.sqlite3"
         )
         goal_store = SQLiteGoalStore(goals_db_path)
-        _create_goal_from_metadata(goal_store, content=args.content, metadata=metadata)
+        _create_goal_from_metadata(goal_store, content=content, metadata=metadata)
         facets.append(GoalsFacet(goal_store))
     if args.world:
         world_db_path = (
@@ -297,7 +343,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             _create_policy_from_metadata(
                 policy_store,
-                content=args.content,
+                content=content,
                 metadata=metadata,
             )
         except ValueError as exc:
@@ -344,8 +390,63 @@ def main(argv: Sequence[str] | None = None) -> int:
     runtime = NexusRuntime(facets=facets, store=store)
     record = runtime.process_event(event)
 
-    print(json.dumps(record.to_dict(), indent=2))
+    if args.json or args.debug:
+        print(json.dumps(record.to_dict(), indent=2))
+    else:
+        print(format_record_output(record))
     return 0
+
+
+def _apply_full_preset(args: argparse.Namespace) -> None:
+    for flag_name in FULL_PRESET_FLAGS:
+        setattr(args, flag_name, True)
+
+
+def format_record_output(record) -> str:
+    """Return deterministic, concise CLI output for a processed record."""
+    decision = record.decision
+    lines = [f"decision: {decision.action.value.upper()}"]
+    output = _derive_response_output(record)
+
+    if output.get("tool") is not None:
+        lines.append(f"tool: {output['tool']}")
+    response = output.get("response")
+    lines.append(f"response: {json.dumps(response)}")
+    if output.get("recorded") is not None:
+        lines.append(f"recorded: {str(output['recorded']).lower()}")
+    lines.append(f"reason: {decision.reason}")
+    return "\n".join(lines)
+
+
+def _derive_response_output(record) -> dict[str, Any]:
+    action = record.decision.action
+    if action.value == "wait":
+        return {"response": None}
+    if action.value == "record":
+        return {"response": None, "recorded": True}
+    if action.value == "ask":
+        return {"response": "Clarification needed."}
+    if action.value == "act":
+        action_metadata = _act_metadata(record)
+        if action_metadata is None:
+            return {"response": None}
+        return {
+            "tool": action_metadata.get("tool"),
+            "response": action_metadata.get("response"),
+        }
+    return {"response": None}
+
+
+def _act_metadata(record) -> dict[str, Any] | None:
+    for result in record.facet_results:
+        if result.proposed_decision != record.decision.action:
+            continue
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        response = metadata.get("response")
+        tool = metadata.get("tool")
+        if response is not None or tool is not None:
+            return {"response": response, "tool": tool}
+    return None
 
 
 def _parse_metadata(

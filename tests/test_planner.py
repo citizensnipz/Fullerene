@@ -597,6 +597,7 @@ class CLIPlannerIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--planner",
                     "--content",
                     "make a plan for this",
@@ -620,6 +621,7 @@ class CLIPlannerIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--planner",
                     "--pressure",
                     "0.8",
@@ -645,6 +647,7 @@ class CLIPlannerIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--planner",
                     "--goals",
                     "--world",
@@ -671,6 +674,7 @@ class CLIPlannerIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--planner",
                     "--content",
                     "make a plan for this",

@@ -339,6 +339,7 @@ class CLIBehaviorIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--behavior",
                     "--content",
                     "what should I do next?",

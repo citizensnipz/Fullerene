@@ -679,6 +679,7 @@ class CLILearningIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--learning",
                     "--content",
                     "hello learning",
@@ -700,6 +701,7 @@ class CLILearningIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--learning",
                     "--content",
                     "that worked",
@@ -724,6 +726,7 @@ class CLILearningIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--learning",
                     "--feedback",
                     "positive",
@@ -750,6 +753,7 @@ class CLILearningIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--learning",
                     "--feedback",
                     "negative",
@@ -776,6 +780,7 @@ class CLILearningIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--learning",
                     "--goals",
                     "--content",
@@ -801,6 +806,7 @@ class CLILearningIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--learning",
                     "--target-goal-id",
                     "goal-123",
@@ -822,6 +828,7 @@ class CLILearningIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--learning",
                     "--target-memory-id",
                     "mem-123",

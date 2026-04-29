@@ -587,6 +587,7 @@ class CLIVerifierIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--verify",
                     "--content",
                     "record this note",
@@ -609,6 +610,7 @@ class CLIVerifierIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--behavior",
                     "--policy",
                     "--verify",

@@ -541,6 +541,7 @@ class CLIPolicyIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--policy",
                     "--content",
                     "policy smoke",
@@ -566,6 +567,7 @@ class CLIPolicyIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--policy",
                     "--content",
                     "policy smoke",

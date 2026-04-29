@@ -225,6 +225,7 @@ class CLIGoalsIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--goals",
                     "--content",
                     "track my tasks",
@@ -250,6 +251,7 @@ class CLIGoalsIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--goals",
                     "--content",
                     "track my tasks",
@@ -277,6 +279,7 @@ class CLIGoalsIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--goals",
                     "--content",
                     "track my tasks",

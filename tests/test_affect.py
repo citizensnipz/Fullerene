@@ -625,6 +625,7 @@ class CLIAffectIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--affect",
                     "--content",
                     "that worked",
@@ -652,6 +653,7 @@ class CLIAffectIntegrationTests(unittest.TestCase):
         with redirect_stdout(first_stdout):
             first_exit = cli_main(
                 [
+                    "--json",
                     "--affect",
                     "--affect-history-size",
                     "2",
@@ -664,6 +666,7 @@ class CLIAffectIntegrationTests(unittest.TestCase):
         with redirect_stdout(second_stdout):
             second_exit = cli_main(
                 [
+                    "--json",
                     "--affect",
                     "--affect-history-size",
                     "2",
@@ -692,6 +695,7 @@ class CLIAffectIntegrationTests(unittest.TestCase):
         with redirect_stdout(baseline_stdout):
             baseline_exit = cli_main(
                 [
+                    "--json",
                     "--affect",
                     "--content",
                     "something happened",
@@ -702,6 +706,7 @@ class CLIAffectIntegrationTests(unittest.TestCase):
         with redirect_stdout(boosted_stdout):
             boosted_exit = cli_main(
                 [
+                    "--json",
                     "--affect",
                     "--pressure",
                     "0.8",

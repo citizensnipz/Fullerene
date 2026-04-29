@@ -585,6 +585,7 @@ class CLIAttentionIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--attention",
                     "--content",
                     "new urgent thing happened",
@@ -607,6 +608,7 @@ class CLIAttentionIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--goals",
                     "--world",
                     "--attention",
@@ -636,6 +638,7 @@ class CLIAttentionIntegrationTests(unittest.TestCase):
         with redirect_stdout(baseline_stdout):
             baseline_exit = cli_main(
                 [
+                    "--json",
                     "--attention",
                     "--content",
                     "new urgent thing happened",
@@ -646,6 +649,7 @@ class CLIAttentionIntegrationTests(unittest.TestCase):
         with redirect_stdout(boosted_stdout):
             boosted_exit = cli_main(
                 [
+                    "--json",
                     "--attention",
                     "--pressure",
                     "0.8",
@@ -679,6 +683,7 @@ class CLIAttentionIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--memory",
                     "--goals",
                     "--world",

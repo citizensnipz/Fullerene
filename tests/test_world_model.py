@@ -259,6 +259,7 @@ class CLIWorldModelIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--world",
                     "--content",
                     "Should we change memory storage?",
@@ -284,6 +285,7 @@ class CLIWorldModelIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--world",
                     "--content",
                     "Should we change memory storage?",
@@ -311,6 +313,7 @@ class CLIWorldModelIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--world",
                     "--content",
                     "SQLite is the canonical memory store",

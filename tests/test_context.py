@@ -295,6 +295,7 @@ class CLIContextIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--context",
                     "--content",
                     "show context",
@@ -321,6 +322,7 @@ class CLIContextIntegrationTests(unittest.TestCase):
             with redirect_stdout(stdout):
                 exit_code = cli_main(
                     [
+                        "--json",
                         "--memory",
                         "--context",
                         "--content",
@@ -335,6 +337,7 @@ class CLIContextIntegrationTests(unittest.TestCase):
         with redirect_stdout(final_stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--memory",
                     "--context",
                     "--context-window-size",

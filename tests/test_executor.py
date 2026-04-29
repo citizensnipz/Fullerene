@@ -568,6 +568,7 @@ class CLIExecutorIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--executor",
                     "--content",
                     "hello executor",
@@ -589,6 +590,7 @@ class CLIExecutorIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--planner",
                     "--executor",
                     "--execute-plan",
@@ -617,6 +619,7 @@ class CLIExecutorIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--planner",
                     "--executor",
                     "--execute-plan",
@@ -649,6 +652,7 @@ class CLIExecutorIntegrationTests(unittest.TestCase):
         with redirect_stdout(stdout):
             exit_code = cli_main(
                 [
+                    "--json",
                     "--planner",
                     "--executor",
                     "--live",
