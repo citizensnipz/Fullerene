@@ -33,7 +33,7 @@ python -m unittest discover -s tests -p "test_*.py" -v
 ## Model backends
 
 ```bash
-# Future: model backend commands will be added after model integration lands.
+python -m fullerene --full --model ollama:gemma3:4b --content "What are you doing?"
 ```
 
 ## For AI agents

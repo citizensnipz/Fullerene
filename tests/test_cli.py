@@ -4,9 +4,11 @@ import io
 import json
 import shutil
 import tempfile
+import urllib.error
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from fullerene.cli import main as cli_main
 from fullerene.workspace_state import DEFAULT_STATE_DIR
@@ -107,6 +109,96 @@ class CLIUsabilityTests(unittest.TestCase):
         self.assertIn("response: ", output)
         self.assertNotIn("response: null", output)
         self.assertIn("local Fullerene cycle", output)
+
+    def test_model_output_uses_ollama_text_after_behavior_decision(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        stdout = io.StringIO()
+
+        with patch(
+            "fullerene.models.ollama.OllamaAdapter.generate",
+            return_value="Model phrasing only.",
+        ) as generate:
+            with redirect_stdout(stdout):
+                exit_code = cli_main(
+                    [
+                        "--full",
+                        "--model",
+                        "ollama:gemma3:4b",
+                        "--content",
+                        "What are you doing?",
+                        "--state-dir",
+                        str(root),
+                    ]
+                )
+
+        output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("decision: ACT", output)
+        self.assertIn('response: "Model phrasing only."', output)
+        generate.assert_called_once()
+        prompt = generate.call_args.args[0]
+        self.assertIn("System decision: ACT", prompt)
+        self.assertIn("Only generate text", prompt)
+
+    def test_model_offline_falls_back_to_template(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        stdout = io.StringIO()
+
+        with patch(
+            "fullerene.models.ollama.urllib.request.urlopen",
+            side_effect=urllib.error.URLError("connection refused"),
+        ):
+            with redirect_stdout(stdout):
+                exit_code = cli_main(
+                    [
+                        "--full",
+                        "--model",
+                        "ollama:gemma3:4b",
+                        "--content",
+                        "What are you doing?",
+                        "--state-dir",
+                        str(root),
+                    ]
+                )
+
+        output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("decision: ACT", output)
+        self.assertIn("response: ", output)
+        self.assertIn("local Fullerene cycle", output)
+
+    def test_model_is_not_used_for_record_decision_logic(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        stdout = io.StringIO()
+
+        with patch(
+            "fullerene.models.ollama.OllamaAdapter.generate",
+            return_value="Should not be used.",
+        ) as generate:
+            with redirect_stdout(stdout):
+                exit_code = cli_main(
+                    [
+                        "--memory",
+                        "--model",
+                        "ollama:gemma3:4b",
+                        "--content",
+                        "test scoped facets",
+                        "--state-dir",
+                        str(root),
+                    ]
+                )
+
+        output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("decision: RECORD", output)
+        self.assertIn("response: null", output)
+        generate.assert_not_called()
 
     def test_json_and_debug_output_full_record(self) -> None:
         for output_flag in ("--json", "--debug"):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -24,6 +25,7 @@ from fullerene.facets import (
 )
 from fullerene.goals import Goal, GoalSource, SQLiteGoalStore
 from fullerene.memory import SQLiteMemoryStore, infer_tags, merge_tags, normalize_tags
+from fullerene.models import ModelAdapter, ModelAdapterError, OllamaAdapter
 from fullerene.nexus import Event, EventType, NexusRuntime
 from fullerene.policy import (
     PolicyRule,
@@ -188,6 +190,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the full NexusRecord JSON.",
     )
     parser.add_argument(
+        "--model",
+        default=None,
+        help="Optional text model adapter, for example ollama:gemma3:4b.",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Print the full NexusRecord JSON for debugging.",
@@ -302,6 +309,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--attention-top-n must be at least 1.")
     if args.affect_history_size < 1:
         parser.error("--affect-history-size must be at least 1.")
+    model_adapter = _build_model_adapter(parser, args.model)
 
     state_dir = Path(args.state_dir)
     store = FileStateStore(state_dir)
@@ -403,7 +411,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.json or args.debug:
         print(json.dumps(record.to_dict(), indent=2))
     else:
-        print(format_record_output(record))
+        print(
+            format_record_output(
+                record,
+                model_adapter=model_adapter,
+                debug=args.debug,
+            )
+        )
     return 0
 
 
@@ -412,11 +426,20 @@ def _apply_full_preset(args: argparse.Namespace) -> None:
         setattr(args, flag_name, True)
 
 
-def format_record_output(record) -> str:
+def format_record_output(
+    record,
+    *,
+    model_adapter: ModelAdapter | None = None,
+    debug: bool = False,
+) -> str:
     """Return deterministic, concise CLI output for a processed record."""
     decision = record.decision
     lines = [f"decision: {decision.action.value.upper()}"]
-    output = _derive_response_output(record)
+    output = _derive_response_output(
+        record,
+        model_adapter=model_adapter,
+        debug=debug,
+    )
 
     if output.get("tool") is not None:
         lines.append(f"tool: {output['tool']}")
@@ -428,7 +451,12 @@ def format_record_output(record) -> str:
     return "\n".join(lines)
 
 
-def _derive_response_output(record) -> dict[str, Any]:
+def _derive_response_output(
+    record,
+    *,
+    model_adapter: ModelAdapter | None = None,
+    debug: bool = False,
+) -> dict[str, Any]:
     action = record.decision.action
     if action.value == "wait":
         return {"response": None}
@@ -436,7 +464,13 @@ def _derive_response_output(record) -> dict[str, Any]:
         return {"response": None, "recorded": True}
     if action.value == "ask":
         output_metadata = _text_output_metadata(record)
-        response = _render_text_response(output_metadata, "clarification_needed")
+        response = _generate_or_render_text_response(
+            record,
+            output_metadata,
+            "clarification_needed",
+            model_adapter=model_adapter,
+            debug=debug,
+        )
         return {
             "tool": output_metadata.get("tool"),
             "response": response,
@@ -447,7 +481,13 @@ def _derive_response_output(record) -> dict[str, Any]:
             return {"response": None}
         return {
             "tool": output_metadata.get("tool"),
-            "response": _render_text_response(output_metadata, None),
+            "response": _generate_or_render_text_response(
+                record,
+                output_metadata,
+                None,
+                model_adapter=model_adapter,
+                debug=debug,
+            ),
         }
     return {"response": None}
 
@@ -491,6 +531,110 @@ def _render_text_response(
     if not isinstance(template_name, str):
         return None
     return TEXT_RESPONSE_TEMPLATES.get(template_name)
+
+
+def _generate_or_render_text_response(
+    record,
+    metadata: dict[str, Any],
+    default_template: str | None,
+    *,
+    model_adapter: ModelAdapter | None,
+    debug: bool,
+) -> str | None:
+    if not _metadata_flag(metadata, "response_needed"):
+        return None
+
+    if model_adapter is not None:
+        prompt = _build_model_prompt(record, metadata)
+        try:
+            response = model_adapter.generate(prompt).strip()
+            if response:
+                return response
+        except ModelAdapterError as exc:
+            if debug:
+                print(f"warning: model generation failed: {exc}", file=sys.stderr)
+
+    return _render_text_response(metadata, default_template)
+
+
+def _build_model_prompt(record, metadata: dict[str, Any]) -> str:
+    decision = record.decision.action.value.upper()
+    lines = [
+        "You are a local AI system called Fullerene.",
+        "Only generate text; do not decide actions, modify state, or call tools.",
+        f"User said: {_prompt_line(record.event.content)}",
+        f"System decision: {decision}",
+        "Relevant context:",
+        f"- active goal: {_active_goal_summary(record)}",
+        f"- recent action: {_recent_action_summary(record)}",
+        f"- response template: {metadata.get('response_template') or 'none'}",
+        "Respond concisely.",
+    ]
+    return "\n".join(lines)
+
+
+def _active_goal_summary(record) -> str:
+    goals_metadata = _facet_metadata(record, facet_name="goals")
+    relevant_goals = goals_metadata.get("relevant_goals")
+    if isinstance(relevant_goals, list) and relevant_goals:
+        top_goal = relevant_goals[0]
+        if isinstance(top_goal, dict):
+            description = _coerce_prompt_string(top_goal.get("description"))
+            if description is not None:
+                return description
+    active_goal_count = goals_metadata.get("active_goal_count")
+    if isinstance(active_goal_count, int) and active_goal_count > 0:
+        return f"{active_goal_count} active goal(s)"
+    return "none"
+
+
+def _recent_action_summary(record) -> str:
+    for facet_name in ("executor", "planner"):
+        metadata = _facet_metadata(record, facet_name=facet_name)
+        summary = _coerce_prompt_string(metadata.get("reasons"))
+        if summary is not None:
+            return f"{facet_name}: {summary}"
+
+    for result in reversed(record.facet_results):
+        if result.facet_name in {"executor", "planner"}:
+            return f"{result.facet_name}: {_prompt_line(result.summary)}"
+    return "none"
+
+
+def _coerce_prompt_string(value: Any) -> str | None:
+    if isinstance(value, str):
+        return _prompt_line(value)
+    if isinstance(value, list) and value:
+        cleaned_values = [
+            _prompt_line(str(item))
+            for item in value[:3]
+            if isinstance(item, (str, int, float, bool))
+        ]
+        if cleaned_values:
+            return ", ".join(cleaned_values)
+    return None
+
+
+def _prompt_line(value: str, *, limit: int = 240) -> str:
+    cleaned = " ".join(value.split())
+    if len(cleaned) <= limit:
+        return cleaned
+    return f"{cleaned[: limit - 3]}..."
+
+
+def _build_model_adapter(
+    parser: argparse.ArgumentParser,
+    raw_model: str | None,
+) -> ModelAdapter | None:
+    if raw_model is None:
+        return None
+    if not raw_model.startswith("ollama:"):
+        parser.error("--model currently supports only ollama:<model-name>.")
+
+    model_name = raw_model.removeprefix("ollama:").strip()
+    if not model_name:
+        parser.error("--model ollama:<model-name> requires a model name.")
+    return OllamaAdapter(model_name)
 
 
 def _parse_metadata(

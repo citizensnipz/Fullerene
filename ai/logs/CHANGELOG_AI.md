@@ -9,6 +9,10 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-29 (model adapter v0)
+
+- Added optional CLI-only model text generation via `fullerene/models/` and `--model ollama:<model>`; Behavior/Nexus still make all decisions, Ollama failures fall back to deterministic response templates, and no model code lives in facets.
+
 ### 2026-04-29 (behavior v1.1)
 
 - Added deterministic direct-question response intent in `fullerene/facets/behavior.py` plus fixed text-template rendering in `fullerene/cli.py`; `ACT` text responses now remain verifier-safe without adding decision enums, LLM calls, executor execution, or freeform generation.
