@@ -10,6 +10,16 @@ from fullerene.memory import extract_event_tags, tokenize
 from fullerene.nexus.models import Event, FacetResult, NexusState
 
 
+def _goal_payload(goal: Goal) -> dict[str, object]:
+    return {
+        "id": goal.id,
+        "description": goal.description,
+        "priority": goal.priority,
+        "tags": list(goal.tags),
+        "source": goal.source.value,
+    }
+
+
 @dataclass(slots=True)
 class _GoalMatch:
     goal: Goal
@@ -86,6 +96,7 @@ class GoalsFacet:
 
         event_tags = extract_event_tags(event)
         event_keywords = tokenize(event.content)
+        active_goal_payload = [_goal_payload(goal) for goal in active_goals]
         relevant_matches = [
             match
             for goal in active_goals
@@ -122,11 +133,13 @@ class GoalsFacet:
             summary=summary,
             state_updates={
                 "last_active_goal_ids": [goal.id for goal in active_goals],
+                "last_active_goals": active_goal_payload[: self.relevant_limit],
                 "last_relevant_goals": relevant_goal_payload,
                 "last_relevance_score": relevance_score,
             },
             metadata={
                 "active_goal_count": len(active_goals),
+                "active_goals": active_goal_payload[: self.relevant_limit],
                 "relevant_goals": relevant_goal_payload,
                 "relevance_score": relevance_score,
                 "event_tags": sorted(event_tags),

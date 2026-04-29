@@ -57,6 +57,31 @@ class BehaviorFacetRuleTests(unittest.TestCase):
         self.assertTrue(result.metadata["response_needed"])
         self.assertEqual(result.metadata["response_reason"], "direct_question")
 
+    def test_focus_question_acts_when_active_goal_context_exists(self) -> None:
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="What should I focus on next?",
+            ),
+            NexusState(
+                facet_state={
+                    "goals": {
+                        "active_goals": [
+                            {
+                                "id": "goal-fullerene",
+                                "description": "finishing Fullerene",
+                                "priority": 0.8,
+                            }
+                        ],
+                    }
+                }
+            ),
+        )
+
+        self.assertEqual(result.proposed_decision, DecisionAction.ACT)
+        self.assertTrue(result.metadata["response_needed"])
+        self.assertEqual(result.metadata["response_template"], "next_steps_available")
+
     def test_direct_status_question_acts_with_text_metadata(self) -> None:
         result = self.facet.process(
             Event(

@@ -298,6 +298,118 @@ class CLIGoalsIntegrationTests(unittest.TestCase):
         self.assertEqual(goals[0].description, "track my tasks")
         self.assertEqual(goals[0].priority, 0.5)
 
+    def test_goal_intent_creates_active_goal(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            exit_code = cli_main(
+                [
+                    "--json",
+                    "--goals",
+                    "--content",
+                    "Remember that finishing Fullerene is important",
+                    "--state-dir",
+                    str(root),
+                ]
+            )
+
+        store = SQLiteGoalStore(root / "goals.sqlite3")
+        goals = store.list_active_goals(limit=5)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(len(goals), 1)
+        self.assertEqual(goals[0].description, "finishing Fullerene")
+        self.assertEqual(goals[0].priority, 0.8)
+        self.assertEqual(goals[0].source, GoalSource.USER)
+        self.assertEqual(goals[0].status, GoalStatus.ACTIVE)
+
+    def test_goal_intent_survives_across_cli_runs_and_guides_next_focus(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+
+        with redirect_stdout(io.StringIO()):
+            first_exit = cli_main(
+                [
+                    "--full",
+                    "--content",
+                    "Remember that finishing Fullerene is important",
+                    "--state-dir",
+                    str(root),
+                ]
+            )
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            second_exit = cli_main(
+                [
+                    "--full",
+                    "--content",
+                    "What should I focus on next?",
+                    "--state-dir",
+                    str(root),
+                ]
+            )
+
+        store = SQLiteGoalStore(root / "goals.sqlite3")
+        goals = store.list_active_goals(limit=5)
+        output = stdout.getvalue()
+
+        self.assertEqual(first_exit, 0)
+        self.assertEqual(second_exit, 0)
+        self.assertEqual(len(goals), 1)
+        self.assertIn("decision: ACT", output)
+        self.assertIn("finishing Fullerene", output)
+
+    def test_duplicate_goal_intent_updates_existing_goal(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+
+        for content in (
+            "I want to finish Fullerene",
+            "Remember that finish Fullerene is important",
+        ):
+            with redirect_stdout(io.StringIO()):
+                exit_code = cli_main(
+                    [
+                        "--goals",
+                        "--content",
+                        content,
+                        "--state-dir",
+                        str(root),
+                    ]
+                )
+            self.assertEqual(exit_code, 0)
+
+        goals = SQLiteGoalStore(root / "goals.sqlite3").list_active_goals(limit=5)
+
+        self.assertEqual(len(goals), 1)
+        self.assertEqual(goals[0].priority, 0.8)
+
+    def test_ordinary_note_records_without_creating_goal(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            exit_code = cli_main(
+                [
+                    "--json",
+                    "--goals",
+                    "--content",
+                    "This is an ordinary note for later.",
+                    "--state-dir",
+                    str(root),
+                ]
+            )
+
+        payload = json.loads(stdout.getvalue())
+        goals = SQLiteGoalStore(root / "goals.sqlite3").list_active_goals(limit=5)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["decision"]["action"], "record")
+        self.assertEqual(goals, [])
+
 
 class GoalsRuntimeIntegrationTests(unittest.TestCase):
     def test_nexus_runs_with_memory_goals_behavior_and_echo_facets(self) -> None:

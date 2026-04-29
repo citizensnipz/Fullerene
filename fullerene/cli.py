@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Sequence
@@ -23,8 +24,8 @@ from fullerene.facets import (
     VerifierFacet,
     WorldModelFacet,
 )
-from fullerene.goals import Goal, GoalSource, SQLiteGoalStore
-from fullerene.memory import SQLiteMemoryStore, infer_tags, merge_tags, normalize_tags
+from fullerene.goals import Goal, GoalSource, GoalStatus, SQLiteGoalStore
+from fullerene.memory import SQLiteMemoryStore, infer_tags, merge_tags, normalize_tags, tokenize
 from fullerene.models import ModelAdapter, ModelAdapterError, OllamaAdapter
 from fullerene.nexus import Event, EventType, NexusRuntime
 from fullerene.policy import (
@@ -64,6 +65,51 @@ TEXT_RESPONSE_TEMPLATES = {
         "I can propose next steps from the current goal and planner state."
     ),
 }
+GOAL_INTENT_PATTERNS: tuple[tuple[re.Pattern[str], float], ...] = (
+    (
+        re.compile(
+            r"^\s*remember\s+that\s+(?P<description>.+?)\s+is\s+important[.!?\s]*$",
+            re.IGNORECASE,
+        ),
+        0.8,
+    ),
+    (
+        re.compile(
+            r"^\s*(?P<description>.+?)\s+is\s+(?:important|needed|necessary)[.!?\s]*$",
+            re.IGNORECASE,
+        ),
+        0.8,
+    ),
+    (
+        re.compile(
+            r"^\s*we\s+should\s+focus\s+on\s+(?P<description>.+?)[.!?\s]*$",
+            re.IGNORECASE,
+        ),
+        0.6,
+    ),
+    (
+        re.compile(
+            r"^\s*my\s+goal\s+is\s+(?P<description>.+?)[.!?\s]*$",
+            re.IGNORECASE,
+        ),
+        0.5,
+    ),
+    (
+        re.compile(
+            r"^\s*i\s+want\s+to\s+(?P<description>.+?)[.!?\s]*$",
+            re.IGNORECASE,
+        ),
+        0.6,
+    ),
+    (
+        re.compile(
+            r"^\s*we\s+(?:need|must)\s+(?:to\s+)?(?P<description>.+?)[.!?\s]*$",
+            re.IGNORECASE,
+        ),
+        0.8,
+    ),
+)
+GOAL_DUPLICATE_KEYWORD_THRESHOLD = 0.67
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -343,6 +389,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         goal_store = SQLiteGoalStore(goals_db_path)
         _create_goal_from_metadata(goal_store, content=content, metadata=metadata)
+        _create_goal_from_intent(goal_store, content=content, metadata=metadata)
         facets.append(GoalsFacet(goal_store))
     if args.world:
         world_db_path = (
@@ -526,10 +573,16 @@ def _is_text_output(metadata: dict[str, Any]) -> bool:
 def _render_text_response(
     metadata: dict[str, Any],
     default_template: str | None,
+    *,
+    record=None,
 ) -> str | None:
     template_name = metadata.get("response_template") or default_template
     if not isinstance(template_name, str):
         return None
+    if template_name == "next_steps_available" and record is not None:
+        next_steps_response = _render_next_steps_response(record)
+        if next_steps_response is not None:
+            return next_steps_response
     return TEXT_RESPONSE_TEMPLATES.get(template_name)
 
 
@@ -554,7 +607,7 @@ def _generate_or_render_text_response(
             if debug:
                 print(f"warning: model generation failed: {exc}", file=sys.stderr)
 
-    return _render_text_response(metadata, default_template)
+    return _render_text_response(metadata, default_template, record=record)
 
 
 def _build_model_prompt(record, metadata: dict[str, Any]) -> str:
@@ -565,27 +618,84 @@ def _build_model_prompt(record, metadata: dict[str, Any]) -> str:
         f"User said: {_prompt_line(record.event.content)}",
         f"System decision: {decision}",
         "Relevant context:",
-        f"- active goal: {_active_goal_summary(record)}",
-        f"- recent action: {_recent_action_summary(record)}",
+        f"- top active goals: {_active_goals_summary(record)}",
+        f"- relevant goals: {_relevant_goals_summary(record)}",
+        f"- recent planner summary: {_recent_planner_summary(record)}",
         f"- response template: {metadata.get('response_template') or 'none'}",
         "Respond concisely.",
     ]
     return "\n".join(lines)
 
 
-def _active_goal_summary(record) -> str:
+def _active_goals_summary(record) -> str:
     goals_metadata = _facet_metadata(record, facet_name="goals")
-    relevant_goals = goals_metadata.get("relevant_goals")
-    if isinstance(relevant_goals, list) and relevant_goals:
-        top_goal = relevant_goals[0]
-        if isinstance(top_goal, dict):
-            description = _coerce_prompt_string(top_goal.get("description"))
+    return _goals_summary(goals_metadata.get("active_goals"))
+
+
+def _relevant_goals_summary(record) -> str:
+    goals_metadata = _facet_metadata(record, facet_name="goals")
+    return _goals_summary(goals_metadata.get("relevant_goals"))
+
+
+def _goals_summary(raw_goals: Any) -> str:
+    if isinstance(raw_goals, list) and raw_goals:
+        summaries: list[str] = []
+        for goal in raw_goals[:3]:
+            if not isinstance(goal, dict):
+                continue
+            description = _coerce_prompt_string(goal.get("description"))
+            if description is None:
+                continue
+            priority = goal.get("priority")
+            if isinstance(priority, (int, float)):
+                summaries.append(f"{description} (priority {float(priority):.1f})")
+            else:
+                summaries.append(description)
+        if summaries:
+            return "; ".join(summaries)
+    return "none"
+
+
+def _top_goal_description(record) -> str | None:
+    goals_metadata = _facet_metadata(record, facet_name="goals")
+    for key in ("relevant_goals", "active_goals"):
+        goals = goals_metadata.get(key)
+        if not isinstance(goals, list):
+            continue
+        for goal in goals:
+            if not isinstance(goal, dict):
+                continue
+            description = _coerce_prompt_string(goal.get("description"))
             if description is not None:
                 return description
-    active_goal_count = goals_metadata.get("active_goal_count")
-    if isinstance(active_goal_count, int) and active_goal_count > 0:
-        return f"{active_goal_count} active goal(s)"
-    return "none"
+    return None
+
+
+def _recent_planner_summary(record) -> str:
+    planner_metadata = _facet_metadata(record, facet_name="planner")
+    plan = planner_metadata.get("plan")
+    if isinstance(plan, dict):
+        steps = plan.get("steps")
+        if isinstance(steps, list) and steps:
+            step = steps[-1]
+            if isinstance(step, dict):
+                description = _coerce_prompt_string(step.get("description"))
+                if description is not None:
+                    return description
+        title = _coerce_prompt_string(plan.get("title"))
+        if title is not None:
+            return title
+    return _recent_action_summary(record)
+
+
+def _render_next_steps_response(record) -> str | None:
+    goal_description = _top_goal_description(record)
+    planner_summary = _recent_planner_summary(record)
+    if goal_description is None:
+        return None
+    if planner_summary != "none":
+        return f"Focus next on {goal_description}. Suggested next step: {planner_summary}"
+    return f"Focus next on {goal_description}."
 
 
 def _recent_action_summary(record) -> str:
@@ -683,6 +793,97 @@ def _create_goal_from_metadata(
     )
     store.add_goal(goal)
     return goal
+
+
+def _create_goal_from_intent(
+    store: SQLiteGoalStore,
+    *,
+    content: str,
+    metadata: dict[str, Any],
+) -> Goal | None:
+    if _metadata_flag(metadata, "create_goal"):
+        return None
+    detected_goal = _detect_goal_intent(content)
+    if detected_goal is None:
+        return None
+    description, priority = detected_goal
+
+    explicit_tags: list[str] = []
+    raw_tags = metadata.get("tags", [])
+    if isinstance(raw_tags, (list, tuple, set, frozenset)):
+        explicit_tags = normalize_tags(raw_tags)
+    tags = merge_tags(explicit_tags, infer_tags(description), infer_tags(content))
+
+    matching_goal = _find_similar_active_goal(store, description)
+    if matching_goal is not None:
+        matching_goal.priority = max(matching_goal.priority, priority)
+        matching_goal.tags = merge_tags(matching_goal.tags, tags)
+        matching_goal.status = GoalStatus.ACTIVE
+        matching_goal.source = GoalSource.USER
+        matching_goal.metadata = {
+            **matching_goal.metadata,
+            "last_intent_phrase": content.strip(),
+        }
+        store.update_goal(matching_goal)
+        return matching_goal
+
+    goal = Goal(
+        description=description,
+        priority=priority,
+        tags=tags,
+        source=GoalSource.USER,
+        status=GoalStatus.ACTIVE,
+        metadata={"intent_phrase": content.strip()},
+    )
+    store.add_goal(goal)
+    return goal
+
+
+def _detect_goal_intent(content: str) -> tuple[str, float] | None:
+    for pattern, priority in GOAL_INTENT_PATTERNS:
+        match = pattern.match(content)
+        if match is None:
+            continue
+        description = _clean_goal_description(match.group("description"))
+        if description:
+            return description, priority
+    return None
+
+
+def _clean_goal_description(description: str) -> str:
+    cleaned = " ".join(description.strip().strip("\"'`").split())
+    cleaned = re.sub(r"^(?:to|that)\s+", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip(" .!?")
+
+
+def _find_similar_active_goal(
+    store: SQLiteGoalStore,
+    description: str,
+) -> Goal | None:
+    normalized_description = _normalize_goal_description(description)
+    description_keywords = tokenize(description)
+    best_match: Goal | None = None
+    best_overlap = 0.0
+
+    for goal in store.list_active_goals(limit=50):
+        if _normalize_goal_description(goal.description) == normalized_description:
+            return goal
+        goal_keywords = tokenize(goal.description)
+        if not description_keywords or not goal_keywords:
+            continue
+        shared_keywords = description_keywords & goal_keywords
+        overlap = len(shared_keywords) / max(len(description_keywords), len(goal_keywords))
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_match = goal
+
+    if best_overlap >= GOAL_DUPLICATE_KEYWORD_THRESHOLD:
+        return best_match
+    return None
+
+
+def _normalize_goal_description(description: str) -> str:
+    return " ".join(sorted(tokenize(description)))
 
 
 def _metadata_flag(metadata: dict[str, Any], key: str) -> bool:

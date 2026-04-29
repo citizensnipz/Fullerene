@@ -21,6 +21,7 @@ RESPONSE_PHRASES = (
     "what are you doing right now",
     "what are you doing",
     "what should i do",
+    "what should i focus on",
     "should i",
     "what next",
     "next steps",
@@ -37,6 +38,7 @@ STATUS_RESPONSE_PHRASES = (
 )
 NEXT_STEPS_RESPONSE_PHRASES = (
     "what should i do",
+    "what should i focus on",
     "what next",
     "next steps",
 )
@@ -578,7 +580,13 @@ class BehaviorFacet:
             if isinstance(last_plan, dict) and isinstance(last_plan.get("steps"), list):
                 return bool(last_plan["steps"])
         if goal_context is not None:
-            for key in ("last_relevant_goals", "relevant_goals", "active_goals", "goals"):
+            for key in (
+                "last_relevant_goals",
+                "relevant_goals",
+                "last_active_goals",
+                "active_goals",
+                "goals",
+            ):
                 if isinstance(goal_context.get(key), list) and goal_context[key]:
                     return True
         return False
@@ -752,7 +760,12 @@ class BehaviorFacet:
                 goal_relevance * 0.35
             )
             reasons.append("goal priority boosted ACT score")
-        if unclear:
+        if signals.deterministic_response_available:
+            score_breakdown[DecisionAction.ACT]["goal_response_act_bias"] = (
+                goal_relevance * 0.25
+            )
+            reasons.append("goal context supported deterministic ACT response")
+        if unclear and not signals.deterministic_response_available:
             score_breakdown[DecisionAction.ASK]["goal_relevance_ask_bias"] = (
                 goal_relevance * 0.25
             )
@@ -760,6 +773,7 @@ class BehaviorFacet:
         if (
             goal_relevance >= HIGH_GOAL_RELEVANCE_THRESHOLD
             and signals.retrieval_strength < LOW_RETRIEVAL_THRESHOLD
+            and not signals.deterministic_response_available
         ):
             score_breakdown[DecisionAction.ASK]["goal_relevant_low_context_ask_bias"] = (
                 goal_relevance * (1.0 - signals.retrieval_strength) * 0.35

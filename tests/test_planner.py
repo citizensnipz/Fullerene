@@ -230,6 +230,30 @@ class DeterministicPlanBuilderTests(unittest.TestCase):
         assert high_plan is not None
         self.assertGreater(high_plan.confidence, low_plan.confidence)
 
+    def test_focus_question_can_plan_from_high_priority_active_goal(self) -> None:
+        goal_store = SQLiteGoalStore(self.root / "goals.sqlite3")
+        goal_store.add_goal(
+            Goal(
+                id="goal-fullerene",
+                description="finishing Fullerene",
+                priority=0.8,
+                tags=["goals"],
+            )
+        )
+        builder = DeterministicPlanBuilder(goal_store=goal_store)
+
+        plan = builder.build(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="What should I focus on next?",
+            ),
+            NexusState(),
+        )
+
+        assert plan is not None
+        self.assertEqual(plan.goal_id, "goal-fullerene")
+        self.assertEqual(plan.metadata["trigger_reason"], "high_priority_goal")
+
     def test_confidence_increases_with_high_confidence_relevant_belief(self) -> None:
         no_belief_plan = DeterministicPlanBuilder().build(
             Event(event_type=EventType.USER_MESSAGE, content="make a plan for state work"),

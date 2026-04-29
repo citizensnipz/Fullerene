@@ -28,6 +28,7 @@ EXPLICIT_REQUEST_PHRASES = (
     "how should we do this",
 )
 NEXT_STEP_PHRASES = (
+    "what should i focus on",
     "what next",
     "next step",
     "next steps",

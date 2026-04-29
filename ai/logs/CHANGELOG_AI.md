@@ -9,6 +9,11 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-29 (goal intent polish)
+
+- Added deterministic CLI goal-intent persistence in `fullerene/cli.py` for goal/priority phrases, duplicate active-goal updates, concise goal context in model prompts, and fallback next-step text that surfaces active goals.
+- Updated `fullerene/facets/goals.py`, `fullerene/facets/behavior.py`, and `fullerene/planner/builder.py` so active goals are visible to downstream facets, focus-next questions can `ACT` with goal context, and Planner can propose from high-priority active goals.
+
 ### 2026-04-29 (model adapter v0)
 
 - Added optional CLI-only model text generation via `fullerene/models/` and `--model ollama:<model>`; Behavior/Nexus still make all decisions, Ollama failures fall back to deterministic response templates, and no model code lives in facets.
