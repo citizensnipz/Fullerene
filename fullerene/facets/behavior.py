@@ -18,11 +18,27 @@ HIGH_PRIORITY_TAGS = frozenset(
     {"hard-rule-candidate", "correction", "urgent", "authority"}
 )
 RESPONSE_PHRASES = (
+    "what are you doing right now",
+    "what are you doing",
     "what should i do",
     "should i",
+    "what next",
+    "next steps",
     "can you",
-    "help me",
+    "could you",
     "how do i",
+    "help me",
+    "tell me",
+    "explain",
+)
+STATUS_RESPONSE_PHRASES = (
+    "what are you doing right now",
+    "what are you doing",
+)
+NEXT_STEPS_RESPONSE_PHRASES = (
+    "what should i do",
+    "what next",
+    "next steps",
 )
 DECISION_BASE_SCORES = {
     DecisionAction.WAIT: 0.1,
@@ -49,6 +65,10 @@ class _BehaviorSignals:
     has_metadata_signal: bool
     question_like: bool
     requires_response: bool
+    response_needed: bool
+    response_reason: str | None
+    response_template: str | None
+    deterministic_response_available: bool
     explicit_action: bool
     low_risk: bool
     uncertainty: bool
@@ -93,6 +113,8 @@ class BehaviorFacet:
         reasons.extend(self._contribution_reasons(signals, confidence_breakdown))
         priority_level = "high" if signals.high_priority else "normal"
 
+        response_metadata = self._response_metadata(selected_decision, signals)
+
         return FacetResult(
             facet_name=self.name,
             summary=(
@@ -116,6 +138,9 @@ class BehaviorFacet:
                 "last_aligned_goal_ids": list(signals.aligned_goal_ids),
                 "last_world_alignment_score": signals.world_alignment_score,
                 "last_aligned_belief_ids": list(signals.aligned_belief_ids),
+                "last_response_needed": response_metadata["response_needed"],
+                "last_response_reason": response_metadata.get("response_reason"),
+                "last_response_template": response_metadata.get("response_template"),
             },
             metadata={
                 "selected_decision": selected_decision.value,
@@ -131,7 +156,7 @@ class BehaviorFacet:
                 "reasons": list(reasons),
                 "high_priority": signals.high_priority,
                 "priority_level": priority_level,
-                "response_needed": selected_decision == DecisionAction.ASK,
+                **response_metadata,
                 "memory_signal_available": signals.memory_signal_available,
                 "goal_signal_available": signals.goal_signal_available,
                 "goal_alignment_score": signals.goal_alignment_score,
@@ -181,6 +206,22 @@ class BehaviorFacet:
             state=state,
             memory_context=memory_context,
         )
+        direct_response_needed = self._contains_response_phrase(event.content)
+        requires_response = self._metadata_flag(metadata, "requires_response")
+        response_template = self._resolve_response_template(
+            event.content,
+            state=state,
+            goal_context=goal_context,
+        )
+        deterministic_response_available = response_template in {
+            "status_report",
+            "next_steps_available",
+        }
+        response_reason = None
+        if direct_response_needed:
+            response_reason = "direct_question"
+        elif requires_response:
+            response_reason = "requires_response_metadata"
 
         return _BehaviorSignals(
             tags=tags,
@@ -197,8 +238,12 @@ class BehaviorFacet:
                 or "salience" in metadata
                 or "pressure" in metadata
             ),
-            question_like=self._contains_response_phrase(event.content),
-            requires_response=self._metadata_flag(metadata, "requires_response"),
+            question_like=direct_response_needed,
+            requires_response=requires_response,
+            response_needed=direct_response_needed or requires_response,
+            response_reason=response_reason,
+            response_template=response_template,
+            deterministic_response_available=deterministic_response_available,
             explicit_action=self._metadata_flag(metadata, "explicit_action"),
             low_risk=self._metadata_flag(metadata, "low_risk"),
             uncertainty=self._metadata_flag(metadata, "uncertainty"),
@@ -498,8 +543,81 @@ class BehaviorFacet:
 
     @staticmethod
     def _contains_response_phrase(content: str) -> bool:
-        normalized = content.casefold()
+        stripped = content.strip()
+        if stripped.endswith("?"):
+            return True
+        normalized = _normalize_content(content)
         return any(phrase in normalized for phrase in RESPONSE_PHRASES)
+
+    @staticmethod
+    def _resolve_response_template(
+        content: str,
+        *,
+        state: NexusState,
+        goal_context: dict[str, Any] | None,
+    ) -> str | None:
+        normalized = _normalize_content(content)
+        if any(phrase in normalized for phrase in STATUS_RESPONSE_PHRASES):
+            return "status_report"
+        if any(phrase in normalized for phrase in NEXT_STEPS_RESPONSE_PHRASES):
+            if BehaviorFacet._has_next_steps_context(state, goal_context):
+                return "next_steps_available"
+            return "clarification_needed"
+        if BehaviorFacet._contains_response_phrase(content):
+            return "clarification_needed"
+        return None
+
+    @staticmethod
+    def _has_next_steps_context(
+        state: NexusState,
+        goal_context: dict[str, Any] | None,
+    ) -> bool:
+        planner_state = state.facet_state.get("planner")
+        if isinstance(planner_state, dict):
+            last_plan = planner_state.get("last_plan")
+            if isinstance(last_plan, dict) and isinstance(last_plan.get("steps"), list):
+                return bool(last_plan["steps"])
+        if goal_context is not None:
+            for key in ("last_relevant_goals", "relevant_goals", "active_goals", "goals"):
+                if isinstance(goal_context.get(key), list) and goal_context[key]:
+                    return True
+        return False
+
+    @staticmethod
+    def _response_metadata(
+        selected_decision: DecisionAction,
+        signals: _BehaviorSignals,
+    ) -> dict[str, Any]:
+        response_needed = signals.response_needed
+        response_reason = signals.response_reason
+        response_template = signals.response_template
+
+        if selected_decision == DecisionAction.ASK:
+            response_needed = True
+            response_reason = response_reason or "clarification_needed"
+            response_template = "clarification_needed"
+        elif selected_decision == DecisionAction.ACT and response_needed:
+            response_template = response_template or "clarification_needed"
+        else:
+            return {
+                "response_needed": response_needed,
+                "response_reason": response_reason,
+                "response_template": response_template,
+            }
+
+        metadata: dict[str, Any] = {
+            "response_needed": response_needed,
+            "response_reason": response_reason,
+            "response_template": response_template,
+        }
+        if selected_decision in {DecisionAction.ASK, DecisionAction.ACT}:
+            metadata.update(
+                {
+                    "output_type": "text",
+                    "tool": "text",
+                }
+            )
+        return metadata
 
     @staticmethod
     def _select_decision(
@@ -539,6 +657,14 @@ class BehaviorFacet:
         if signals.requires_response:
             reasons.append("requires_response_metadata")
             add(DecisionAction.ASK, "requires_response_metadata", 0.4)
+
+        if signals.response_needed:
+            if signals.deterministic_response_available:
+                reasons.append("deterministic_text_response_available")
+                add(DecisionAction.ACT, "deterministic_text_response_available", 0.65)
+            else:
+                reasons.append("response_needed_low_context")
+                add(DecisionAction.ASK, "response_needed_low_context", 0.25)
 
         if signals.uncertainty:
             reasons.append("uncertainty_metadata")
@@ -774,6 +900,7 @@ class BehaviorFacet:
     def _is_unclear(signals: _BehaviorSignals) -> bool:
         return (
             signals.requires_response
+            or signals.response_needed
             or signals.uncertainty
             or signals.question_like
             or (signals.explicit_action and not signals.low_risk)
@@ -782,6 +909,10 @@ class BehaviorFacet:
 
 def _clamp_unit(score: float) -> float:
     return max(0.0, min(float(score), 1.0))
+
+
+def _normalize_content(content: str) -> str:
+    return " ".join(content.casefold().split())
 
 
 def _normalized_count(raw_value: Any, denominator: int) -> float:

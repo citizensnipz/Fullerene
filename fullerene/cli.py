@@ -52,6 +52,16 @@ FULL_PRESET_FLAGS = (
     "affect",
     "verify",
 )
+TEXT_RESPONSE_TEMPLATES = {
+    "status_report": (
+        "I'm running a local Fullerene cycle: recording the event, updating state, "
+        "checking relevant facets, and deciding whether anything needs action."
+    ),
+    "clarification_needed": "I need a bit more context before I can act on that.",
+    "next_steps_available": (
+        "I can propose next steps from the current goal and planner state."
+    ),
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -425,28 +435,62 @@ def _derive_response_output(record) -> dict[str, Any]:
     if action.value == "record":
         return {"response": None, "recorded": True}
     if action.value == "ask":
-        return {"response": "Clarification needed."}
+        output_metadata = _text_output_metadata(record)
+        response = _render_text_response(output_metadata, "clarification_needed")
+        return {
+            "tool": output_metadata.get("tool"),
+            "response": response,
+        }
     if action.value == "act":
-        action_metadata = _act_metadata(record)
-        if action_metadata is None:
+        output_metadata = _text_output_metadata(record)
+        if not _is_text_output(output_metadata):
             return {"response": None}
         return {
-            "tool": action_metadata.get("tool"),
-            "response": action_metadata.get("response"),
+            "tool": output_metadata.get("tool"),
+            "response": _render_text_response(output_metadata, None),
         }
     return {"response": None}
 
 
-def _act_metadata(record) -> dict[str, Any] | None:
+def _text_output_metadata(record) -> dict[str, Any]:
+    source_facets = list(getattr(record.decision, "source_facets", []) or [])
+    for facet_name in source_facets:
+        metadata = _facet_metadata(record, facet_name=facet_name)
+        if _is_text_output(metadata):
+            return metadata
+
     for result in record.facet_results:
-        if result.proposed_decision != record.decision.action:
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        if result.proposed_decision == record.decision.action and _is_text_output(metadata):
+            return metadata
+    return {}
+
+
+def _facet_metadata(record, *, facet_name: str) -> dict[str, Any]:
+    for result in record.facet_results:
+        if result.facet_name != facet_name:
             continue
         metadata = result.metadata if isinstance(result.metadata, dict) else {}
-        response = metadata.get("response")
-        tool = metadata.get("tool")
-        if response is not None or tool is not None:
-            return {"response": response, "tool": tool}
-    return None
+        return metadata
+    return {}
+
+
+def _is_text_output(metadata: dict[str, Any]) -> bool:
+    return (
+        metadata.get("output_type") == "text"
+        or metadata.get("tool") == "text"
+        or metadata.get("response_template") in TEXT_RESPONSE_TEMPLATES
+    )
+
+
+def _render_text_response(
+    metadata: dict[str, Any],
+    default_template: str | None,
+) -> str | None:
+    template_name = metadata.get("response_template") or default_template
+    if not isinstance(template_name, str):
+        return None
+    return TEXT_RESPONSE_TEMPLATES.get(template_name)
 
 
 def _parse_metadata(

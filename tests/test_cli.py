@@ -83,6 +83,31 @@ class CLIUsabilityTests(unittest.TestCase):
         self.assertNotIn("facet_results", output)
         self.assertFalse(output.lstrip().startswith("{"))
 
+    def test_full_default_output_renders_direct_question_response(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            exit_code = cli_main(
+                [
+                    "--full",
+                    "--content",
+                    "What are you doing right now?",
+                    "--state-dir",
+                    str(root),
+                ]
+            )
+
+        output = stdout.getvalue()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("decision: ACT", output)
+        self.assertIn("tool: text", output)
+        self.assertIn("response: ", output)
+        self.assertNotIn("response: null", output)
+        self.assertIn("local Fullerene cycle", output)
+
     def test_json_and_debug_output_full_record(self) -> None:
         for output_flag in ("--json", "--debug"):
             with self.subTest(output_flag=output_flag):
@@ -108,6 +133,29 @@ class CLIUsabilityTests(unittest.TestCase):
                 self.assertIn("event", payload)
                 self.assertIn("facet_results", payload)
                 self.assertIn("decision", payload)
+
+    def test_debug_direct_question_still_outputs_full_record(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        stdout = io.StringIO()
+
+        with redirect_stdout(stdout):
+            exit_code = cli_main(
+                [
+                    "--full",
+                    "--debug",
+                    "--content",
+                    "What are you doing right now?",
+                    "--state-dir",
+                    str(root),
+                ]
+            )
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(payload["decision"]["action"], "act")
+        self.assertIn("facet_results", payload)
 
     def test_positional_prompt_is_used_when_content_is_omitted(self) -> None:
         root = make_tempdir_path()

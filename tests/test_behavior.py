@@ -42,7 +42,57 @@ class BehaviorFacetRuleTests(unittest.TestCase):
 
         self.assertEqual(result.proposed_decision, DecisionAction.RECORD)
         self.assertEqual(result.metadata["selected_decision"], "record")
+        self.assertFalse(result.metadata["response_needed"])
         self.assertIn("user_message_default_record", result.metadata["reasons"])
+
+    def test_direct_status_question_sets_response_needed(self) -> None:
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="What are you doing right now?",
+            ),
+            NexusState(),
+        )
+
+        self.assertTrue(result.metadata["response_needed"])
+        self.assertEqual(result.metadata["response_reason"], "direct_question")
+
+    def test_direct_status_question_acts_with_text_metadata(self) -> None:
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="What are you doing right now?",
+            ),
+            NexusState(),
+        )
+
+        self.assertEqual(result.proposed_decision, DecisionAction.ACT)
+        self.assertEqual(result.metadata["selected_decision"], "act")
+        self.assertEqual(result.metadata["output_type"], "text")
+        self.assertEqual(result.metadata["tool"], "text")
+        self.assertEqual(result.metadata["response_template"], "status_report")
+        self.assertTrue(result.metadata["response_needed"])
+
+    def test_ambiguous_help_request_uses_text_response_metadata(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="help me"),
+            NexusState(),
+        )
+
+        self.assertIn(result.proposed_decision, {DecisionAction.ASK, DecisionAction.ACT})
+        self.assertEqual(result.metadata["output_type"], "text")
+        self.assertEqual(result.metadata["tool"], "text")
+        self.assertEqual(
+            result.metadata["response_template"],
+            "clarification_needed",
+        )
+        self.assertTrue(result.metadata["response_needed"])
+
+    def test_behavior_does_not_add_decision_enum_values(self) -> None:
+        self.assertEqual(
+            {action.value for action in DecisionAction},
+            {"wait", "ask", "act", "record"},
+        )
 
     def test_hard_rule_style_content_is_recorded_with_high_priority_metadata(self) -> None:
         result = self.facet.process(

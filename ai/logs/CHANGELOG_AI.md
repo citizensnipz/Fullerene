@@ -9,6 +9,10 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-04-29 (behavior v1.1)
+
+- Added deterministic direct-question response intent in `fullerene/facets/behavior.py` plus fixed text-template rendering in `fullerene/cli.py`; `ACT` text responses now remain verifier-safe without adding decision enums, LLM calls, executor execution, or freeform generation.
+
 ### 2026-04-29 (CLI usability)
 
 - Updated `fullerene/cli.py` with `--full`, positional prompt input, `--json` / `--debug` full-record output, and deterministic concise default output.

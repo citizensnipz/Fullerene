@@ -336,6 +336,14 @@ class ActRequiresApprovalCheck:
                 message="ACT is allowed because an explicit policy allow matched.",
             )
 
+        if _targets_text_response(context):
+            return VerificationResult(
+                check_name=self.name,
+                status=VerificationStatus.PASSED,
+                severity=VerificationSeverity.INFO,
+                message="ACT is allowed because it only emits deterministic text output.",
+            )
+
         if _targets_internal_state(context):
             return VerificationResult(
                 check_name=self.name,
@@ -555,6 +563,22 @@ def _targets_internal_state(context: VerificationContext) -> bool:
     ):
         return _within_state_dir(raw_path, context.state_dir)
 
+    return False
+
+
+def _targets_text_response(context: VerificationContext) -> bool:
+    for result in context.facet_results:
+        if _coerce_decision_action(getattr(result, "proposed_decision", None)) != DecisionAction.ACT:
+            continue
+        metadata = getattr(result, "metadata", None)
+        if not isinstance(metadata, Mapping):
+            continue
+        if (
+            metadata.get("output_type") == "text"
+            and metadata.get("tool") == "text"
+            and bool(metadata.get("response_needed"))
+        ):
+            return True
     return False
 
 
