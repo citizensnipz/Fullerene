@@ -81,8 +81,10 @@ class ContextFacet:
         window = self._assemble_window(event, state)
         source_types = self._source_types(window)
         included_goal_ids = self._ids_from_metadata(window, key="included_goal_ids")
+        deduped_goal_ids = self._ids_from_metadata(window, key="deduped_goal_ids")
         included_memory_ids = self._ids_from_metadata(window, key="included_memory_ids")
         included_belief_ids = self._ids_from_metadata(window, key="included_belief_ids")
+        normalized_goal_keys = self._ids_from_metadata(window, key="normalized_goal_keys")
         proposed_decision = (
             DecisionAction.RECORD
             if self._has_meaningful_items(window)
@@ -101,8 +103,10 @@ class ContextFacet:
                 "last_context_strategy": window.strategy,
                 "last_context_source_types": source_types,
                 "last_included_goal_ids": included_goal_ids,
+                "last_deduped_goal_ids": deduped_goal_ids,
                 "last_included_memory_ids": included_memory_ids,
                 "last_included_belief_ids": included_belief_ids,
+                "last_normalized_goal_keys": normalized_goal_keys,
             },
             metadata={
                 "context_window": window.to_dict(),
@@ -111,6 +115,9 @@ class ContextFacet:
                 "max_items": window.max_items,
                 "source_types": source_types,
                 "included_goal_ids": included_goal_ids,
+                "deduped_goal_count": window.metadata.get("deduped_goal_count", 0),
+                "deduped_goal_ids": deduped_goal_ids,
+                "normalized_goal_keys": normalized_goal_keys,
                 "included_memory_ids": included_memory_ids,
                 "included_belief_ids": included_belief_ids,
                 "salience_threshold": window.metadata.get("salience_threshold", 0.0),

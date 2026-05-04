@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-05-04 - Goal intent creation and Context v1 both deduplicate active goals deterministically
+
+- **Status:** accepted
+- **Context:** After Context v1 landed, reused state directories could still surface multiple active goals that meant the same thing but came from repeated intent phrasing such as `I should remember to finish Fullerene` and `remember to finish Fullerene`. That polluted working context before Planner v1.
+- **Decision:** Add deterministic goal normalization and duplicate handling before planning. Goal-intent creation now normalizes descriptions by lowercasing, trimming, removing punctuation, collapsing whitespace, and stripping common leading intent phrases; when an active goal with the same normalized description already exists, the runtime updates that goal instead of creating a new row, merging tags and keeping the higher priority. Context v1 also deduplicates already-persisted active goals before exposing them in the working packet, preferring highest priority, then most recent `updated_at`, then newest `created_at`, with a conservative high-overlap keyword fallback only for near-duplicate comparison.
+- **Consequences:** Active-goal context is cleaner and more stable across repeated runs on the same state directory, and Planner can consume a single deterministic goal packet instead of competing duplicate goals. The tradeoff is that exact normalized matching remains the canonical rule, so broader semantic duplicates still require future deliberate design rather than ad-hoc fuzzy matching.
+
 ## 2026-05-04 - Context v1 is a deterministic bounded working packet assembled from active state
 
 - **Status:** accepted

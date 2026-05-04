@@ -12,6 +12,7 @@ from fullerene.context.models import (
     ContextWindow,
 )
 from fullerene.goals import GoalStore
+from fullerene.goals.normalization import GoalDeduplicationResult, dedupe_active_goals
 from fullerene.memory import (
     MemoryRecord,
     MemoryStore,
@@ -153,9 +154,11 @@ class DynamicContextAssembler:
         event_item = self._event_item(event)
         items.append(event_item)
 
-        goal_items = self._goal_items()
+        goal_items, goal_deduplication = self._goal_items()
         items.extend(goal_items)
         reasons.append(f"included_goals={len(goal_items)}")
+        if goal_deduplication.deduped_goal_count > 0:
+            reasons.append(f"deduped_goals={goal_deduplication.deduped_goal_count}")
 
         relevant_memory_items, recent_memory_items = self._memory_items(event)
         items.extend(relevant_memory_items)
@@ -185,6 +188,9 @@ class DynamicContextAssembler:
             "source_types": self._source_types(items),
             "item_count": len(items),
             "included_goal_ids": [item.id for item in goal_items],
+            "deduped_goal_count": goal_deduplication.deduped_goal_count,
+            "deduped_goal_ids": list(goal_deduplication.deduped_goal_ids),
+            "normalized_goal_keys": list(goal_deduplication.normalized_goal_keys),
             "included_memory_ids": [
                 item.id for item in [*relevant_memory_items, *recent_memory_items]
             ],
@@ -219,28 +225,33 @@ class DynamicContextAssembler:
             },
         )
 
-    def _goal_items(self) -> list[ContextItem]:
+    def _goal_items(self) -> tuple[list[ContextItem], GoalDeduplicationResult]:
         if self.goal_store is None or self.config.max_goals == 0:
-            return []
-        goals = self.goal_store.list_active_goals(limit=self.config.max_goals)
-        return [
-            ContextItem(
-                id=goal.id,
-                item_type=ContextItemType.GOAL,
-                content=goal.description,
-                source_id=goal.id,
-                created_at=goal.updated_at,
-                metadata={
-                    "context_source": "active_goal",
-                    "priority": goal.priority,
-                    "status": goal.status.value,
-                    "tags": list(goal.tags),
-                    "source": goal.source.value,
-                    "goal_metadata": dict(goal.metadata),
-                },
-            )
-            for goal in goals
-        ]
+            return [], dedupe_active_goals([], limit=0)
+        goal_fetch_limit = max(self.config.max_goals * 5, self.config.max_goals, 10)
+        goals = self.goal_store.list_active_goals(limit=goal_fetch_limit)
+        deduped_goals = dedupe_active_goals(goals, limit=self.config.max_goals)
+        return (
+            [
+                ContextItem(
+                    id=goal.id,
+                    item_type=ContextItemType.GOAL,
+                    content=goal.description,
+                    source_id=goal.id,
+                    created_at=goal.updated_at,
+                    metadata={
+                        "context_source": "active_goal",
+                        "priority": goal.priority,
+                        "status": goal.status.value,
+                        "tags": list(goal.tags),
+                        "source": goal.source.value,
+                        "goal_metadata": dict(goal.metadata),
+                    },
+                )
+                for goal in deduped_goals.goals
+            ],
+            deduped_goals,
+        )
 
     def _memory_items(self, event: Event) -> tuple[list[ContextItem], list[ContextItem]]:
         if self.memory_store is None or self.config.max_memories == 0:

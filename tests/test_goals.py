@@ -13,7 +13,14 @@ from uuid import uuid4
 from fullerene.cli import main as cli_main
 from fullerene.facets import BehaviorFacet, EchoFacet, GoalsFacet, MemoryFacet
 from fullerene.workspace_state import workspace_state_root
-from fullerene.goals import Goal, GoalSource, GoalStatus, SQLiteGoalStore
+from fullerene.goals import (
+    Goal,
+    GoalSource,
+    GoalStatus,
+    SQLiteGoalStore,
+    goal_keyword_overlap,
+    normalize_goal_description,
+)
 from fullerene.memory import SQLiteMemoryStore
 from fullerene.nexus import Event, EventType, NexusRuntime, NexusState
 from fullerene.state import FileStateStore, InMemoryStateStore
@@ -39,6 +46,37 @@ class GoalModelTests(unittest.TestCase):
 
         self.assertEqual(round_tripped, goal)
         self.assertEqual(round_tripped.tags, ["tasks", "work"])
+
+
+class GoalNormalizationTests(unittest.TestCase):
+    def test_equivalent_intent_phrases_normalize_to_same_key(self) -> None:
+        variants = (
+            "I should remember to finish Fullerene",
+            "remember to finish Fullerene",
+            "finish Fullerene",
+        )
+
+        normalized = {normalize_goal_description(value) for value in variants}
+
+        self.assertEqual(normalized, {"finish fullerene"})
+
+    def test_punctuation_case_and_spacing_are_normalized(self) -> None:
+        variants = (
+            "  MAKE SURE WE finish   Fullerene!!!  ",
+            "make sure we finish fullerene",
+            "Finish, Fullerene.",
+        )
+
+        normalized = [normalize_goal_description(value) for value in variants]
+
+        self.assertEqual(normalized[0], "finish fullerene")
+        self.assertEqual(normalized[1], "finish fullerene")
+        self.assertEqual(normalized[2], "finish fullerene")
+
+    def test_keyword_overlap_can_match_conservative_near_duplicates(self) -> None:
+        overlap = goal_keyword_overlap("finish Fullerene", "finishing Fullerene")
+
+        self.assertGreaterEqual(overlap, 0.85)
 
 
 class SQLiteGoalStoreTests(unittest.TestCase):
@@ -325,6 +363,32 @@ class CLIGoalsIntegrationTests(unittest.TestCase):
         self.assertEqual(goals[0].source, GoalSource.USER)
         self.assertEqual(goals[0].status, GoalStatus.ACTIVE)
 
+    def test_repeated_equivalent_goal_intent_updates_existing_goal(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+
+        for content in (
+            "I should remember to finish Fullerene",
+            "remember to finish Fullerene",
+        ):
+            with redirect_stdout(io.StringIO()):
+                exit_code = cli_main(
+                    [
+                        "--goals",
+                        "--content",
+                        content,
+                        "--state-dir",
+                        str(root),
+                    ]
+                )
+            self.assertEqual(exit_code, 0)
+
+        goals = SQLiteGoalStore(root / "goals.sqlite3").list_active_goals(limit=5)
+
+        self.assertEqual(len(goals), 1)
+        self.assertEqual(normalize_goal_description(goals[0].description), "finish fullerene")
+        self.assertTrue(goals[0].metadata.get("merged_from_duplicate_intent"))
+
     def test_goal_intent_survives_across_cli_runs_and_guides_next_focus(self) -> None:
         root = make_tempdir_path()
         self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
@@ -365,26 +429,40 @@ class CLIGoalsIntegrationTests(unittest.TestCase):
         root = make_tempdir_path()
         self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
 
-        for content in (
-            "I want to finish Fullerene",
-            "Remember that finish Fullerene is important",
-        ):
-            with redirect_stdout(io.StringIO()):
-                exit_code = cli_main(
-                    [
-                        "--goals",
-                        "--content",
-                        content,
-                        "--state-dir",
-                        str(root),
-                    ]
-                )
-            self.assertEqual(exit_code, 0)
+        with redirect_stdout(io.StringIO()):
+            first_exit = cli_main(
+                [
+                    "--goals",
+                    "--content",
+                    "I want to finish Fullerene",
+                    "--metadata",
+                    '{"tags": ["urgent"]}',
+                    "--state-dir",
+                    str(root),
+                ]
+            )
+        with redirect_stdout(io.StringIO()):
+            second_exit = cli_main(
+                [
+                    "--goals",
+                    "--content",
+                    "remember to finish Fullerene",
+                    "--metadata",
+                    '{"tags": ["release"]}',
+                    "--state-dir",
+                    str(root),
+                ]
+            )
 
         goals = SQLiteGoalStore(root / "goals.sqlite3").list_active_goals(limit=5)
 
+        self.assertEqual(first_exit, 0)
+        self.assertEqual(second_exit, 0)
         self.assertEqual(len(goals), 1)
         self.assertEqual(goals[0].priority, 0.8)
+        self.assertIn("urgent", goals[0].tags)
+        self.assertIn("release", goals[0].tags)
+        self.assertTrue(goals[0].metadata.get("merged_from_duplicate_intent"))
 
     def test_ordinary_note_records_without_creating_goal(self) -> None:
         root = make_tempdir_path()

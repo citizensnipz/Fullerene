@@ -9,6 +9,14 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-04 (goal dedupe polish)
+
+- Added `fullerene/goals/normalization.py` with deterministic goal normalization, conservative keyword-overlap comparison, and active-goal dedupe helpers; exported them through `fullerene/goals/__init__.py`.
+- Updated `fullerene/cli.py` so repeated goal-intent phrasing such as `I should remember to ...` and `remember to ...` merges into the same active goal instead of creating duplicates, merging tags and keeping the higher priority.
+- Updated `fullerene/context/assembler.py` and `fullerene/facets/context.py` so Context v1 deduplicates active goals before exposing them in `ContextWindow`, and now emits `deduped_goal_count`, `deduped_goal_ids`, and `normalized_goal_keys` metadata.
+- Tightened prompt-grounding summaries in `fullerene/cli.py` so duplicate goal entries are not repeated even in fallback summarization.
+- Expanded `tests/test_goals.py` and `tests/test_context.py` for normalization equivalence, duplicate-intent merges, ContextWindow goal dedupe, and duplicate-free prompt grounding.
+
 ### 2026-05-04 (context v1)
 
 - Added `ContextAssemblyConfig` and `DynamicContextAssembler` in `fullerene/context/`; `ContextWindow` can now carry `dynamic_active_facets_v1` packets containing the current event, bounded goals, memories, beliefs, policy summary, and compact signal summaries.

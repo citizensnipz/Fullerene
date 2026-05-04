@@ -25,8 +25,15 @@ from fullerene.facets import (
     VerifierFacet,
     WorldModelFacet,
 )
-from fullerene.goals import Goal, GoalSource, GoalStatus, SQLiteGoalStore
-from fullerene.memory import SQLiteMemoryStore, infer_tags, merge_tags, normalize_tags, tokenize
+from fullerene.goals import (
+    Goal,
+    GoalSource,
+    GoalStatus,
+    SQLiteGoalStore,
+    find_matching_active_goal,
+    normalize_goal_description,
+)
+from fullerene.memory import SQLiteMemoryStore, infer_tags, merge_tags, normalize_tags
 from fullerene.models import ModelAdapter, ModelAdapterError, OllamaAdapter
 from fullerene.nexus import Event, EventType, NexusRuntime
 from fullerene.policy import (
@@ -82,6 +89,13 @@ GOAL_INTENT_PATTERNS: tuple[tuple[re.Pattern[str], float], ...] = (
     ),
     (
         re.compile(
+            r"^\s*remember\s+to\s+(?P<description>.+?)[.!?\s]*$",
+            re.IGNORECASE,
+        ),
+        0.8,
+    ),
+    (
+        re.compile(
             r"^\s*remember\s+that\s+(?P<description>.+?)\s+is\s+important[.!?\s]*$",
             re.IGNORECASE,
         ),
@@ -123,9 +137,6 @@ GOAL_INTENT_PATTERNS: tuple[tuple[re.Pattern[str], float], ...] = (
         0.8,
     ),
 )
-GOAL_DUPLICATE_KEYWORD_THRESHOLD = 0.67
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Process a single event through the Fullerene Nexus runtime."
@@ -767,12 +778,17 @@ def _context_window_payload(record) -> dict[str, Any] | None:
 
 def _context_goal_summary(items: list[dict[str, Any]]) -> str | None:
     summaries: list[str] = []
+    seen_goal_keys: set[str] = set()
     for item in items:
         if item.get("item_type") != "goal":
             continue
         content = _coerce_prompt_string(item.get("content"))
         if content is None:
             continue
+        goal_key = normalize_goal_description(content)
+        if goal_key in seen_goal_keys:
+            continue
+        seen_goal_keys.add(goal_key)
         metadata = item.get("metadata", {})
         priority = metadata.get("priority") if isinstance(metadata, dict) else None
         if isinstance(priority, (int, float)):
@@ -911,17 +927,24 @@ def _missing_context_summary(metadata: dict[str, Any]) -> str:
 def _goals_summary(raw_goals: Any) -> str:
     if isinstance(raw_goals, list) and raw_goals:
         summaries: list[str] = []
-        for goal in raw_goals[:3]:
+        seen_goal_keys: set[str] = set()
+        for goal in raw_goals:
             if not isinstance(goal, dict):
                 continue
             description = _coerce_prompt_string(goal.get("description"))
             if description is None:
                 continue
+            goal_key = normalize_goal_description(description)
+            if goal_key in seen_goal_keys:
+                continue
+            seen_goal_keys.add(goal_key)
             priority = goal.get("priority")
             if isinstance(priority, (int, float)):
                 summaries.append(f"{description} (priority {float(priority):.1f})")
             else:
                 summaries.append(description)
+            if len(summaries) >= 3:
+                break
         if summaries:
             return "; ".join(summaries)
     return "none"
@@ -1085,7 +1108,10 @@ def _create_goal_from_intent(
         explicit_tags = normalize_tags(raw_tags)
     tags = merge_tags(explicit_tags, infer_tags(description), infer_tags(content))
 
-    matching_goal = _find_similar_active_goal(store, description)
+    matching_goal = find_matching_active_goal(
+        store.list_active_goals(limit=50),
+        description,
+    )
     if matching_goal is not None:
         matching_goal.priority = max(matching_goal.priority, priority)
         matching_goal.tags = merge_tags(matching_goal.tags, tags)
@@ -1093,6 +1119,8 @@ def _create_goal_from_intent(
         matching_goal.source = GoalSource.USER
         matching_goal.metadata = {
             **matching_goal.metadata,
+            "merged_from_duplicate_intent": True,
+            "merged_goal_normalized_key": normalize_goal_description(description),
             "last_intent_phrase": content.strip(),
         }
         store.update_goal(matching_goal)
@@ -1125,36 +1153,6 @@ def _clean_goal_description(description: str) -> str:
     cleaned = " ".join(description.strip().strip("\"'`").split())
     cleaned = re.sub(r"^(?:to|that)\s+", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip(" .!?")
-
-
-def _find_similar_active_goal(
-    store: SQLiteGoalStore,
-    description: str,
-) -> Goal | None:
-    normalized_description = _normalize_goal_description(description)
-    description_keywords = tokenize(description)
-    best_match: Goal | None = None
-    best_overlap = 0.0
-
-    for goal in store.list_active_goals(limit=50):
-        if _normalize_goal_description(goal.description) == normalized_description:
-            return goal
-        goal_keywords = tokenize(goal.description)
-        if not description_keywords or not goal_keywords:
-            continue
-        shared_keywords = description_keywords & goal_keywords
-        overlap = len(shared_keywords) / max(len(description_keywords), len(goal_keywords))
-        if overlap > best_overlap:
-            best_overlap = overlap
-            best_match = goal
-
-    if best_overlap >= GOAL_DUPLICATE_KEYWORD_THRESHOLD:
-        return best_match
-    return None
-
-
-def _normalize_goal_description(description: str) -> str:
-    return " ".join(sorted(tokenize(description)))
 
 
 def _metadata_flag(metadata: dict[str, Any], key: str) -> bool:

@@ -22,7 +22,13 @@ from fullerene.context import (
     StaticContextAssembler,
 )
 from fullerene.facets import ContextFacet, EchoFacet, GoalsFacet, MemoryFacet, WorldModelFacet
-from fullerene.goals import Goal, GoalSource, GoalStatus, SQLiteGoalStore
+from fullerene.goals import (
+    Goal,
+    GoalSource,
+    GoalStatus,
+    SQLiteGoalStore,
+    normalize_goal_description,
+)
 from fullerene.memory import MemoryRecord, MemoryType, SQLiteMemoryStore
 from fullerene.memory.models import utcnow
 from fullerene.nexus import DecisionAction, Event, EventType, NexusRuntime, NexusState
@@ -405,7 +411,7 @@ class DynamicContextAssemblerTests(unittest.TestCase):
         self.assertIn("belief-1", window.metadata["included_belief_ids"])
         self.assertEqual(memory_store.list_recent_calls, [(5, MemoryType.EPISODIC)])
         self.assertEqual(memory_store.retrieve_relevant_calls, [(event.event_id, 5)])
-        self.assertEqual(goal_store.calls, [3])
+        self.assertEqual(goal_store.calls, [15])
         self.assertEqual(world_store.calls, [10])
         self.assertEqual(policy_store.list_policies_calls, [(20, True)])
         self.assertEqual(policy_store.count_calls, 1)
@@ -542,6 +548,68 @@ class DynamicContextAssemblerTests(unittest.TestCase):
         self.assertEqual(belief_count, 2)
         self.assertEqual(memory_ids, ["memory-1", "memory-3"])
 
+    def test_deduplicates_near_duplicate_active_goals(self) -> None:
+        event = self.make_event("What should I do next about Fullerene?")
+        best_goal = Goal(
+            id="goal-best",
+            description="finish Fullerene",
+            priority=0.9,
+            status=GoalStatus.ACTIVE,
+            source=GoalSource.USER,
+        )
+        exact_duplicate = Goal(
+            id="goal-exact",
+            description="remember to finish Fullerene",
+            priority=0.8,
+            status=GoalStatus.ACTIVE,
+            source=GoalSource.USER,
+        )
+        near_duplicate = Goal(
+            id="goal-near",
+            description="finishing Fullerene",
+            priority=0.7,
+            status=GoalStatus.ACTIVE,
+            source=GoalSource.USER,
+        )
+        distinct_goal = Goal(
+            id="goal-distinct",
+            description="ship the release",
+            priority=0.6,
+            status=GoalStatus.ACTIVE,
+            source=GoalSource.USER,
+        )
+        best_goal.updated_at = utcnow()
+        exact_duplicate.updated_at = utcnow() - timedelta(minutes=5)
+        near_duplicate.updated_at = utcnow() - timedelta(minutes=10)
+        distinct_goal.updated_at = utcnow() - timedelta(minutes=15)
+
+        assembler = DynamicContextAssembler(
+            goal_store=TrackingGoalStore(
+                [exact_duplicate, near_duplicate, best_goal, distinct_goal]
+            ),
+            config=ContextAssemblyConfig(
+                max_goals=3,
+                include_policy_summary=False,
+                include_signal_summaries=False,
+            ),
+        )
+
+        window = assembler.assemble(event=event, state=NexusState())
+
+        goal_items = [
+            item for item in window.items if item.item_type == ContextItemType.GOAL
+        ]
+        self.assertEqual([item.id for item in goal_items], ["goal-best", "goal-distinct"])
+        self.assertEqual(window.metadata["deduped_goal_count"], 2)
+        self.assertEqual(
+            set(window.metadata["deduped_goal_ids"]),
+            {"goal-exact", "goal-near"},
+        )
+        self.assertEqual(
+            window.metadata["normalized_goal_keys"],
+            ["finish fullerene", "ship the release"],
+        )
+
     def test_handles_missing_stores_gracefully(self) -> None:
         event = self.make_event()
         assembler = DynamicContextAssembler(
@@ -651,6 +719,7 @@ class ContextFacetTests(unittest.TestCase):
         self.assertEqual(result.metadata["strategy"], DYNAMIC_ACTIVE_FACETS_V1)
         self.assertEqual(result.metadata["item_count"], 2)
         self.assertEqual(result.metadata["included_goal_ids"], ["goal-1"])
+        self.assertEqual(result.metadata["deduped_goal_count"], 0)
         self.assertEqual(result.metadata["limits"]["max_goals"], 3)
         self.assertNotEqual(result.proposed_decision, DecisionAction.ACT)
 
@@ -772,6 +841,55 @@ class ContextRuntimeIntegrationTests(unittest.TestCase):
         self.assertIn("- current event: What should I do next?", prompt)
         self.assertIn("- active goals: finish Fullerene (priority 0.8)", prompt)
 
+    def test_model_prompt_builder_does_not_repeat_duplicate_goals(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        state_store = FileStateStore(root)
+        memory_store = SQLiteMemoryStore(root / "memory.sqlite3")
+        goal_store = SQLiteGoalStore(root / "goals.sqlite3")
+        goal_store.add_goal(
+            Goal(
+                id="goal-1",
+                description="finish Fullerene",
+                priority=0.9,
+                status=GoalStatus.ACTIVE,
+                source=GoalSource.USER,
+            )
+        )
+        goal_store.add_goal(
+            Goal(
+                id="goal-2",
+                description="remember to finish Fullerene",
+                priority=0.8,
+                status=GoalStatus.ACTIVE,
+                source=GoalSource.USER,
+            )
+        )
+        runtime = NexusRuntime(
+            facets=[
+                ContextFacet(
+                    memory_store,
+                    goal_store=goal_store,
+                    config=ContextAssemblyConfig(),
+                ),
+                GoalsFacet(goal_store),
+                EchoFacet(),
+            ],
+            store=state_store,
+        )
+
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="What should I do next?")
+        )
+
+        prompt = _build_model_prompt(
+            record,
+            {"query_intent": "planning_request", "response_template": "next_steps_available"},
+        )
+
+        self.assertEqual(prompt.count("finish Fullerene (priority 0.9)"), 1)
+        self.assertNotIn("remember to finish Fullerene", prompt)
+
 
 class CLIContextIntegrationTests(unittest.TestCase):
     def test_cli_with_context_runs_without_error(self) -> None:
@@ -864,22 +982,25 @@ class CLIContextIntegrationTests(unittest.TestCase):
         root = make_tempdir_path()
         self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
 
-        first_stdout = io.StringIO()
-        with redirect_stdout(first_stdout):
-            exit_code = cli_main(
-                [
-                    "--full",
-                    "--json",
-                    "--content",
-                    "I should remember to finish Fullerene",
-                    "--state-dir",
-                    str(root),
-                ]
-            )
-        self.assertEqual(exit_code, 0)
+        for content in (
+            "I should remember to finish Fullerene",
+            "remember to finish Fullerene",
+        ):
+            with redirect_stdout(io.StringIO()):
+                exit_code = cli_main(
+                    [
+                        "--full",
+                        "--json",
+                        "--content",
+                        content,
+                        "--state-dir",
+                        str(root),
+                    ]
+                )
+            self.assertEqual(exit_code, 0)
 
-        second_stdout = io.StringIO()
-        with redirect_stdout(second_stdout):
+        debug_stdout = io.StringIO()
+        with redirect_stdout(debug_stdout):
             exit_code = cli_main(
                 [
                     "--full",
@@ -891,7 +1012,7 @@ class CLIContextIntegrationTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(exit_code, 0)
-        second_payload = json.loads(second_stdout.getvalue())
+        second_payload = json.loads(debug_stdout.getvalue())
         context_result = next(
             result for result in second_payload["facet_results"] if result["facet_name"] == "context"
         )
@@ -900,7 +1021,11 @@ class CLIContextIntegrationTests(unittest.TestCase):
             for item in context_result["metadata"]["context_window"]["items"]
             if item["item_type"] == "goal"
         ]
-        self.assertTrue(any("finish Fullerene" in item["content"] for item in goal_items))
+        self.assertEqual(len(goal_items), 1)
+        self.assertEqual(
+            normalize_goal_description(goal_items[0]["content"]),
+            "finish fullerene",
+        )
 
         captured_prompts: list[str] = []
 
@@ -930,6 +1055,12 @@ class CLIContextIntegrationTests(unittest.TestCase):
         self.assertEqual(len(captured_prompts), 1)
         self.assertIn("- active goals: finish Fullerene", captured_prompts[0])
         self.assertIn("- current event: What should I do next?", captured_prompts[0])
+        active_goals_line = next(
+            line
+            for line in captured_prompts[0].splitlines()
+            if line.startswith("- active goals:")
+        )
+        self.assertEqual(active_goals_line.count("finish Fullerene"), 1)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-05-04 - Goals normalization and Context v1 dedupe
+
+- **Context:** Clean up repeated active-goal phrasing before Planner v1 so reused state directories do not leak duplicate near-identical goals into the Context v1 working packet or the prompt-grounding layer.
+- **Done:** Added `fullerene/goals/normalization.py` with deterministic normalized goal keys, conservative keyword-overlap comparison, and bounded active-goal dedupe helpers; updated `fullerene/cli.py` so goal-intent creation merges exact normalized active-goal duplicates instead of creating a new row, preserving the higher priority and merging tags; updated `fullerene/context/assembler.py` and `fullerene/facets/context.py` so Context v1 deduplicates active goals before exposure and records `deduped_goal_count`, `deduped_goal_ids`, and `normalized_goal_keys`; added prompt dedupe safety and expanded `tests/test_goals.py` / `tests/test_context.py`.
+- **Verified:** `python -m unittest tests.test_goals tests.test_context -v`
+- **Next:** If goal management expands, move the current CLI intent-merge path into a more explicit runtime goal-intent boundary rather than widening planner/context further.
+- **Blockers:** Conservative deterministic overlap can catch phrasing like `finish Fullerene` vs `finishing Fullerene`, but it is still intentionally narrow and not a full semantic matcher.
+
 ### 2026-05-04 - Context v1 deterministic working packet
 
 - **Context:** Replace the old static recent-memory context window with a deterministic working packet assembled from active state so persisted goals, memories, beliefs, and policy constraints are visible to later behavior/planning/prompt grounding.
