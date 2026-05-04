@@ -202,6 +202,12 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 - Extended `tests/test_memory.py` with tag-inference, salience-scoring, MemoryFacet integration, and tag-favored retrieval tests.
 - Updated `ai/project/architecture.md` (Memory v1 section + verified mapping note) and `ai/knowledge/glossary.md` (tag inference, salience, hard-rule-candidate).
 
+### 2026-05-05
+
+- Upgraded `fullerene/planner/builder.py` to Planner v1 grounding: it now prefers `ContextWindow` as the planning substrate, ranks active goals/memories/beliefs deterministically, detects obvious goal conflicts, computes `grounding_status` / `grounding_score`, and emits plan-memory metadata hooks (`plan_memory_eligible`, `plan_template_key`, context/relevance id lists, ranking traces).
+- Extended `fullerene/facets/planner.py` so planner results export the new grounding, ranking, conflict, and relevant-memory metadata through the runtime.
+- Added strong context-grounding coverage in `tests/test_planner.py`, including preference-memory grounding, negative control, goal grounding, context ranking, conflict reporting, CLI debug smoke, and prompt-grounding assertions.
+
 ### 2026-04-25 (g)
 
 - Polished `fullerene/cli.py` so `MemoryFacet` is opt-in behind `--memory`; default CLI behavior remains `EchoFacet` only.

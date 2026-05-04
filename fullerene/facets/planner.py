@@ -54,10 +54,26 @@ class PlannerFacet:
                 metadata={
                     "plan": None,
                     "trigger_reason": None,
+                    "query_intent": None,
                     "confidence": 0.0,
                     "pressure": 0.0,
+                    "grounding_status": "insufficient_context",
+                    "grounding_score": 0.0,
+                    "plan_memory_eligible": False,
+                    "plan_template_key": None,
+                    "context_item_ids": [],
+                    "relevant_memory_ids": [],
                     "relevant_goal_ids": [],
                     "relevant_belief_ids": [],
+                    "goal_ranking": [],
+                    "memory_ranking": [],
+                    "belief_ranking": [],
+                    "selected_context_reasons": [],
+                    "conflict_report": {
+                        "has_conflicts": False,
+                        "conflicts": [],
+                        "summary": None,
+                    },
                     "blocked_steps": [],
                     "approval_required_steps": [],
                     "reasons": ["planner_not_triggered"],
@@ -66,6 +82,7 @@ class PlannerFacet:
 
         blocked_steps = list(plan.metadata.get("blocked_steps", []))
         approval_required_steps = list(plan.metadata.get("approval_required_steps", []))
+        relevant_memory_ids = list(plan.metadata.get("relevant_memory_ids", []))
         relevant_goal_ids = list(plan.metadata.get("relevant_goal_ids", []))
         relevant_belief_ids = list(plan.metadata.get("relevant_belief_ids", []))
         trigger_reason = plan.metadata.get("trigger_reason")
@@ -83,16 +100,34 @@ class PlannerFacet:
                 "last_trigger_reason": trigger_reason,
                 "last_plan_confidence": plan.confidence,
                 "last_plan_pressure": plan.pressure,
+                "last_relevant_memory_ids": relevant_memory_ids,
                 "last_relevant_goal_ids": relevant_goal_ids,
                 "last_relevant_belief_ids": relevant_belief_ids,
             },
             metadata={
                 "plan": plan.to_dict(),
                 "trigger_reason": trigger_reason,
+                "query_intent": plan.metadata.get("query_intent"),
                 "confidence": plan.confidence,
                 "pressure": plan.pressure,
+                "grounding_status": plan.metadata.get("grounding_status"),
+                "grounding_score": plan.metadata.get("grounding_score"),
+                "plan_memory_eligible": plan.metadata.get("plan_memory_eligible"),
+                "plan_template_key": plan.metadata.get("plan_template_key"),
+                "context_item_ids": list(plan.metadata.get("context_item_ids", [])),
+                "relevant_memory_ids": relevant_memory_ids,
                 "relevant_goal_ids": relevant_goal_ids,
                 "relevant_belief_ids": relevant_belief_ids,
+                "goal_ranking": list(plan.metadata.get("goal_ranking", [])),
+                "memory_ranking": list(plan.metadata.get("memory_ranking", [])),
+                "belief_ranking": list(plan.metadata.get("belief_ranking", [])),
+                "selected_context_reasons": list(
+                    plan.metadata.get("selected_context_reasons", [])
+                ),
+                "conflict_report": plan.metadata.get(
+                    "conflict_report",
+                    {"has_conflicts": False, "conflicts": [], "summary": None},
+                ),
                 "blocked_steps": blocked_steps,
                 "approval_required_steps": approval_required_steps,
                 "reasons": list(plan.reasons),

@@ -8,8 +8,8 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from uuid import uuid4
 
-from fullerene.cli import main as cli_main
-from fullerene.context import ContextWindow
+from fullerene.cli import _build_model_prompt, main as cli_main
+from fullerene.context import ContextAssemblyConfig, ContextWindow
 from fullerene.facets import (
     BehaviorFacet,
     ContextFacet,
@@ -487,6 +487,232 @@ class PlannerFacetTests(unittest.TestCase):
         self.assertEqual(plan["steps"][-1]["policy_status"], "allowed")
 
 
+class PlannerGroundingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(self.root, ignore_errors=True))
+
+    @staticmethod
+    def _facet_result(record, facet_name: str):
+        return next(result for result in record.facet_results if result.facet_name == facet_name)
+
+    def test_preference_memory_grounding_uses_context_window_and_prompt(self) -> None:
+        state_store = FileStateStore(self.root)
+        memory_store = SQLiteMemoryStore(self.root / "memory.sqlite3")
+        memory_runtime = NexusRuntime(
+            facets=[MemoryFacet(memory_store)],
+            store=state_store,
+        )
+        memory_runtime.process_event(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="I enjoy scuba diving and surfing",
+            )
+        )
+
+        runtime = NexusRuntime(
+            facets=[
+                ContextFacet(
+                    memory_store,
+                    config=ContextAssemblyConfig(max_memories=5),
+                ),
+                PlannerFacet(),
+            ],
+            store=state_store,
+        )
+        record = runtime.process_event(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="What should I do this weekend?",
+            )
+        )
+
+        context_result = self._facet_result(record, "context")
+        planner_result = self._facet_result(record, "planner")
+        context_memories = [
+            item
+            for item in context_result.metadata["context_window"]["items"]
+            if item["item_type"] == "memory"
+        ]
+        plan = planner_result.metadata["plan"]
+        grounded_text = " ".join(
+            [plan["title"], *[step["description"] for step in plan["steps"]], *planner_result.metadata["reasons"]]
+        ).casefold()
+        prompt = _build_model_prompt(
+            record,
+            {
+                "query_intent": "recommendation_advice",
+                "response_template": "grounded_response_available",
+            },
+        )
+
+        self.assertTrue(
+            any(
+                "scuba" in item["content"].casefold() or "surfing" in item["content"].casefold()
+                for item in context_memories
+            )
+        )
+        self.assertTrue(planner_result.metadata["relevant_memory_ids"])
+        self.assertTrue(
+            any(term in grounded_text for term in ("scuba", "diving", "surfing", "water", "beach", "ocean"))
+        )
+        self.assertIn("I enjoy scuba diving and surfing", prompt)
+        self.assertNotIn("farmers market", grounded_text)
+        self.assertEqual(planner_result.metadata["grounding_status"], "grounded")
+
+    def test_negative_control_marks_insufficient_context_without_preference_memory(self) -> None:
+        state_store = FileStateStore(self.root)
+        memory_store = SQLiteMemoryStore(self.root / "memory.sqlite3")
+        runtime = NexusRuntime(
+            facets=[
+                ContextFacet(
+                    memory_store,
+                    config=ContextAssemblyConfig(max_memories=5),
+                ),
+                PlannerFacet(),
+            ],
+            store=state_store,
+        )
+        record = runtime.process_event(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="What should I do this weekend?",
+            )
+        )
+
+        planner_result = self._facet_result(record, "planner")
+        plan = planner_result.metadata["plan"]
+        step_text = " ".join(step["description"] for step in plan["steps"]).casefold()
+
+        self.assertEqual(planner_result.metadata["grounding_status"], "insufficient_context")
+        self.assertEqual(planner_result.metadata["relevant_memory_ids"], [])
+        self.assertIn("ask for weekend preferences", step_text)
+        self.assertNotIn("surfing", step_text)
+
+    def test_goal_grounding_uses_active_goal_from_context_window(self) -> None:
+        state_store = FileStateStore(self.root)
+        goal_store = SQLiteGoalStore(self.root / "goals.sqlite3")
+        goal_store.add_goal(
+            Goal(
+                id="goal-fullerene",
+                description="finish Fullerene",
+                priority=0.7,
+            )
+        )
+        runtime = NexusRuntime(
+            facets=[
+                ContextFacet(
+                    None,
+                    goal_store=goal_store,
+                    config=ContextAssemblyConfig(max_goals=3, max_memories=0, max_beliefs=0),
+                ),
+                PlannerFacet(goal_store=goal_store),
+            ],
+            store=state_store,
+        )
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="What should I do next?")
+        )
+
+        context_result = self._facet_result(record, "context")
+        planner_result = self._facet_result(record, "planner")
+        plan = planner_result.metadata["plan"]
+        plan_text = " ".join([plan["title"], *[step["description"] for step in plan["steps"]]]).casefold()
+
+        self.assertTrue(
+            any(
+                item["item_type"] == "goal" and "finish fullerene" in item["content"].casefold()
+                for item in context_result.metadata["context_window"]["items"]
+            )
+        )
+        self.assertIn("goal-fullerene", planner_result.metadata["relevant_goal_ids"])
+        self.assertIn("fullerene", plan_text)
+        self.assertEqual(planner_result.metadata["grounding_status"], "grounded")
+
+    def test_context_ranking_prefers_relevant_preference_memories_for_weekend_recommendation(self) -> None:
+        state_store = FileStateStore(self.root)
+        memory_store = SQLiteMemoryStore(self.root / "memory.sqlite3")
+        memory_runtime = NexusRuntime(
+            facets=[MemoryFacet(memory_store)],
+            store=state_store,
+        )
+        for content in (
+            "I enjoy scuba diving and surfing",
+            "I hate crowded malls",
+            "I need to finish Fullerene",
+        ):
+            memory_runtime.process_event(Event(event_type=EventType.USER_MESSAGE, content=content))
+
+        runtime = NexusRuntime(
+            facets=[
+                ContextFacet(
+                    memory_store,
+                    config=ContextAssemblyConfig(max_memories=5),
+                ),
+                PlannerFacet(),
+            ],
+            store=state_store,
+        )
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="What should I do this weekend?")
+        )
+
+        planner_result = self._facet_result(record, "planner")
+        plan = planner_result.metadata["plan"]
+        plan_text = " ".join(step["description"] for step in plan["steps"]).casefold()
+        memory_ranking = planner_result.metadata["memory_ranking"]
+        scuba_rank = next(
+            entry["rank"]
+            for entry in memory_ranking
+            if "scuba" in entry["content_preview"].casefold() or "surfing" in entry["content_preview"].casefold()
+        )
+        fullerene_rank = next(
+            entry["rank"]
+            for entry in memory_ranking
+            if "fullerene" in entry["content_preview"].casefold()
+        )
+
+        self.assertLess(scuba_rank, fullerene_rank)
+        self.assertIn("positive_preference_memory", "|".join(memory_ranking[0]["reasons"]))
+        self.assertIn("crowded malls", plan_text)
+        self.assertTrue(
+            any("positive_preference_memory" in reason for reason in planner_result.metadata["selected_context_reasons"])
+        )
+
+    def test_conflicting_active_goals_emit_conflict_report(self) -> None:
+        state_store = FileStateStore(self.root)
+        goal_store = SQLiteGoalStore(self.root / "goals.sqlite3")
+        goal_store.add_goal(
+            Goal(id="goal-outside", description="go outside this weekend", priority=0.8)
+        )
+        goal_store.add_goal(
+            Goal(id="goal-home", description="stay home this weekend", priority=0.7)
+        )
+        runtime = NexusRuntime(
+            facets=[
+                ContextFacet(
+                    None,
+                    goal_store=goal_store,
+                    config=ContextAssemblyConfig(max_goals=5, max_memories=0, max_beliefs=0),
+                ),
+                PlannerFacet(goal_store=goal_store),
+            ],
+            store=state_store,
+        )
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="What should I do this weekend?")
+        )
+
+        planner_result = self._facet_result(record, "planner")
+        plan = planner_result.metadata["plan"]
+        plan_text = " ".join(step["description"] for step in plan["steps"]).casefold()
+
+        self.assertTrue(planner_result.metadata["conflict_report"]["has_conflicts"])
+        self.assertIn("goal-outside", planner_result.metadata["relevant_goal_ids"])
+        self.assertIn("goal-home", planner_result.metadata["relevant_goal_ids"])
+        self.assertIn("conflict", plan_text)
+
+
 class PlannerVerifierTests(unittest.TestCase):
     def test_plan_safety_check_requires_high_risk_steps_to_request_approval(self) -> None:
         planner_result = FacetResult(
@@ -714,6 +940,97 @@ class CLIPlannerIntegrationTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertNotEqual(planner_result["proposed_decision"], "act")
+
+    def test_cli_debug_shows_grounded_preference_memory_for_weekend_recommendation(self) -> None:
+        first_stdout = io.StringIO()
+        with redirect_stdout(first_stdout):
+            first_exit = cli_main(
+                [
+                    "--full",
+                    "--json",
+                    "--state-dir",
+                    str(self.root),
+                    "--content",
+                    "I enjoy scuba diving and surfing",
+                ]
+            )
+        self.assertEqual(first_exit, 0)
+
+        second_stdout = io.StringIO()
+        with redirect_stdout(second_stdout):
+            second_exit = cli_main(
+                [
+                    "--full",
+                    "--debug",
+                    "--state-dir",
+                    str(self.root),
+                    "--content",
+                    "What should I do this weekend?",
+                ]
+            )
+
+        payload = json.loads(second_stdout.getvalue())
+        context_result = next(
+            result for result in payload["facet_results"] if result["facet_name"] == "context"
+        )
+        planner_result = next(
+            result for result in payload["facet_results"] if result["facet_name"] == "planner"
+        )
+        plan = planner_result["metadata"]["plan"]
+        grounded_text = " ".join(
+            [plan["title"], *[step["description"] for step in plan["steps"]]]
+        ).casefold()
+
+        self.assertEqual(second_exit, 0)
+        self.assertTrue(
+            any(
+                item["item_type"] == "memory"
+                and ("scuba" in item["content"].casefold() or "surfing" in item["content"].casefold())
+                for item in context_result["metadata"]["context_window"]["items"]
+            )
+        )
+        self.assertTrue(planner_result["metadata"]["relevant_memory_ids"])
+        self.assertEqual(planner_result["metadata"]["grounding_status"], "grounded")
+        self.assertTrue("scuba" in grounded_text or "surfing" in grounded_text)
+
+    def test_model_prompt_grounding_includes_relevant_memory_without_raw_json_dump(self) -> None:
+        state_store = FileStateStore(self.root)
+        memory_store = SQLiteMemoryStore(self.root / "memory.sqlite3")
+        memory_runtime = NexusRuntime(
+            facets=[MemoryFacet(memory_store)],
+            store=state_store,
+        )
+        memory_runtime.process_event(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="I enjoy scuba diving and surfing",
+            )
+        )
+        runtime = NexusRuntime(
+            facets=[
+                ContextFacet(
+                    memory_store,
+                    config=ContextAssemblyConfig(max_memories=5),
+                ),
+                PlannerFacet(),
+            ],
+            store=state_store,
+        )
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="What should I do this weekend?")
+        )
+
+        prompt = _build_model_prompt(
+            record,
+            {
+                "query_intent": "recommendation_advice",
+                "response_template": "grounded_response_available",
+            },
+        )
+
+        self.assertIn("I enjoy scuba diving and surfing", prompt)
+        self.assertNotIn("\"context_window\":", prompt)
+        self.assertNotIn("\"items\":", prompt)
 
 
 if __name__ == "__main__":
