@@ -30,16 +30,19 @@ Product vocabulary for modular components:
 
 Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `AffectFacet v0`, `AttentionFacet v0`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `PlannerFacet v0`, `ExecutorFacet v0`, `VerifierFacet v0`, `LearningFacet v0`, `ContextFacet`, and `EchoFacet`; `AffectFacet v0` covers deterministic internal VAD + novelty observation only, `AttentionFacet v0` covers deterministic fixed-weight focus scoring without broadcast, `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, `PlannerFacet v0` proposes deterministic inspectable plans, `ExecutorFacet v0` performs approved internal-only execution with dry-run default, `VerifierFacet v0` runs deterministic post-decision inspection before persistence, and `LearningFacet v0` classifies deterministic feedback and emits traceable adjustment records without owning its own persistent store.
 
-## Nexus loop (current v0)
+## Nexus loop (current v1-lite)
 
 - Accept an event plus the current runtime state.
-- Pass the event and state through registered facets.
+- Aggregate bounded `system_pressure` from event metadata plus available attention, affect, and learning signals; pressure is persisted on Nexus state and each record.
+- Pass the event and state through registered facets in deterministic phases: INPUT / CONTEXT, STATE, DECISION, PLANNING / EXECUTION, LEARNING / SIGNAL, and VERIFICATION / OUTPUT.
+- Preserve registered order within phases except for small pressure-priority weights in the decision, planning/execution, and learning/signal phases; no arbitrary reordering or phase skipping is implemented.
 - When enabled, Attention runs after the signal-producing facets already registered for the current run and scores candidate focus items from the current event plus available memory / goals / world-model / execution metadata.
 - Collect structured `FacetResult` objects.
 - Integrate those results into a small initial `NexusDecision` (`WAIT`, `ASK`, `ACT`, `RECORD`), using explicit proposal priority `ACT > ASK > RECORD > WAIT` when multiple facets disagree.
 - Apply policy guardrails before finalizing the initial action: policy `DENIED` results force `RECORD`, and policy `APPROVAL_REQUIRED` results force `ASK`, even if another facet proposed `ACT`.
 - Run deterministic verifier checks against the event, facet results, initial decision, and configured state-dir metadata. Unsafe or structurally invalid `ACT` decisions may be downgraded to `ASK` or `RECORD` before persistence.
-- Persist the updated runtime snapshot plus an append-only event log, including verifier metadata as a `FacetResult`.
+- Persist the updated runtime snapshot plus an append-only event log, including verifier metadata as a `FacetResult` and compact phase/pressure trace metadata on each `NexusRecord`.
+- If a facet emits internal event metadata, process at most one additional `internal` event immediately after the current cycle and append that record to the log; additional internal events are dropped for the cycle to avoid loops.
 - Avoid autonomous external tool execution; `ACT` is still only a typed decision, and Executor v0 only records or applies approved internal state actions.
 
 ## Data stores (current v0)
@@ -130,20 +133,20 @@ score = (
 - **Script** = Goals
 - **Improvisation** = bottom-up salience and novelty
 
-## Context v0 (current)
+## Context v1 (current)
 
-- **Static working packet only** - `ContextFacet` assembles a small inspectable context window for the current run. It is deliberately boring and deterministic.
-- **Source material** - only the recent `N` episodic memory records are included. No goals, world model, policy, planner, or verifier data are assembled into Context v0.
-- **Bounded retrieval only** - context uses `MemoryStore.list_recent(limit=N, memory_type=episodic)` and does not scan or load all memory.
-- **No dynamic assembly** - no salience cutoff, no pressure system, no embeddings, no vector search, no LLM summarization, and no context compression.
-- **Manual runtime scope** - the CLI enables context explicitly with `--context`, and `--context-window-size` controls the static bound.
-- **Read-only role** - Context v0 is the current working packet available to Nexus and future reasoning systems; it is not a planner, reasoning engine, retrieval model, or executor.
+- **Deterministic working packet** - `ContextFacet` now assembles a bounded inspectable `ContextWindow` from active runtime state at the start of the Nexus cycle, rather than exposing only a static recent-memory slice.
+- **Current sources** - the current event is always included directly, followed by bounded active goals, relevant memories, recent episodic memories, active beliefs, a compact policy summary, and optional compact planner / executor / attention / affect / learning summaries when those signals are available.
+- **Deterministic scoping** - bounds come from `ContextAssemblyConfig` (`max_goals`, `max_memories`, `max_beliefs`, `salience_threshold`, `include_policy_summary`, `include_signal_summaries`). Context v1 deduplicates repeated memories, preserves `source_id`, and does not load whole stores without limits.
+- **Strategy support** - `ContextFacet` supports both `static_recent_episodic_v0` and `dynamic_active_facets_v1`; the dynamic strategy is the default when context is enabled through the current CLI/runtime wiring.
+- **Prompt grounding** - the CLI model prompt builder now renders a concise "Current working context" section from the assembled window so active goals, memories, beliefs, policy constraints, and the current event are visible to later response generation without dumping raw JSON.
+- **Read-only role** - Context v1 still does not plan, summarize with an LLM, mutate stores, use embeddings, use RAG, perform graph traversal, or compress context. It is a deterministic assembly layer only.
 
 ## Context roadmap
 
-- **v0** - static working memory window from recent episodic records only. **Current.**
-- **v1** - dynamically assembled from active facets, pulling current goals, recent memories, and a world-model snapshot under deterministic scoping rules. **Future.**
-- **v2** - relevance-filtered and pressure-relevant assembly with cluster-informed inclusion and salience cutoffs instead of arbitrary `N`. **Future.**
+- **v0** - static working memory window from recent episodic records only. **Implemented for explicit compatibility.**
+- **v1** - dynamically assembled bounded working packet from current event, active goals, recent/relevant memories, active beliefs, policy summary, and compact signal summaries under deterministic scoping rules. **Current.**
+- **v2** - richer relevance-filtered and pressure-aware deterministic assembly beyond simple bounded ranking, still without LLM summarization. **Future.**
 - **v3** - self-editing context, semantic consolidation, predictive loading, and pressure signaling when the context window overloads. **Future.**
 
 ## Behavior v0 (current)
@@ -295,7 +298,7 @@ flowchart LR
 | Verifier facet | `fullerene/facets/verifier.py` | Deterministic post-decision verifier that can downgrade unsafe `ACT` decisions before persistence |
 | Affect models and derivation | `fullerene/affect/` | `AffectState`, `AffectResult`, `AffectHistoryBuffer`, and `DeterministicAffectDeriver` for observation-only affect state |
 | Learning models and rules | `fullerene/learning/` | `LearningSignal`, `AdjustmentRecord`, `LearningResult`, deterministic signal classifiers, and conservative apply-or-propose adjustment logic |
-| Context models and assembler | `fullerene/context/` | `ContextItem`, `ContextWindow`, and `StaticContextAssembler` for Context v0 |
+| Context models and assembler | `fullerene/context/` | `ContextItem`, `ContextWindow`, `ContextAssemblyConfig`, `StaticContextAssembler`, and `DynamicContextAssembler` for bounded Context v0/v1 assembly |
 | Attention models and scorer | `fullerene/attention/` | `AttentionItem`, `AttentionResult`, `AttentionSource`, and `FixedWeightAttentionScorer` for deterministic focus scoring |
 | Executor models and runner | `fullerene/executor/` | `ExecutionRecord`, `ExecutionResult`, `ExecutionStatus`, and `InternalActionExecutor` for controlled internal action execution |
 | Memory facet | `fullerene/facets/memory.py` | Deterministic episodic storage with v1 tag/salience inference plus bounded retrieval |

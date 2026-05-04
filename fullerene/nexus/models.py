@@ -33,6 +33,7 @@ class EventType(str, Enum):
     USER_MESSAGE = "user_message"
     SYSTEM_TICK = "system_tick"
     SYSTEM_NOTE = "system_note"
+    INTERNAL = "internal"
 
 
 class DecisionAction(str, Enum):
@@ -133,6 +134,7 @@ class NexusState:
     event_count: int = 0
     last_event: Event | None = None
     last_decision: NexusDecision | None = None
+    system_pressure: float = 0.0
     facet_state: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def apply(
@@ -140,10 +142,14 @@ class NexusState:
         event: Event,
         facet_results: list[FacetResult],
         decision: NexusDecision,
+        *,
+        system_pressure: float | None = None,
     ) -> None:
         self.event_count += 1
         self.last_event = event
         self.last_decision = decision
+        if system_pressure is not None:
+            self.system_pressure = _clamp_unit(system_pressure)
         for result in facet_results:
             if not result.state_updates:
                 continue
@@ -160,6 +166,7 @@ class NexusState:
             "last_decision": (
                 self.last_decision.to_dict() if self.last_decision else None
             ),
+            "system_pressure": self.system_pressure,
             "facet_state": _serialize_value(self.facet_state),
         }
 
@@ -177,6 +184,7 @@ class NexusState:
                 if data.get("last_decision")
                 else None
             ),
+            system_pressure=_clamp_unit(data.get("system_pressure", 0.0)),
             facet_state=data.get("facet_state", {}),
         )
 
@@ -186,6 +194,7 @@ class NexusRecord:
     event: Event
     facet_results: list[FacetResult]
     decision: NexusDecision
+    metadata: dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=utcnow)
     record_id: str = field(default_factory=lambda: uuid4().hex)
 
@@ -196,6 +205,7 @@ class NexusRecord:
             "event": self.event.to_dict(),
             "facet_results": [result.to_dict() for result in self.facet_results],
             "decision": self.decision.to_dict(),
+            "metadata": _serialize_value(self.metadata),
         }
 
     @classmethod
@@ -208,4 +218,12 @@ class NexusRecord:
                 FacetResult.from_dict(result) for result in data.get("facet_results", [])
             ],
             decision=NexusDecision.from_dict(data["decision"]),
+            metadata=data.get("metadata", {}),
         )
+
+
+def _clamp_unit(value: Any) -> float:
+    try:
+        return max(0.0, min(float(value), 1.0))
+    except (TypeError, ValueError):
+        return 0.0

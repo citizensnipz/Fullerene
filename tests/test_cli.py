@@ -3,19 +3,21 @@ from __future__ import annotations
 import io
 import json
 import shutil
-import tempfile
 import urllib.error
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 
 from fullerene.cli import main as cli_main
-from fullerene.workspace_state import DEFAULT_STATE_DIR
+from fullerene.workspace_state import DEFAULT_STATE_DIR, workspace_state_root
 
 
 def make_tempdir_path() -> Path:
-    return Path(tempfile.mkdtemp(prefix="fullerene-cli-test-"))
+    root = workspace_state_root() / f".test-cli-{uuid4().hex}"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 class CLIUsabilityTests(unittest.TestCase):
@@ -108,7 +110,7 @@ class CLIUsabilityTests(unittest.TestCase):
         self.assertIn("tool: text", output)
         self.assertIn("response: ", output)
         self.assertNotIn("response: null", output)
-        self.assertIn("local Fullerene cycle", output)
+        self.assertIn("local runtime cycle", output)
 
     def test_model_output_uses_ollama_text_after_behavior_decision(self) -> None:
         root = make_tempdir_path()
@@ -141,6 +143,13 @@ class CLIUsabilityTests(unittest.TestCase):
         prompt = generate.call_args.args[0]
         self.assertIn("System decision: ACT", prompt)
         self.assertIn("Only generate text", prompt)
+        self.assertIn("Current working context:", prompt)
+        self.assertIn("- current event: What are you doing?", prompt)
+        self.assertIn("- active goals: none", prompt)
+        self.assertIn("- recent memories: none", prompt)
+        self.assertIn("- active beliefs: none", prompt)
+        self.assertIn("- query intent: status_request", prompt)
+        self.assertIn("- missing context: none", prompt)
 
     def test_model_offline_falls_back_to_template(self) -> None:
         root = make_tempdir_path()
@@ -169,7 +178,7 @@ class CLIUsabilityTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("decision: ACT", output)
         self.assertIn("response: ", output)
-        self.assertIn("local Fullerene cycle", output)
+        self.assertIn("local runtime cycle", output)
 
     def test_model_is_not_used_for_record_decision_logic(self) -> None:
         root = make_tempdir_path()
@@ -300,9 +309,13 @@ class CLIUsabilityTests(unittest.TestCase):
                 "state.json",
                 "runtime-log.jsonl",
                 "memory.sqlite3",
+                "memory.sqlite3-journal",
                 "goals.sqlite3",
+                "goals.sqlite3-journal",
                 "world.sqlite3",
+                "world.sqlite3-journal",
                 "policy.sqlite3",
+                "policy.sqlite3-journal",
                 "snapshots",
             },
         )

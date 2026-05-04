@@ -58,6 +58,70 @@ class ActFacet:
         )
 
 
+class CountingFacet:
+    def __init__(self, name: str, calls: list[str]) -> None:
+        self.name = name
+        self.calls = calls
+
+    def process(self, event: Event, state: NexusState) -> FacetResult:
+        self.calls.append(f"{self.name}:{event.event_type.value}")
+        return FacetResult(
+            facet_name=self.name,
+            summary=f"{self.name} observed the event.",
+            proposed_decision=DecisionAction.WAIT,
+        )
+
+
+class AttentionPressureFacet:
+    name = "attention"
+
+    def process(self, event: Event, state: NexusState) -> FacetResult:
+        return FacetResult(
+            facet_name=self.name,
+            summary="Emitted a deterministic attention peak.",
+            metadata={"scores": {"event": 0.6}},
+        )
+
+
+class AffectPressureFacet:
+    name = "affect"
+
+    def process(self, event: Event, state: NexusState) -> FacetResult:
+        return FacetResult(
+            facet_name=self.name,
+            summary="Emitted deterministic affect arousal.",
+            metadata={"affect_state": {"arousal": 0.3}},
+        )
+
+
+class InternalEmitterFacet:
+    name = "behavior"
+
+    def __init__(self, calls: list[str]) -> None:
+        self.calls = calls
+
+    def process(self, event: Event, state: NexusState) -> FacetResult:
+        self.calls.append(event.event_type.value)
+        return FacetResult(
+            facet_name=self.name,
+            summary="Emitted internal events for bounded processing.",
+            metadata={
+                "internal_events": [
+                    Event(
+                        event_type=EventType.INTERNAL,
+                        content="first internal",
+                        metadata={"source": "test"},
+                    ),
+                    Event(
+                        event_type=EventType.INTERNAL,
+                        content="second internal",
+                        metadata={"source": "test"},
+                    ),
+                ]
+            },
+        )
+
+
 class NexusRuntimeTests(unittest.TestCase):
     def make_file_store(self) -> FileStateStore:
         store_root = workspace_state_root() / f".test-nexus-store-{uuid4().hex}"
@@ -176,6 +240,127 @@ class NexusRuntimeTests(unittest.TestCase):
             "facet exploded",
         )
         self.assertNotIn("Traceback", json.dumps(persisted_error_result))
+
+    def test_system_pressure_is_computed_and_clamped(self) -> None:
+        runtime = NexusRuntime(facets=[SilentFacet()], store=InMemoryStateStore())
+
+        record = runtime.process_event(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="urgent",
+                metadata={"pressure": 4.0},
+            )
+        )
+
+        self.assertEqual(record.metadata["system_pressure"], 1.0)
+        self.assertEqual(runtime.state.system_pressure, 1.0)
+
+    def test_system_pressure_aggregates_attention_and_affect_outputs(self) -> None:
+        runtime = NexusRuntime(
+            facets=[AttentionPressureFacet(), AffectPressureFacet()],
+            store=InMemoryStateStore(),
+        )
+
+        record = runtime.process_event(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="pressure signals",
+                metadata={"pressure": 0.9},
+            )
+        )
+
+        self.assertEqual(record.metadata["system_pressure"], 0.6)
+        self.assertEqual(runtime.state.system_pressure, 0.6)
+
+    def test_phases_execute_in_declared_order_and_facets_run_once(self) -> None:
+        calls: list[str] = []
+        runtime = NexusRuntime(
+            facets=[
+                CountingFacet("planner", calls),
+                CountingFacet("memory", calls),
+                CountingFacet("behavior", calls),
+                CountingFacet("context", calls),
+                CountingFacet("executor", calls),
+                CountingFacet("learning", calls),
+                CountingFacet("attention", calls),
+                CountingFacet("affect", calls),
+                CountingFacet("echo", calls),
+            ],
+            store=InMemoryStateStore(),
+        )
+
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="phase order")
+        )
+
+        self.assertEqual(
+            calls,
+            [
+                "context:user_message",
+                "memory:user_message",
+                "behavior:user_message",
+                "planner:user_message",
+                "executor:user_message",
+                "learning:user_message",
+                "attention:user_message",
+                "affect:user_message",
+                "echo:user_message",
+            ],
+        )
+        phase_trace = record.metadata["phase_execution_order"]
+        self.assertEqual(
+            [phase["phase"] for phase in phase_trace],
+            [
+                "INPUT / CONTEXT",
+                "STATE",
+                "DECISION",
+                "PLANNING / EXECUTION",
+                "LEARNING / SIGNAL",
+                "VERIFICATION / OUTPUT",
+            ],
+        )
+        self.assertEqual(phase_trace[0]["facets"], ["context", "memory"])
+        self.assertEqual(
+            record.metadata["facet_outputs_by_phase"]["PLANNING / EXECUTION"][0][
+                "facet_name"
+            ],
+            "planner",
+        )
+
+    def test_internal_event_is_processed_at_most_once(self) -> None:
+        calls: list[str] = []
+        store = InMemoryStateStore()
+        runtime = NexusRuntime(
+            facets=[InternalEmitterFacet(calls)],
+            store=store,
+        )
+
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="emit internal")
+        )
+
+        self.assertEqual(calls, ["user_message", "internal"])
+        self.assertEqual(len(store.records), 2)
+        self.assertEqual(store.records[1].event.event_type, EventType.INTERNAL)
+        self.assertEqual(len(record.metadata["internal_events_processed"]), 1)
+        self.assertEqual(record.metadata["internal_events_dropped"], 1)
+
+    def test_low_pressure_behavior_decision_remains_unchanged(self) -> None:
+        runtime = NexusRuntime(
+            facets=[EchoFacet(), SilentFacet()],
+            store=InMemoryStateStore(),
+        )
+
+        record = runtime.process_event(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="ordinary low pressure note",
+                metadata={"pressure": 0.0},
+            )
+        )
+
+        self.assertEqual(record.decision.action, DecisionAction.RECORD)
+        self.assertEqual(record.metadata["system_pressure"], 0.0)
 
 
 if __name__ == "__main__":

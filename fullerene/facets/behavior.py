@@ -20,11 +20,18 @@ HIGH_PRIORITY_TAGS = frozenset(
 RESPONSE_PHRASES = (
     "what are you doing right now",
     "what are you doing",
+    "what is happening",
+    "what do you know",
     "what should i do",
+    "what book should i",
     "what should i focus on",
+    "what should we",
+    "recommend",
+    "suggest",
     "should i",
     "what next",
     "next steps",
+    "plan",
     "can you",
     "could you",
     "how do i",
@@ -35,12 +42,34 @@ RESPONSE_PHRASES = (
 STATUS_RESPONSE_PHRASES = (
     "what are you doing right now",
     "what are you doing",
+    "what is happening",
+    "what do you know",
+)
+RECOMMENDATION_RESPONSE_PHRASES = (
+    "what should i",
+    "what book should i",
+    "what should we",
+    "recommend",
+    "suggest",
+)
+PLANNING_RESPONSE_PHRASES = (
+    "what next",
+    "next steps",
+    "how do i",
+    "plan",
 )
 NEXT_STEPS_RESPONSE_PHRASES = (
     "what should i do",
     "what should i focus on",
     "what next",
     "next steps",
+)
+VAGUE_RESPONSE_PHRASES = (
+    "help me",
+    "can you",
+    "could you",
+    "tell me",
+    "explain",
 )
 DECISION_BASE_SCORES = {
     DecisionAction.WAIT: 0.1,
@@ -56,6 +85,7 @@ DECISION_PRIORITY = {
 }
 LOW_RETRIEVAL_THRESHOLD = 0.2
 HIGH_GOAL_RELEVANCE_THRESHOLD = 0.7
+CONTEXT_SUFFICIENCY_THRESHOLD = 1.0
 
 
 @dataclass(slots=True)
@@ -71,6 +101,15 @@ class _BehaviorSignals:
     response_reason: str | None
     response_template: str | None
     deterministic_response_available: bool
+    query_intent: str | None
+    active_goal_count: int
+    relevant_goal_count: int
+    relevant_memory_count: int
+    relevant_belief_count: int
+    context_item_count: int
+    planner_available: bool
+    context_sufficiency: float
+    missing_context: list[str]
     explicit_action: bool
     low_risk: bool
     uncertainty: bool
@@ -143,6 +182,9 @@ class BehaviorFacet:
                 "last_response_needed": response_metadata["response_needed"],
                 "last_response_reason": response_metadata.get("response_reason"),
                 "last_response_template": response_metadata.get("response_template"),
+                "last_query_intent": signals.query_intent,
+                "last_context_sufficiency": signals.context_sufficiency,
+                "last_missing_context": list(signals.missing_context),
             },
             metadata={
                 "selected_decision": selected_decision.value,
@@ -159,6 +201,15 @@ class BehaviorFacet:
                 "high_priority": signals.high_priority,
                 "priority_level": priority_level,
                 **response_metadata,
+                "query_intent": signals.query_intent,
+                "active_goal_count": signals.active_goal_count,
+                "relevant_goal_count": signals.relevant_goal_count,
+                "relevant_memory_count": signals.relevant_memory_count,
+                "relevant_belief_count": signals.relevant_belief_count,
+                "context_item_count": signals.context_item_count,
+                "planner_available": signals.planner_available,
+                "context_sufficiency": signals.context_sufficiency,
+                "missing_context": list(signals.missing_context),
                 "memory_signal_available": signals.memory_signal_available,
                 "goal_signal_available": signals.goal_signal_available,
                 "goal_alignment_score": signals.goal_alignment_score,
@@ -202,23 +253,65 @@ class BehaviorFacet:
         world_alignment_confidence = self._resolve_world_alignment_confidence(
             aligned_beliefs
         )
+        planner_context = self._extract_planner_context(state)
+        query_intent = self._detect_query_intent(event.content)
+        active_goal_count = self._active_goal_count(goal_context)
+        relevant_goal_count = len(aligned_goals)
+        relevant_memory_count = self._relevant_memory_count(memory_context)
+        relevant_belief_count = len(aligned_beliefs)
+        context_item_count = self._context_item_count(state)
+        planner_available = self._planner_available(planner_context)
+        context_sufficiency = self._context_sufficiency(
+            query_intent=query_intent,
+            active_goal_count=active_goal_count,
+            relevant_goal_count=relevant_goal_count,
+            relevant_memory_count=relevant_memory_count,
+            relevant_belief_count=relevant_belief_count,
+            planner_available=planner_available,
+        )
+        missing_context = self._missing_context(
+            query_intent=query_intent,
+            active_goal_count=active_goal_count,
+            relevant_goal_count=relevant_goal_count,
+            relevant_memory_count=relevant_memory_count,
+            relevant_belief_count=relevant_belief_count,
+            planner_available=planner_available,
+        )
         pressure = self._numeric_unit_value(metadata.get("pressure")) or 0.0
         retrieval_strength = self._resolve_retrieval_strength(
             metadata=metadata,
             state=state,
             memory_context=memory_context,
         )
-        direct_response_needed = self._contains_response_phrase(event.content)
+        direct_response_needed = query_intent is not None or self._contains_response_phrase(
+            event.content
+        )
         requires_response = self._metadata_flag(metadata, "requires_response")
+        response_needed = direct_response_needed or requires_response
+        if (
+            response_needed
+            and query_intent is None
+            and context_sufficiency < self._sufficiency_threshold(query_intent)
+        ):
+            query_intent = "clarification_needed"
+            missing_context = self._missing_context(
+                query_intent=query_intent,
+                active_goal_count=active_goal_count,
+                relevant_goal_count=relevant_goal_count,
+                relevant_memory_count=relevant_memory_count,
+                relevant_belief_count=relevant_belief_count,
+                planner_available=planner_available,
+            )
         response_template = self._resolve_response_template(
             event.content,
-            state=state,
-            goal_context=goal_context,
+            query_intent=query_intent,
+            context_sufficiency=context_sufficiency,
+            missing_context=missing_context,
         )
-        deterministic_response_available = response_template in {
-            "status_report",
-            "next_steps_available",
-        }
+        deterministic_response_available = (
+            response_needed
+            and context_sufficiency >= self._sufficiency_threshold(query_intent)
+        )
         response_reason = None
         if direct_response_needed:
             response_reason = "direct_question"
@@ -242,10 +335,19 @@ class BehaviorFacet:
             ),
             question_like=direct_response_needed,
             requires_response=requires_response,
-            response_needed=direct_response_needed or requires_response,
+            response_needed=response_needed,
             response_reason=response_reason,
             response_template=response_template,
             deterministic_response_available=deterministic_response_available,
+            query_intent=query_intent,
+            active_goal_count=active_goal_count,
+            relevant_goal_count=relevant_goal_count,
+            relevant_memory_count=relevant_memory_count,
+            relevant_belief_count=relevant_belief_count,
+            context_item_count=context_item_count,
+            planner_available=planner_available,
+            context_sufficiency=context_sufficiency,
+            missing_context=missing_context,
             explicit_action=self._metadata_flag(metadata, "explicit_action"),
             low_risk=self._metadata_flag(metadata, "low_risk"),
             uncertainty=self._metadata_flag(metadata, "uncertainty"),
@@ -319,6 +421,11 @@ class BehaviorFacet:
         return state_world_model if isinstance(state_world_model, dict) else None
 
     @staticmethod
+    def _extract_planner_context(state: NexusState) -> dict[str, Any] | None:
+        state_planner = state.facet_state.get("planner")
+        return state_planner if isinstance(state_planner, dict) else None
+
+    @staticmethod
     def _extract_relevant_goals(
         goal_context: dict[str, Any] | None,
     ) -> list[dict[str, Any]]:
@@ -343,6 +450,136 @@ class BehaviorFacet:
             if isinstance(candidate, list):
                 return [belief for belief in candidate if isinstance(belief, dict)]
         return []
+
+    @staticmethod
+    def _active_goal_count(goal_context: dict[str, Any] | None) -> int:
+        if goal_context is None:
+            return 0
+        raw_count = goal_context.get("active_goal_count")
+        if isinstance(raw_count, int) and raw_count >= 0:
+            return raw_count
+        for key in ("last_active_goals", "active_goals", "goals", "last_active_goal_ids"):
+            candidate = goal_context.get(key)
+            if isinstance(candidate, list):
+                return len(candidate)
+        return 0
+
+    @staticmethod
+    def _relevant_memory_count(memory_context: dict[str, Any] | None) -> int:
+        if memory_context is None:
+            return 0
+        for key in (
+            "relevant_memories",
+            "last_relevant_memories",
+            "last_relevant_memory_ids",
+        ):
+            candidate = memory_context.get(key)
+            if isinstance(candidate, list):
+                return len(candidate)
+        return 0
+
+    @staticmethod
+    def _context_item_count(state: NexusState) -> int:
+        context_state = state.facet_state.get("context")
+        if not isinstance(context_state, dict):
+            return 0
+        raw_count = context_state.get("last_context_item_count")
+        if isinstance(raw_count, int) and raw_count >= 0:
+            return raw_count
+        raw_ids = context_state.get("last_context_item_ids")
+        if isinstance(raw_ids, list):
+            return len(raw_ids)
+        return 0
+
+    @staticmethod
+    def _planner_available(planner_context: dict[str, Any] | None) -> bool:
+        if planner_context is None:
+            return False
+        last_plan = planner_context.get("last_plan")
+        if isinstance(last_plan, dict) and isinstance(last_plan.get("steps"), list):
+            return bool(last_plan["steps"])
+        return bool(planner_context.get("last_plan_id"))
+
+    @staticmethod
+    def _detect_query_intent(content: str) -> str | None:
+        normalized = _normalize_content(content)
+        if not normalized:
+            return None
+        if any(phrase in normalized for phrase in STATUS_RESPONSE_PHRASES):
+            return "status_request"
+        if any(phrase in normalized for phrase in RECOMMENDATION_RESPONSE_PHRASES):
+            return "recommendation_request"
+        if any(phrase in normalized for phrase in PLANNING_RESPONSE_PHRASES):
+            return "planning_request"
+        if any(phrase in normalized for phrase in VAGUE_RESPONSE_PHRASES):
+            return "clarification_needed"
+        if content.strip().endswith("?"):
+            return "clarification_needed"
+        return None
+
+    @staticmethod
+    def _context_sufficiency(
+        *,
+        query_intent: str | None,
+        active_goal_count: int,
+        relevant_goal_count: int,
+        relevant_memory_count: int,
+        relevant_belief_count: int,
+        planner_available: bool,
+    ) -> float:
+        relevant_goal_signal = 1.0 if relevant_goal_count > 0 else 0.0
+        if (
+            relevant_goal_signal == 0.0
+            and active_goal_count > 0
+            and query_intent in {"planning_request", "recommendation_request"}
+        ):
+            relevant_goal_signal = 1.0
+        relevant_memory_signal = 1.0 if relevant_memory_count > 0 else 0.0
+        relevant_belief_signal = 1.0 if relevant_belief_count > 0 else 0.0
+        planner_signal = 1.0 if planner_available else 0.0
+        return round(
+            relevant_goal_signal
+            + relevant_memory_signal
+            + relevant_belief_signal
+            + planner_signal,
+            3,
+        )
+
+    @staticmethod
+    def _sufficiency_threshold(query_intent: str | None) -> float:
+        if query_intent == "status_request":
+            return 0.0
+        return CONTEXT_SUFFICIENCY_THRESHOLD
+
+    @staticmethod
+    def _missing_context(
+        *,
+        query_intent: str | None,
+        active_goal_count: int,
+        relevant_goal_count: int,
+        relevant_memory_count: int,
+        relevant_belief_count: int,
+        planner_available: bool,
+    ) -> list[str]:
+        missing: list[str] = []
+        if query_intent == "recommendation_request":
+            if (
+                active_goal_count == 0
+                and relevant_goal_count == 0
+                and relevant_memory_count == 0
+                and relevant_belief_count == 0
+            ):
+                missing.extend(["preferences", "purpose"])
+            return missing
+        if query_intent == "planning_request":
+            if active_goal_count == 0 and relevant_goal_count == 0:
+                missing.append("active_goals")
+            if not planner_available:
+                missing.append("planner_summary")
+            return missing
+        if query_intent == "clarification_needed":
+            return ["specific_request", "relevant_context"]
+        return missing
 
     @staticmethod
     def _resolve_goal_alignment_score(
@@ -555,17 +792,25 @@ class BehaviorFacet:
     def _resolve_response_template(
         content: str,
         *,
-        state: NexusState,
-        goal_context: dict[str, Any] | None,
+        query_intent: str | None,
+        context_sufficiency: float,
+        missing_context: list[str],
     ) -> str | None:
         normalized = _normalize_content(content)
-        if any(phrase in normalized for phrase in STATUS_RESPONSE_PHRASES):
+        if query_intent == "status_request":
             return "status_report"
-        if any(phrase in normalized for phrase in NEXT_STEPS_RESPONSE_PHRASES):
-            if BehaviorFacet._has_next_steps_context(state, goal_context):
-                return "next_steps_available"
-            return "clarification_needed"
-        if BehaviorFacet._contains_response_phrase(content):
+        if query_intent == "recommendation_request" and missing_context:
+            return "clarify_recommendation_preferences"
+        if (
+            any(phrase in normalized for phrase in NEXT_STEPS_RESPONSE_PHRASES)
+            and context_sufficiency >= CONTEXT_SUFFICIENCY_THRESHOLD
+        ):
+            return "next_steps_available"
+        if query_intent == "planning_request" and context_sufficiency >= CONTEXT_SUFFICIENCY_THRESHOLD:
+            return "next_steps_available"
+        if query_intent in {"recommendation_request", "planning_request"}:
+            return "grounded_response_available" if context_sufficiency >= CONTEXT_SUFFICIENCY_THRESHOLD else "clarification_needed"
+        if query_intent == "clarification_needed":
             return "clarification_needed"
         return None
 
@@ -603,7 +848,7 @@ class BehaviorFacet:
         if selected_decision == DecisionAction.ASK:
             response_needed = True
             response_reason = response_reason or "clarification_needed"
-            response_template = "clarification_needed"
+            response_template = response_template or "clarification_needed"
         elif selected_decision == DecisionAction.ACT and response_needed:
             response_template = response_template or "clarification_needed"
         else:
@@ -625,6 +870,19 @@ class BehaviorFacet:
                     "tool": "text",
                 }
             )
+        metadata.update(
+            {
+                "query_intent": signals.query_intent,
+                "active_goal_count": signals.active_goal_count,
+                "relevant_goal_count": signals.relevant_goal_count,
+                "relevant_memory_count": signals.relevant_memory_count,
+                "relevant_belief_count": signals.relevant_belief_count,
+                "context_item_count": signals.context_item_count,
+                "planner_available": signals.planner_available,
+                "context_sufficiency": signals.context_sufficiency,
+                "missing_context": list(signals.missing_context),
+            }
+        )
         return metadata
 
     @staticmethod
@@ -711,6 +969,14 @@ class BehaviorFacet:
             DECISION_BASE_SCORES,
             key=lambda action: (decision_scores[action], DECISION_PRIORITY[action]),
         )
+        if signals.response_needed:
+            threshold = BehaviorFacet._sufficiency_threshold(signals.query_intent)
+            if signals.context_sufficiency >= threshold:
+                selected_decision = DecisionAction.ACT
+                reasons.append("context_sufficient_for_response")
+            else:
+                selected_decision = DecisionAction.ASK
+                reasons.append("context_insufficient_for_response")
         reasons.append(f"selected_highest_weighted_score:{selected_decision.value}")
         return (
             selected_decision,
@@ -947,8 +1213,8 @@ def _world_confidence_boost(
 
     normalized_alignment = _clamp_unit(world_alignment_score / 3.0)
     boost = (
-        0.02
-        + (0.04 * _clamp_unit(world_alignment_confidence))
-        + (0.02 * normalized_alignment)
+        0.06
+        + (0.08 * _clamp_unit(world_alignment_confidence))
+        + (0.04 * normalized_alignment)
     )
-    return round(min(boost, 0.08), 3)
+    return round(min(boost, 0.18), 3)

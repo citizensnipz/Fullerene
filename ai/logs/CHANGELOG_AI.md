@@ -9,6 +9,20 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-04 (context v1)
+
+- Added `ContextAssemblyConfig` and `DynamicContextAssembler` in `fullerene/context/`; `ContextWindow` can now carry `dynamic_active_facets_v1` packets containing the current event, bounded goals, memories, beliefs, policy summary, and compact signal summaries.
+- Updated `fullerene/facets/context.py` so `ContextFacet` supports both `static_recent_episodic_v0` and `dynamic_active_facets_v1`, defaults to the dynamic strategy in the current CLI wiring, persists context-window state updates, and exposes richer metadata (`included_*_ids`, limits, reasons, source types).
+- Updated `fullerene/cli.py` with context strategy/config flags, dynamic-context store wiring, concise working-context prompt grounding, and goal-intent handling for phrases like `I should remember to ...`; kept `--context-window-size` as memory-cap compatibility.
+- Updated `fullerene/policy/store.py` with bounded enabled-policy listing/count helpers, `fullerene/facets/learning.py` with state updates for later context summaries, and `fullerene/state/store.py` snapshot rotation to use copy-based rollover instead of moving/deleting the live `state.json` on Windows.
+- Expanded `tests/test_context.py` and `tests/test_cli.py` for Context v1 assembly, prompt grounding, persisted-goal reuse across runs, CLI flags, and bounded state-dir expectations.
+
+### 2026-04-30 (Nexus v1-lite)
+
+- Added generalized deterministic response grounding in `fullerene/facets/behavior.py` plus richer CLI model prompts in `fullerene/cli.py`; recommendation/status/planning questions now ACT or ASK from context sufficiency metadata instead of one-off question handling.
+- Updated `fullerene/nexus/runtime.py` and `fullerene/nexus/models.py` so Nexus now computes persisted `system_pressure`, runs facets through deterministic phases, emits compact phase trace metadata, and processes at most one bounded internal event per call.
+- Expanded `tests/test_nexus_runtime.py` for pressure clamping/aggregation, phase ordering, one-pass facet execution, bounded internal-event handling, and low-pressure behavior compatibility.
+
 ### 2026-04-29 (goal intent polish)
 
 - Added deterministic CLI goal-intent persistence in `fullerene/cli.py` for goal/priority phrases, duplicate active-goal updates, concise goal context in model prompts, and fallback next-step text that surfaces active goals.

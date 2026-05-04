@@ -31,8 +31,14 @@ class PolicyStore(Protocol):
     def delete_policy(self, policy_id: str) -> None:
         """Delete a persisted policy rule."""
 
-    def list_enabled_policies(self) -> list[PolicyRule]:
-        """Return all enabled policy rules."""
+    def list_enabled_policies(
+        self,
+        limit: int | None = None,
+    ) -> list[PolicyRule]:
+        """Return enabled policy rules, optionally bounded."""
+
+    def count_enabled_policies(self) -> int:
+        """Return the total number of enabled policy rules."""
 
 
 class SQLitePolicyStore:
@@ -189,30 +195,45 @@ class SQLitePolicyStore:
                 raise KeyError(f"Policy {policy_id!r} does not exist")
             connection.commit()
 
-    def list_enabled_policies(self) -> list[PolicyRule]:
+    def list_enabled_policies(
+        self,
+        limit: int | None = None,
+    ) -> list[PolicyRule]:
+        query = """
+            SELECT
+                id,
+                name,
+                description,
+                rule_type,
+                target_type,
+                target,
+                conditions_json,
+                priority,
+                enabled,
+                source,
+                created_at,
+                updated_at,
+                metadata_json
+            FROM policies
+            WHERE enabled = 1
+            ORDER BY priority DESC, updated_at DESC, id DESC
+        """
+        params: list[object] = []
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(self._normalize_limit(limit))
         with closing(self._connect()) as connection:
-            rows = connection.execute(
-                """
-                SELECT
-                    id,
-                    name,
-                    description,
-                    rule_type,
-                    target_type,
-                    target,
-                    conditions_json,
-                    priority,
-                    enabled,
-                    source,
-                    created_at,
-                    updated_at,
-                    metadata_json
-                FROM policies
-                WHERE enabled = 1
-                ORDER BY priority DESC, updated_at DESC, id DESC
-                """
-            ).fetchall()
+            rows = connection.execute(query, params).fetchall()
         return [self._row_to_policy(row) for row in rows]
+
+    def count_enabled_policies(self) -> int:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS enabled_count FROM policies WHERE enabled = 1"
+            ).fetchone()
+        if row is None:
+            return 0
+        return int(row["enabled_count"])
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(str(self.path), timeout=30.0)

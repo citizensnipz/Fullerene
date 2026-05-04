@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-05-04 - Context v1 is a deterministic bounded working packet assembled from active state
+
+- **Status:** accepted
+- **Context:** Fullerene could already persist memories, goals, world beliefs, policies, and later facet outputs, but the old Context layer exposed only a static recent-memory slice. That left later responses under-grounded even when active goals or beliefs already existed in persistent stores.
+- **Decision:** Implement `ContextAssemblyConfig`, `DynamicContextAssembler`, and upgraded `ContextFacet` support for `dynamic_active_facets_v1`. Context v1 always includes the current event, then bounded active goals, relevant/recent memories, active beliefs, a compact policy summary, and optional compact planner / executor / attention / affect / learning summaries when available. The assembly is deterministic, read-only, store-bounded, deduplicated, and visible both to later facet state and to the CLI model prompt builder through a concise working-context summary. It does not use embeddings, RAG, LLM summarization, graph traversal, pressure-based compression, or self-editing context mutation.
+- **Consequences:** Fullerene now has a real working-context layer that can ground later behavior, planning, and response generation in persisted state without architecture rewrites or opaque prompt stuffing. Future context work can improve deterministic ranking and selection, but the canonical v1 mechanism remains a bounded assembly packet, not a retrieval or summarization subsystem.
+
 ## 2026-04-28 - Affect v0 is a deterministic internal VAD + novelty observer with no downstream influence
 
 - **Status:** accepted

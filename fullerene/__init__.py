@@ -21,6 +21,7 @@ __all__ = [
     "Belief",
     "BeliefSource",
     "BeliefStatus",
+    "ContextAssemblyConfig",
     "ContextFacet",
     "ContextItem",
     "ContextItemType",
@@ -84,6 +85,7 @@ __all__ = [
     "SQLiteMemoryStore",
     "SQLitePolicyStore",
     "SQLiteWorldModelStore",
+    "DynamicContextAssembler",
     "StaticContextAssembler",
     "StateStore",
     "WorldModelFacet",
@@ -154,9 +156,11 @@ def __getattr__(name: str):
     }:
         return getattr(import_module("fullerene.planner"), name)
     if name in {
+        "ContextAssemblyConfig",
         "ContextItem",
         "ContextItemType",
         "ContextWindow",
+        "DynamicContextAssembler",
         "StaticContextAssembler",
     }:
         return getattr(import_module("fullerene.context"), name)

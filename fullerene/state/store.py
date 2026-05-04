@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 from typing import Protocol
 
 from fullerene.nexus.models import NexusRecord, NexusState
@@ -73,11 +74,10 @@ class FileStateStore:
             return
         self.snapshots_dir.mkdir(parents=True, exist_ok=True)
         oldest_snapshot = self.snapshots_dir / f"state-{self.snapshot_count}.json"
-        if oldest_snapshot.exists():
-            oldest_snapshot.unlink()
         for index in range(self.snapshot_count - 1, 0, -1):
             current_path = self.snapshots_dir / f"state-{index}.json"
             next_path = self.snapshots_dir / f"state-{index + 1}.json"
             if current_path.exists():
-                current_path.replace(next_path)
-        self.state_path.replace(self.snapshots_dir / "state-1.json")
+                shutil.copyfile(current_path, next_path)
+        newest_snapshot = self.snapshots_dir / "state-1.json"
+        shutil.copyfile(self.state_path, newest_snapshot)

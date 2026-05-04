@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-05-04 - Context v1 deterministic working packet
+
+- **Context:** Replace the old static recent-memory context window with a deterministic working packet assembled from active state so persisted goals, memories, beliefs, and policy constraints are visible to later behavior/planning/prompt grounding.
+- **Done:** Added `ContextAssemblyConfig` plus `DynamicContextAssembler` in `fullerene/context/`; upgraded `ContextFacet` to support `static_recent_episodic_v0` and `dynamic_active_facets_v1`, expose richer metadata/state updates, and default to the dynamic path in current CLI usage; updated `fullerene/cli.py` to wire goal/world/policy stores into context, add context strategy/config flags, keep `--context-window-size` compatibility, render a concise "Current working context" section in model prompts, and recognize `I should remember to ...` as goal intent; added bounded enabled-policy helpers in `fullerene/policy/store.py`, learning state updates in `fullerene/facets/learning.py`, and copy-based Windows-safe state snapshot rotation in `fullerene/state/store.py`; expanded `tests/test_context.py` and `tests/test_cli.py`.
+- **Verified:** `python -m unittest tests.test_context tests.test_cli -v`; `python -m unittest discover -s tests -p "test_*.py" -v` (suite printed `OK` for 290 tests; rerun with larger harness timeout if the wrapper exit code matters)
+- **Next:** If Context v2 is pursued, keep it deterministic and bounded; improve ranking/selection rules before considering any broader relevance machinery.
+- **Blockers:** Full-suite runtime is long enough that a small harness timeout can report after the suite already printed `OK`; use a larger timeout for repeated full-suite verification.
+
 ### 2026-04-28 - Affect v0 deterministic internal state
 
 - **Context:** Add Affect v0 as a deterministic internal VAD + novelty facet derived from Fullerene's own runtime signals, without emotion recognition, sentiment analysis, or any downstream modulation yet.

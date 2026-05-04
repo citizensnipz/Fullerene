@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
+from fullerene.context import ContextAssemblyConfig
 from fullerene.facets import (
     AffectFacet,
     AttentionFacet,
@@ -57,15 +58,28 @@ FULL_PRESET_FLAGS = (
 )
 TEXT_RESPONSE_TEMPLATES = {
     "status_report": (
-        "I'm running a local Fullerene cycle: recording the event, updating state, "
+        "I'm running a local runtime cycle: recording the event, updating state, "
         "checking relevant facets, and deciding whether anything needs action."
     ),
     "clarification_needed": "I need a bit more context before I can act on that.",
+    "clarify_recommendation_preferences": (
+        "What preferences should I use, and what purpose should the recommendation serve?"
+    ),
+    "grounded_response_available": (
+        "I found relevant internal context and can answer from that grounding."
+    ),
     "next_steps_available": (
         "I can propose next steps from the current goal and planner state."
     ),
 }
 GOAL_INTENT_PATTERNS: tuple[tuple[re.Pattern[str], float], ...] = (
+    (
+        re.compile(
+            r"^\s*i\s+should\s+remember\s+to\s+(?P<description>.+?)[.!?\s]*$",
+            re.IGNORECASE,
+        ),
+        0.8,
+    ),
     (
         re.compile(
             r"^\s*remember\s+that\s+(?P<description>.+?)\s+is\s+important[.!?\s]*$",
@@ -136,9 +150,45 @@ def build_parser() -> argparse.ArgumentParser:
         "--context",
         action="store_true",
         help=(
-            "Enable the static recent-episodic ContextFacet for this run. "
-            "Without --memory it reads from the memory DB but does not store the "
-            "current event."
+            "Enable the ContextFacet for this run. The default strategy is the "
+            "dynamic working-context assembler; static recent-memory mode remains "
+            "available with --context-strategy static."
+        ),
+    )
+    parser.add_argument(
+        "--context-strategy",
+        choices=("static", "dynamic"),
+        default="dynamic",
+        help="Context strategy used when --context is enabled.",
+    )
+    parser.add_argument(
+        "--context-max-goals",
+        type=int,
+        default=3,
+        help="Maximum number of active goals included by dynamic context assembly.",
+    )
+    parser.add_argument(
+        "--context-max-memories",
+        type=int,
+        default=None,
+        help=(
+            "Maximum number of memories included by dynamic context assembly. "
+            "Defaults to --context-window-size when omitted."
+        ),
+    )
+    parser.add_argument(
+        "--context-max-beliefs",
+        type=int,
+        default=5,
+        help="Maximum number of beliefs included by dynamic context assembly.",
+    )
+    parser.add_argument(
+        "--context-salience-threshold",
+        type=float,
+        default=0.0,
+        help=(
+            "Minimum salience required for memories included by dynamic context "
+            "assembly."
         ),
     )
     parser.add_argument(
@@ -301,7 +351,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--context-window-size",
         type=int,
         default=5,
-        help="Maximum number of recent episodic memories included by --context.",
+        help=(
+            "Compatibility window size for static context and the default memory "
+            "cap for dynamic context."
+        ),
     )
     parser.add_argument(
         "--goals-db",
@@ -355,6 +408,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--attention-top-n must be at least 1.")
     if args.affect_history_size < 1:
         parser.error("--affect-history-size must be at least 1.")
+    if args.context_max_goals < 0:
+        parser.error("--context-max-goals must be at least 0.")
+    if args.context_max_beliefs < 0:
+        parser.error("--context-max-beliefs must be at least 0.")
+    if args.context_max_memories is not None and args.context_max_memories < 0:
+        parser.error("--context-max-memories must be at least 0.")
+    if args.context_window_size < 1:
+        parser.error("--context-window-size must be at least 1.")
     model_adapter = _build_model_adapter(parser, args.model)
 
     state_dir = Path(args.state_dir)
@@ -374,15 +435,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             Path(args.memory_db) if args.memory_db else state_dir / "memory.sqlite3"
         )
         memory_store = SQLiteMemoryStore(memory_db_path)
-    if args.context:
-        facets.append(
-            ContextFacet(
-                memory_store,
-                window_size=args.context_window_size,
-            )
-        )
-    if args.memory:
-        facets.append(MemoryFacet(memory_store))
     if args.goals:
         goals_db_path = (
             Path(args.goals_db) if args.goals_db else state_dir / "goals.sqlite3"
@@ -390,16 +442,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         goal_store = SQLiteGoalStore(goals_db_path)
         _create_goal_from_metadata(goal_store, content=content, metadata=metadata)
         _create_goal_from_intent(goal_store, content=content, metadata=metadata)
-        facets.append(GoalsFacet(goal_store))
     if args.world:
         world_db_path = (
             Path(args.world_db) if args.world_db else state_dir / "world.sqlite3"
         )
         world_store = SQLiteWorldModelStore(world_db_path)
         _create_belief_from_metadata(world_store, event=event)
-        facets.append(WorldModelFacet(world_store))
-    if args.behavior:
-        facets.append(BehaviorFacet())
     if args.policy:
         policy_db_path = (
             Path(args.policy_db) if args.policy_db else state_dir / "policy.sqlite3"
@@ -413,6 +461,38 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         except ValueError as exc:
             parser.error(str(exc))
+    if args.context:
+        context_max_memories = (
+            args.context_max_memories
+            if args.context_max_memories is not None
+            else args.context_window_size
+        )
+        context_config = ContextAssemblyConfig(
+            max_goals=args.context_max_goals,
+            max_memories=context_max_memories,
+            max_beliefs=args.context_max_beliefs,
+            salience_threshold=_clamp_unit(args.context_salience_threshold),
+        )
+        facets.append(
+            ContextFacet(
+                memory_store,
+                goal_store=goal_store,
+                world_model_store=world_store,
+                policy_store=policy_store,
+                window_size=args.context_window_size,
+                strategy=args.context_strategy,
+                config=context_config,
+            )
+        )
+    if args.memory:
+        facets.append(MemoryFacet(memory_store))
+    if args.goals:
+        facets.append(GoalsFacet(goal_store))
+    if args.world:
+        facets.append(WorldModelFacet(world_store))
+    if args.behavior:
+        facets.append(BehaviorFacet())
+    if args.policy:
         facets.append(PolicyFacet(policy_store, state_dir=state_dir))
     if args.planner:
         facets.append(
@@ -613,18 +693,165 @@ def _generate_or_render_text_response(
 def _build_model_prompt(record, metadata: dict[str, Any]) -> str:
     decision = record.decision.action.value.upper()
     lines = [
-        "You are a local AI system called Fullerene.",
+        "You are a local AI system.",
         "Only generate text; do not decide actions, modify state, or call tools.",
         f"User said: {_prompt_line(record.event.content)}",
         f"System decision: {decision}",
-        "Relevant context:",
-        f"- top active goals: {_active_goals_summary(record)}",
-        f"- relevant goals: {_relevant_goals_summary(record)}",
-        f"- recent planner summary: {_recent_planner_summary(record)}",
+        "Current working context:",
+        *_working_context_prompt_lines(record),
+        "Response grounding:",
+        f"- query intent: {metadata.get('query_intent') or 'none'}",
+        f"- planner summary: {_recent_planner_summary(record)}",
+        f"- missing context: {_missing_context_summary(metadata)}",
         f"- response template: {metadata.get('response_template') or 'none'}",
         "Respond concisely.",
     ]
     return "\n".join(lines)
+
+
+def _working_context_prompt_lines(record) -> list[str]:
+    context_window = _context_window_payload(record)
+    if not isinstance(context_window, dict):
+        return _fallback_working_context_lines(record)
+
+    raw_items = context_window.get("items", [])
+    if not isinstance(raw_items, list):
+        return _fallback_working_context_lines(record)
+    items = [item for item in raw_items if isinstance(item, dict)]
+    if not items:
+        return _fallback_working_context_lines(record)
+
+    lines: list[str] = []
+    current_event = next(
+        (
+            _prompt_line(str(item.get("content", "")))
+            for item in items
+            if item.get("item_type") == "event"
+            and str(item.get("content", "")).strip()
+        ),
+        _prompt_line(record.event.content) if record.event.content.strip() else "none",
+    )
+    lines.append(f"- current event: {current_event}")
+    lines.append(f"- active goals: {_context_goal_summary(items) or 'none'}")
+    lines.append(
+        f"- relevant memories: {_context_memory_summary(items, context_source='relevant') or 'none'}"
+    )
+    lines.append(
+        f"- recent memories: {_context_memory_summary(items, context_source='recent') or 'none'}"
+    )
+    lines.append(f"- active beliefs: {_context_belief_summary(items) or 'none'}")
+    lines.append(f"- policy: {_context_policy_summary(items) or 'none'}")
+    lines.append(f"- signals: {_context_signal_summary(items) or 'none'}")
+    return lines
+
+
+def _fallback_working_context_lines(record) -> list[str]:
+    return [
+        f"- current event: {_prompt_line(record.event.content) or 'none'}",
+        f"- active goals: {_active_goals_summary(record)}",
+        f"- relevant memories: {_relevant_memories_summary(record)}",
+        f"- recent memories: {_relevant_memories_summary(record)}",
+        f"- active beliefs: {_relevant_beliefs_summary(record)}",
+        "- policy: none",
+        f"- signals: {_recent_planner_summary(record)}",
+    ]
+
+
+def _context_window_payload(record) -> dict[str, Any] | None:
+    context_metadata = _facet_metadata(record, facet_name="context")
+    payload = context_metadata.get("context_window")
+    if isinstance(payload, dict):
+        return payload
+    return None
+
+
+def _context_goal_summary(items: list[dict[str, Any]]) -> str | None:
+    summaries: list[str] = []
+    for item in items:
+        if item.get("item_type") != "goal":
+            continue
+        content = _coerce_prompt_string(item.get("content"))
+        if content is None:
+            continue
+        metadata = item.get("metadata", {})
+        priority = metadata.get("priority") if isinstance(metadata, dict) else None
+        if isinstance(priority, (int, float)):
+            summaries.append(f"{content} (priority {float(priority):.1f})")
+        else:
+            summaries.append(content)
+        if len(summaries) >= 3:
+            break
+    if summaries:
+        return "; ".join(summaries)
+    return None
+
+
+def _context_memory_summary(
+    items: list[dict[str, Any]],
+    *,
+    context_source: str,
+) -> str | None:
+    summaries: list[str] = []
+    for item in items:
+        if item.get("item_type") != "memory":
+            continue
+        metadata = item.get("metadata", {})
+        if not isinstance(metadata, dict):
+            continue
+        if metadata.get("context_source") != context_source:
+            continue
+        content = _coerce_prompt_string(item.get("content"))
+        if content is None:
+            continue
+        summaries.append(content)
+        if len(summaries) >= 3:
+            break
+    if summaries:
+        return "; ".join(summaries)
+    return None
+
+
+def _context_belief_summary(items: list[dict[str, Any]]) -> str | None:
+    summaries: list[str] = []
+    for item in items:
+        if item.get("item_type") != "belief":
+            continue
+        content = _coerce_prompt_string(item.get("content"))
+        if content is None:
+            continue
+        metadata = item.get("metadata", {})
+        confidence = metadata.get("confidence") if isinstance(metadata, dict) else None
+        if isinstance(confidence, (int, float)):
+            summaries.append(f"{content} (confidence {float(confidence):.1f})")
+        else:
+            summaries.append(content)
+        if len(summaries) >= 3:
+            break
+    if summaries:
+        return "; ".join(summaries)
+    return None
+
+
+def _context_policy_summary(items: list[dict[str, Any]]) -> str | None:
+    for item in items:
+        if item.get("item_type") != "policy":
+            continue
+        return _coerce_prompt_string(item.get("content"))
+    return None
+
+
+def _context_signal_summary(items: list[dict[str, Any]]) -> str | None:
+    summaries: list[str] = []
+    for item in items:
+        if item.get("item_type") != "signal":
+            continue
+        content = _coerce_prompt_string(item.get("content"))
+        if content is None:
+            continue
+        summaries.append(content)
+    if summaries:
+        return "; ".join(summaries[:5])
+    return None
 
 
 def _active_goals_summary(record) -> str:
@@ -635,6 +862,50 @@ def _active_goals_summary(record) -> str:
 def _relevant_goals_summary(record) -> str:
     goals_metadata = _facet_metadata(record, facet_name="goals")
     return _goals_summary(goals_metadata.get("relevant_goals"))
+
+
+def _relevant_memories_summary(record) -> str:
+    memory_metadata = _facet_metadata(record, facet_name="memory")
+    raw_memories = memory_metadata.get("relevant_memories")
+    if isinstance(raw_memories, list) and raw_memories:
+        summaries: list[str] = []
+        for memory in raw_memories[:3]:
+            if not isinstance(memory, dict):
+                continue
+            preview = _coerce_prompt_string(memory.get("content_preview"))
+            if preview is not None:
+                summaries.append(preview)
+        if summaries:
+            return "; ".join(summaries)
+    return "none"
+
+
+def _relevant_beliefs_summary(record) -> str:
+    world_metadata = _facet_metadata(record, facet_name="world_model")
+    raw_beliefs = world_metadata.get("relevant_beliefs")
+    if isinstance(raw_beliefs, list) and raw_beliefs:
+        summaries: list[str] = []
+        for belief in raw_beliefs[:3]:
+            if not isinstance(belief, dict):
+                continue
+            claim = _coerce_prompt_string(belief.get("claim"))
+            if claim is None:
+                continue
+            confidence = belief.get("confidence")
+            if isinstance(confidence, (int, float)):
+                summaries.append(f"{claim} (confidence {float(confidence):.1f})")
+            else:
+                summaries.append(claim)
+        if summaries:
+            return "; ".join(summaries)
+    return "none"
+
+
+def _missing_context_summary(metadata: dict[str, Any]) -> str:
+    raw_missing = metadata.get("missing_context")
+    if isinstance(raw_missing, list) and raw_missing:
+        return ", ".join(str(item) for item in raw_missing[:5])
+    return "none"
 
 
 def _goals_summary(raw_goals: Any) -> str:

@@ -49,6 +49,14 @@ class LearningFacet:
             if has_learning_output
             else "Learning facet found no feedback signals for this event.",
             proposed_decision=proposed_decision,
+            state_updates={
+                "last_learning_result": learning_result.to_dict(),
+                "last_signal_count": len(learning_result.signals),
+                "last_adjustment_count": len(learning_result.adjustments),
+                "last_proposal_count": len(learning_result.proposals),
+                "last_applied_count": len(learning_result.applied),
+                "last_skipped_count": len(skipped),
+            },
             metadata={
                 "learning_result": learning_result.to_dict(),
                 "signals": [signal.to_dict() for signal in learning_result.signals],

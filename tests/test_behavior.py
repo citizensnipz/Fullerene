@@ -61,7 +61,7 @@ class BehaviorFacetRuleTests(unittest.TestCase):
         result = self.facet.process(
             Event(
                 event_type=EventType.USER_MESSAGE,
-                content="What should I focus on next?",
+                content="What should I do next?",
             ),
             NexusState(
                 facet_state={
@@ -80,7 +80,59 @@ class BehaviorFacetRuleTests(unittest.TestCase):
 
         self.assertEqual(result.proposed_decision, DecisionAction.ACT)
         self.assertTrue(result.metadata["response_needed"])
-        self.assertEqual(result.metadata["response_template"], "next_steps_available")
+        self.assertEqual(result.metadata["query_intent"], "recommendation_request")
+        self.assertEqual(result.metadata["active_goal_count"], 1)
+        self.assertEqual(result.metadata["context_sufficiency"], 1.0)
+        self.assertEqual(
+            result.metadata["response_template"],
+            "next_steps_available",
+        )
+
+    def test_book_recommendation_without_context_asks_for_preferences(self) -> None:
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="What book should I read?",
+            ),
+            NexusState(),
+        )
+
+        self.assertEqual(result.proposed_decision, DecisionAction.ASK)
+        self.assertEqual(result.metadata["query_intent"], "recommendation_request")
+        self.assertEqual(
+            result.metadata["response_template"],
+            "clarify_recommendation_preferences",
+        )
+        self.assertEqual(result.metadata["missing_context"], ["preferences", "purpose"])
+        self.assertEqual(result.metadata["context_sufficiency"], 0.0)
+
+    def test_book_recommendation_with_relevant_memory_acts(self) -> None:
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="What book should I read?",
+            ),
+            NexusState(
+                facet_state={
+                    "memory": {
+                        "relevant_memories": [
+                            {
+                                "id": "memory-reading",
+                                "content_preview": (
+                                    "User prefers practical software books."
+                                ),
+                            }
+                        ],
+                    }
+                }
+            ),
+        )
+
+        self.assertEqual(result.proposed_decision, DecisionAction.ACT)
+        self.assertEqual(result.metadata["query_intent"], "recommendation_request")
+        self.assertEqual(result.metadata["relevant_memory_count"], 1)
+        self.assertEqual(result.metadata["context_sufficiency"], 1.0)
+        self.assertEqual(result.metadata["missing_context"], [])
 
     def test_direct_status_question_acts_with_text_metadata(self) -> None:
         result = self.facet.process(
@@ -97,6 +149,7 @@ class BehaviorFacetRuleTests(unittest.TestCase):
         self.assertEqual(result.metadata["tool"], "text")
         self.assertEqual(result.metadata["response_template"], "status_report")
         self.assertTrue(result.metadata["response_needed"])
+        self.assertEqual(result.metadata["query_intent"], "status_request")
 
     def test_ambiguous_help_request_uses_text_response_metadata(self) -> None:
         result = self.facet.process(

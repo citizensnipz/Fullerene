@@ -10,7 +10,7 @@ Terms for harness and design discussions. Definitions follow the current repo wh
 | **Event** | Typed runtime input such as a user message, system tick, or system note. |
 | **Behavior Facet** | Deterministic decision-policy layer that proposes whether Fullerene should `WAIT`, `RECORD`, `ASK`, or `ACT`, along with inspectable reasons, tags, salience, and confidence. `ACT` is still only a typed proposal in v0. |
 | **Memory** | Structured, selective persistence for what Fullerene remembers; in v0 the canonical store is SQLite rather than a monolithic prompt file. |
-| **Working memory** | Small, recent memory slice derived from stored records for the current context window. In Context v0 this is a static bounded slice of recent episodic memory. |
+| **Working memory** | Bounded packet of currently useful state assembled for the current cycle. In Context v1 this is not just a recent-memory slice; it is dynamically assembled from the current event plus active goals, memories, beliefs, policy summary, and compact signal summaries under deterministic limits. |
 | **Episodic memory** | Append-only record of what happened; the primary source-of-truth event/history memory in v0. |
 | **Semantic memory** | Persistent facts or beliefs distilled from experience; schema-supported in v0, but richer creation logic is deferred. |
 | **Tag inference** | Deterministic, lowercase-rule mapping from event content to memory tags (Memory v1). No model calls. |
@@ -27,9 +27,11 @@ Terms for harness and design discussions. Definitions follow the current repo wh
 | **AttentionResult** | Inspectable Attention v0 output containing the selected top-N `focus_items`, per-candidate `scores`, optional `dominant_source`, strategy string, and metadata. |
 | **Focus item** | A candidate that survives Attention v0 competition and lands in the selected top-N list for the current cycle. |
 | **Broadcast** | Future Attention v1+ mechanism where the winning focus item is pushed back into the rest of the system. Not implemented in Attention v0. |
-| **Context** | Current working packet of information available to Nexus and future reasoning systems. Context v0 is deliberately small, deterministic, inspectable, and assembled only from recent episodic memory. |
-| **ContextWindow** | Serialized Context v0 packet with `id`, `created_at`, `items`, `max_items`, `strategy`, and metadata. The current strategy is `static_recent_episodic_v0`. |
-| **ContextItem** | One inspectable item inside a `ContextWindow`, with `id`, `item_type`, `content`, optional `source_id` / `created_at`, and metadata. Context v0 currently emits memory-backed items only. |
+| **Context** | Current working packet of information available to Nexus, later facets, and CLI/model prompt grounding. Context v1 is deterministic, inspectable, bounded, and assembled from active state rather than static prompt text. |
+| **Working context** | The concrete packet assembled for one Nexus cycle. It always includes the current event and may include active goals, relevant/recent memories, active beliefs, a compact policy summary, and compact signal summaries. |
+| **Dynamic context assembly** | Deterministic bounded collection of context items from active stores/facet state using explicit limits, deduplication, simple ranking, and optional salience thresholds. It does not use embeddings, RAG, graph traversal, LLM summarization, or self-editing compression. |
+| **ContextWindow** | Serialized context packet with `id`, `created_at`, `items`, `max_items`, `strategy`, and metadata. The current primary strategy is `dynamic_active_facets_v1`; `static_recent_episodic_v0` remains available for explicit compatibility. |
+| **ContextItem** | One inspectable item inside a `ContextWindow`, with `id`, `item_type`, `content`, optional `source_id` / `created_at`, and metadata. Context v1 items can represent the current event, goals, memories, beliefs, policy summaries, or compact signal summaries. |
 | **Belief** | Explicit persistent world-model record with `claim`, `confidence`, `status`, `tags`, timestamps, source metadata, and optional source links. |
 | **World Model** | Structured belief store for what Fullerene believes about reality or tasks, separate from the event/memory log. World Model v0 is explicit and deterministic: SQLite-backed, inspectable, and does not implement automatic belief inference, graph reasoning, or Bayesian updates. |
 | **Goal** | Explicit persistent record stored in SQLite with description, priority, status, tags, timestamps, source, and metadata. |
