@@ -1,9 +1,9 @@
-"""Deterministic verification checks for Fullerene Verifier v0."""
+"""Deterministic verification checks for Fullerene Verifier (v0+v1 facets)."""
 
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence as TypingSeq
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -27,6 +27,7 @@ from fullerene.verifier.models import (
     VerificationStatus,
     VerificationSummary,
 )
+from fullerene.verifier.artifacts import run_all_artifact_validators
 
 EXTERNAL_SIDE_EFFECT_TARGET_TYPES = frozenset(
     {
@@ -268,7 +269,7 @@ class PlanSafetyCheck:
                 status=VerificationStatus.FAILED,
                 severity=VerificationSeverity.ERROR,
                 message="Planner metadata contained a malformed steps payload.",
-                metadata={"recommended_action": DecisionAction.RECORD.value},
+                metadata={"recommended_action": DecisionAction.ASK.value},
             )
 
         for index, step in enumerate(raw_steps):
@@ -293,7 +294,7 @@ class PlanSafetyCheck:
                 message="Planner output violates deterministic plan safety rules.",
                 metadata={
                     "issues": issues,
-                    "recommended_action": DecisionAction.RECORD.value,
+                    "recommended_action": DecisionAction.ASK.value,
                 },
             )
 
@@ -302,6 +303,100 @@ class PlanSafetyCheck:
             status=VerificationStatus.PASSED,
             severity=VerificationSeverity.INFO,
             message="Planner output satisfies deterministic risk and approval rules.",
+        )
+
+
+class ArtifactSchemaCheck:
+    name = "artifact_schemas"
+
+    def run(self, context: VerificationContext) -> VerificationResult:
+        nexus_bucket: dict[str, Any] = {}
+        fs = getattr(context.state, "facet_state", None)
+        if isinstance(fs, Mapping):
+            raw = fs.get("nexus")
+            if isinstance(raw, Mapping):
+                nexus_bucket = dict(raw)
+        nexus_ctx = nexus_bucket.get("verifier_cycle_context")
+        if not isinstance(nexus_ctx, Mapping):
+            nexus_ctx = {}
+
+        artifact_rows, reco = run_all_artifact_validators(
+            facet_results=context.facet_results,
+            decision_action=_decision_action(context.decision),
+            nexus_ctx=nexus_ctx,
+        )
+
+        interesting: list[dict[str, Any]] = []
+        for row in artifact_rows:
+            if not isinstance(row, Mapping):
+                continue
+            code = str(row.get("code") or "")
+            if row.get("status") == "passed" and code in {"ok"}:
+                continue
+            interesting.append(dict(row))
+
+        severity_order = {"info": 0, "warning": 1, "error": 2, "critical": 3}
+        worst = 0
+        for row in interesting:
+            worst = max(worst, severity_order.get(str(row.get("severity") or "info"), 0))
+
+        worst_sev = (
+            VerificationSeverity.CRITICAL
+            if worst >= 3
+            else VerificationSeverity.ERROR
+            if worst >= 2
+            else VerificationSeverity.WARNING
+            if worst >= 1
+            else VerificationSeverity.INFO
+        )
+
+        has_warning_finding = any(
+            str(row.get("severity") or "") == "warning" for row in interesting
+        )
+        has_hard_finding = any(
+            str(row.get("severity") or "") in {"error", "critical"} for row in interesting
+        )
+
+        metadata: dict[str, Any] = {
+            "artifact_checks": artifact_rows,
+            "schema_checks": artifact_rows,
+            "validated_artifact_kinds": sorted(
+                {
+                    str(row["artifact_kind"])
+                    for row in artifact_rows
+                    if isinstance(row, Mapping) and row.get("artifact_kind")
+                }
+            ),
+            "artifact_worst_severity": worst_sev.value,
+        }
+        if reco is not None:
+            metadata["recommended_action"] = reco.value
+
+        if reco is not None or has_hard_finding:
+            return VerificationResult(
+                check_name=self.name,
+                status=VerificationStatus.FAILED,
+                severity=worst_sev,
+                message="Verifier v1 deterministic artifact/schema checks failed.",
+                metadata=metadata,
+            )
+
+        if interesting and has_warning_finding:
+            metadata["recommended_action"] = None
+            return VerificationResult(
+                check_name=self.name,
+                status=VerificationStatus.WARNING,
+                severity=VerificationSeverity.WARNING,
+                message="Verifier v1 found deterministic schema/metadata warnings.",
+                metadata=metadata,
+            )
+
+        return VerificationResult(
+            check_name=self.name,
+            status=VerificationStatus.PASSED,
+            severity=VerificationSeverity.INFO,
+            message="Verifier v1 artifact/schema checks passed.",
+            metadata=metadata,
         )
 
 
@@ -372,6 +467,7 @@ DEFAULT_CHECKS: tuple[VerificationCheck, ...] = (
     FacetResultShapeCheck(),
     PolicyComplianceCheck(),
     PlanSafetyCheck(),
+    ArtifactSchemaCheck(),
     ActRequiresApprovalCheck(),
 )
 
@@ -422,13 +518,104 @@ def run_verification_checks(
     if resolved_state_dir is not None:
         metadata["state_dir"] = str(resolved_state_dir)
 
-    return VerificationSummary(
+    summary = VerificationSummary(
         overall_status=overall_status,
         results=results,
         failed_checks=failed_checks,
         warnings=warnings,
         metadata=metadata,
     )
+    finalize_verifier_v1_summary(summary)
+    return summary
+
+
+def finalize_verifier_v1_summary(summary: VerificationSummary) -> None:
+    """Attach Verifier v1 inspectable aggregates (deterministic JSON-friendly)."""
+
+    summary.metadata.setdefault("verifier_version", "v1")
+    artifact_checks: list[dict[str, Any]] = []
+
+    failure_messages = [
+        r.message for r in summary.results if r.status == VerificationStatus.FAILED
+    ]
+    for result in summary.results:
+        if result.check_name == "artifact_schemas" and isinstance(result.metadata, dict):
+            artifact_checks = list(result.metadata.get("artifact_checks", []))
+
+    summary.metadata["artifact_checks"] = artifact_checks
+    summary.metadata["schema_checks"] = list(artifact_checks)
+
+    validation_codes: list[str] = []
+    for row in artifact_checks:
+        if not isinstance(row, Mapping):
+            continue
+        code = row.get("code")
+        if code and code not in {"ok", "summary"}:
+            validation_codes.append(str(code))
+    summary.metadata["validation_codes"] = validation_codes
+
+    kinds = sorted(
+        {
+            str(row["artifact_kind"])
+            for row in artifact_checks
+            if isinstance(row, Mapping) and row.get("artifact_kind")
+        }
+    )
+    summary.metadata["validated_artifact_kinds"] = kinds
+
+    retry_reasons = [
+        str(row.get("message") or "")
+        for row in artifact_checks
+        if isinstance(row, Mapping)
+        and row.get("retry_recommended")
+        and row.get("message")
+    ]
+    escalation_reasons = [
+        str(row.get("message") or "")
+        for row in artifact_checks
+        if isinstance(row, Mapping)
+        and row.get("escalation_recommended")
+        and row.get("message")
+    ]
+    for result in summary.results:
+        if result.check_name != "artifact_schemas" and result.metadata.get(
+            "recommended_action"
+        ):
+            meta = result.metadata if isinstance(result.metadata, dict) else {}
+            reasons = meta.get("issues") or [result.message]
+            if isinstance(reasons, TypingSeq) and not isinstance(reasons, (str, bytes)):
+                escalation_reasons.extend(str(x) for x in reasons)
+
+    summary.metadata["retry_recommended"] = bool(retry_reasons)
+    summary.metadata["escalation_recommended"] = bool(
+        escalation_reasons
+        or any(
+            r.status == VerificationStatus.FAILED
+            and r.severity == VerificationSeverity.CRITICAL
+            for r in summary.results
+        )
+    )
+
+    summary.metadata["retry_reasons"] = list(dict.fromkeys(retry_reasons))
+    summary.metadata["escalation_reasons"] = list(
+        dict.fromkeys((*escalation_reasons, *failure_messages))
+    )
+
+def verifier_downgraded_decision(summary: VerificationSummary) -> dict[str, Any] | None:
+    """Peek at aggregated recommended_action hints from failed verifier checks."""
+
+    if summary.overall_status != VerificationStatus.FAILED:
+        return None
+    for result in reversed(summary.results):
+        meta = result.metadata if isinstance(result.metadata, dict) else {}
+        raw = meta.get("recommended_action")
+        if raw:
+            anchor = summary.metadata.get("decision_action")
+            payload: dict[str, Any] = {"to": str(raw)}
+            if anchor is not None:
+                payload["from"] = str(anchor)
+            return payload
+    return None
 
 
 def _coerce_state_dir(raw_state_dir: Path | str | None) -> Path | None:

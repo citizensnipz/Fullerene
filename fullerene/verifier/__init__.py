@@ -3,6 +3,7 @@
 from fullerene.verifier.checks import (
     DEFAULT_CHECKS,
     ActRequiresApprovalCheck,
+    ArtifactSchemaCheck,
     DecisionShapeCheck,
     FacetResultShapeCheck,
     PlanSafetyCheck,
@@ -10,6 +11,7 @@ from fullerene.verifier.checks import (
     VerificationCheck,
     VerificationContext,
     run_verification_checks,
+    verifier_downgraded_decision,
 )
 from fullerene.verifier.models import (
     VerificationResult,
@@ -20,6 +22,7 @@ from fullerene.verifier.models import (
 
 __all__ = [
     "ActRequiresApprovalCheck",
+    "ArtifactSchemaCheck",
     "DecisionShapeCheck",
     "DEFAULT_CHECKS",
     "FacetResultShapeCheck",
@@ -32,4 +35,5 @@ __all__ = [
     "VerificationStatus",
     "VerificationSummary",
     "run_verification_checks",
+    "verifier_downgraded_decision",
 ]

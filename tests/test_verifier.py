@@ -39,6 +39,7 @@ from fullerene.policy import (
 from fullerene.state import FileStateStore, InMemoryStateStore
 from fullerene.verifier import (
     ActRequiresApprovalCheck,
+    ArtifactSchemaCheck,
     DecisionShapeCheck,
     FacetResultShapeCheck,
     PolicyComplianceCheck,
@@ -47,6 +48,7 @@ from fullerene.verifier import (
     VerificationSeverity,
     VerificationStatus,
 )
+from fullerene.verifier import artifacts as verifier_artifacts
 from fullerene.world_model import Belief, SQLiteWorldModelStore
 from fullerene.workspace_state import workspace_state_root
 
@@ -60,11 +62,12 @@ def make_context(
     event: Event | None = None,
     facet_results: list[FacetResult] | None = None,
     decision: NexusDecision | None = None,
+    state: NexusState | None = None,
     state_dir: Path | None = None,
 ) -> VerificationContext:
     return VerificationContext(
         event=event or Event(event_type=EventType.USER_MESSAGE, content="hello"),
-        state=NexusState(),
+        state=state or NexusState(),
         facet_results=facet_results or [],
         decision=decision,
         state_dir=state_dir,
@@ -630,6 +633,423 @@ class CLIVerifierIntegrationTests(unittest.TestCase):
         self.assertEqual(payload["decision"]["action"], "ask")
         self.assertEqual(verifier_result["facet_name"], "verifier")
         self.assertIn(verifier_result["metadata"]["verification_status"], {"passed", "warning"})
+
+
+def _behavior_trace_complete() -> dict:
+    scores = {"wait": 0.2, "record": 0.2, "ask": 0.2, "act": 0.2}
+    return {
+        "event": {
+            "id": "e1",
+            "type": "user_message",
+            "content_summary": "hello sample",
+        },
+        "pressure_score": 0.4,
+        "latent_pressure": 0.0,
+        "memory_relevance_score": 0.5,
+        "goal_relevance_score": 0.3,
+        "world_model_belief_confidence": 0.5,
+        "contradiction_flag": False,
+        "policy_result": "allowed",
+        "context_load_ratio": 0.2,
+        "raw_candidate_scores": dict(scores),
+        "adjusted_candidate_scores": dict(scores),
+        "final_decision": "act",
+        "confidence": 0.7,
+        "reasons": ["ok"],
+        "interrupt_recommended": False,
+        "timestamp": "2026-05-06T12:00:00+00:00",
+    }
+
+
+class VerifierV1ArtifactTests(unittest.TestCase):
+    def test_behavior_v2_trace_complete_passes(self) -> None:
+        rows, reco = verifier_artifacts.validate_behavior_decision_trace_v2(
+            _behavior_trace_complete(), decision_is_act=False
+        )
+        self.assertIsNone(reco)
+        codes = [r["code"] for r in rows if r["status"] == "passed"]
+        self.assertIn("ok", codes)
+
+    def test_behavior_v2_missing_core_fields_warns(self) -> None:
+        bad = dict(_behavior_trace_complete())
+        del bad["confidence"]
+        del bad["timestamp"]
+        rows, reco = verifier_artifacts.validate_behavior_decision_trace_v2(
+            bad, decision_is_act=False
+        )
+        warnish = [
+            r
+            for r in rows
+            if r["code"] in ("missing_optional_numeric", "missing_timestamp")
+        ]
+        self.assertTrue(any(r.get("retry_recommended") for r in warnish))
+        self.assertIsNone(reco)
+
+    def test_malformed_act_behavior_trace_downgrades_to_ask(self) -> None:
+        bad_event = dict(_behavior_trace_complete())
+        bad_event["event"] = "not-a-dict"  # type: ignore[assignment]
+        state = NexusState()
+        state.facet_state["nexus"] = {
+            "verifier_cycle_context": {
+                "facet_order": ["behavior"],
+                "signal_map": {"system_pressure": 0.5, "pressure_components": {}},
+                "pressure_components": {},
+                "learning_events": [],
+                "internal_events_queued": [],
+                "internal_events_processed": [],
+                "final_decision": "act",
+            }
+        }
+        ctx = make_context(
+            facet_results=[
+                FacetResult(
+                    facet_name="behavior",
+                    summary="stub",
+                    metadata={"decision_trace": bad_event},
+                )
+            ],
+            decision=NexusDecision(action=DecisionAction.ACT, reason="test"),
+            state=state,
+        )
+        result = ArtifactSchemaCheck().run(ctx)
+        self.assertEqual(result.status, VerificationStatus.FAILED)
+        self.assertEqual(result.metadata["recommended_action"], "ask")
+
+    def test_pressure_components_sum_checked(self) -> None:
+        sm = {
+            "system_pressure": 0.05,
+            "pressure_components": {
+                "event_pressure": 1.0,
+                "attention_pressure": 1.0,
+                "latent_pressure": 0.0,
+                "contradiction_pressure": 0.0,
+                "context_overload_pressure": 0.0,
+                "interrupt_pressure": 0.0,
+            },
+        }
+        rows = verifier_artifacts.validate_cycle_signal_map_pressure(sm)
+        self.assertTrue(
+            any(r["code"] == "system_pressure_mismatch" for r in rows),
+            rows,
+        )
+
+    def test_cycle_trace_internal_events_processed_cap(self) -> None:
+        trace = {
+            "facet_order": ["a"],
+            "signal_map": {"x": 1},
+            "pressure_components": {},
+            "final_decision": "wait",
+            "learning_events": [],
+            "internal_events_queued": [],
+            "internal_events_processed": [{"event_id": "1"}, {"event_id": "2"}],
+        }
+        rows, reco = verifier_artifacts.validate_cycle_trace_structure(trace)
+        self.assertEqual(reco, DecisionAction.RECORD)
+        self.assertTrue(
+            any(
+                r.get("severity") == "critical"
+                and r["code"] == "internal_events_over_limit"
+                for r in rows
+            ),
+            rows,
+        )
+
+    def test_planner_high_risk_missing_approval_escalates(self) -> None:
+        state = NexusState()
+        state.facet_state["nexus"] = {"verifier_cycle_context": {}}
+        plan = {
+            "id": "p1",
+            "status": "proposed",
+            "confidence": 0.9,
+            "steps": [
+                {
+                    "id": "s1",
+                    "description": "danger",
+                    "status": "proposed",
+                    "risk_level": "high",
+                    "requires_approval": False,
+                    "policy_status": None,
+                    "target_type": "general",
+                    "metadata": {"action_type": "noop"},
+                }
+            ],
+        }
+        ctx = make_context(
+            facet_results=[
+                FacetResult(
+                    facet_name="planner",
+                    summary="stub",
+                    metadata={"plan": plan},
+                ),
+                FacetResult(
+                    facet_name="executor",
+                    summary="exec",
+                    metadata={
+                        "execution_requested": True,
+                        "execution_result": {
+                            "overall_status": "success",
+                            "halted": False,
+                            "dry_run": True,
+                            "records": [],
+                        },
+                    },
+                ),
+            ],
+            decision=NexusDecision(action=DecisionAction.WAIT, reason="."),
+            state=state,
+        )
+        res = ArtifactSchemaCheck().run(ctx)
+        self.assertEqual(res.metadata["recommended_action"], "ask")
+
+    def test_planner_blocked_executable_step_in_approved_plan(self) -> None:
+        state = NexusState()
+        state.facet_state["nexus"] = {"verifier_cycle_context": {}}
+        plan = {
+            "id": "p1",
+            "status": "approved",
+            "confidence": 0.5,
+            "steps": [
+                {
+                    "id": "s1",
+                    "description": "x",
+                    "status": "blocked",
+                    "risk_level": "medium",
+                    "requires_approval": False,
+                    "policy_status": "denied",
+                    "target_type": "general",
+                    "metadata": {"action_type": "update_goal"},
+                }
+            ],
+        }
+        ctx = make_context(
+            facet_results=[
+                FacetResult(
+                    facet_name="planner",
+                    summary="stub",
+                    metadata={"plan": plan},
+                ),
+                FacetResult(
+                    facet_name="executor",
+                    summary="e",
+                    metadata={
+                        "execution_requested": True,
+                        "execution_result": {
+                            "overall_status": "failed",
+                            "halted": False,
+                            "dry_run": True,
+                            "records": [
+                                {
+                                    "id": "x",
+                                    "status": "failed",
+                                    "dry_run": True,
+                                    "metadata": {
+                                        "reason": "blocked_by_policy",
+                                    },
+                                }
+                            ],
+                        },
+                    },
+                ),
+            ],
+            decision=NexusDecision(action=DecisionAction.WAIT, reason="."),
+            state=state,
+        )
+        res = ArtifactSchemaCheck().run(ctx)
+        self.assertEqual(res.metadata["recommended_action"], "ask")
+        codes = [
+            str(r["code"])
+            for r in res.metadata.get("artifact_checks", [])
+            if isinstance(r, dict)
+        ]
+        self.assertIn("blocked_step_in_approved_plan", codes)
+
+    def test_executor_external_refusal_with_reason_is_valid(self) -> None:
+        state = NexusState()
+        state.facet_state["nexus"] = {"verifier_cycle_context": {}}
+        er = {
+            "overall_status": "failed",
+            "halted": False,
+            "dry_run": True,
+            "records": [
+                {
+                    "id": "r1",
+                    "status": "failed",
+                    "dry_run": True,
+                    "metadata": {
+                        "reason": "unsupported_target_type",
+                        "target_type": "shell",
+                    },
+                }
+            ],
+        }
+        _, reco = verifier_artifacts.run_all_artifact_validators(
+            facet_results=[
+                FacetResult(
+                    facet_name="executor",
+                    summary="stub",
+                    metadata={
+                        "execution_requested": True,
+                        "execution_result": er,
+                    },
+                ),
+            ],
+            decision_action=None,
+            nexus_ctx={},
+        )
+        self.assertIsNone(reco)
+
+    def test_executor_failed_record_missing_reason_recommends_escalation(self) -> None:
+        state = NexusState()
+        state.facet_state["nexus"] = {"verifier_cycle_context": {}}
+        er = {
+            "overall_status": "failed",
+            "halted": True,
+            "dry_run": True,
+            "records": [
+                {
+                    "status": "failed",
+                    "dry_run": True,
+                    "metadata": {
+                        "action_type": "noop",
+                        "target_type": "shell",
+                        "requested_action_type": "noop",
+                    },
+                }
+            ],
+        }
+        rows, reco = verifier_artifacts.run_all_artifact_validators(
+            facet_results=[
+                FacetResult(
+                    facet_name="executor",
+                    summary="stub",
+                    metadata={
+                        "execution_requested": True,
+                        "execution_result": er,
+                    },
+                ),
+            ],
+            decision_action=None,
+            nexus_ctx={},
+        )
+        self.assertEqual(reco, DecisionAction.ASK)
+        self.assertTrue(
+            any(
+                isinstance(r, dict) and r.get("code") == "missing_failure_reason_code"
+                for r in rows
+            ),
+            rows,
+        )
+
+    def test_learning_applied_missing_provenance_fails(self) -> None:
+        meta = {
+            "learning_version": "v1",
+            "consumed_learning_events": [],
+            "adjustment_records": [],
+            "proposed_adjustments": [],
+                    "applied_adjustments": [
+                {
+                    "target": "memory_salience",
+                    "target_id": None,
+                    "target_facet": "memory",
+                    "field": "salience",
+                    "status": "applied",
+                    "source_signal_id": "",
+                    "old_value": 0.5,
+                    "new_value": 0.55,
+                    "delta": 0.05,
+                    "reasons": [],
+                }
+            ],
+            "skipped_adjustments": [],
+            "cross_facet_routes": [],
+        }
+        _, reco = verifier_artifacts.validate_learning_v1_metadata(meta)
+        self.assertEqual(reco, DecisionAction.RECORD)
+
+    def test_learning_permission_mutation_is_critical(self) -> None:
+        meta = {
+            "learning_version": "v1",
+            "consumed_learning_events": [],
+            "adjustment_records": [],
+            "proposed_adjustments": [],
+            "applied_adjustments": [
+                {
+                    "target": "goal_priority",
+                    "target_facet": "executor",
+                    "field": "permission_scope",
+                    "status": "applied",
+                    "source_signal_id": "sig",
+                    "old_value": None,
+                    "new_value": None,
+                    "delta": 0.0,
+                    "reasons": [],
+                }
+            ],
+            "skipped_adjustments": [],
+            "cross_facet_routes": [],
+        }
+        rows, reco = verifier_artifacts.validate_learning_v1_metadata(meta)
+        self.assertEqual(reco, DecisionAction.RECORD)
+        self.assertTrue(
+            any(
+                isinstance(r, dict) and r["code"] == "forbidden_permission_learning_apply"
+                for r in rows
+            )
+        )
+
+    def test_context_load_malformed_ratio_warns(self) -> None:
+        rows = verifier_artifacts.validate_context_load_metadata(
+            {"item_count": 2, "max_items": 4, "load_ratio": 9.0, "overloaded": False}
+        )
+        self.assertTrue(
+            any(
+                isinstance(r, dict)
+                and r.get("path") == "context_load.load_ratio"
+                and r["code"] == "load_ratio_malformed"
+                for r in rows
+            )
+        )
+
+    def test_facet_result_includes_verifier_v1_summary_fields(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        runtime = NexusRuntime(
+            facets=[
+                BehaviorFacet(),
+                PolicyFacet(SQLitePolicyStore(root / "policy.sqlite3"), state_dir=root),
+                VerifierFacet(state_dir=root),
+            ],
+            store=InMemoryStateStore(),
+        )
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="remember this phrase")
+        )
+        vm = record.facet_results[-1].metadata
+        self.assertEqual(vm["verifier_version"], "v1")
+        self.assertIn("artifact_checks", vm)
+        self.assertIn("schema_checks", vm)
+        self.assertIn("validated_artifact_kinds", vm)
+
+    def test_cli_verify_json_contains_verifier_v1(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            code = cli_main(
+                [
+                    "--json",
+                    "--behavior",
+                    "--verify",
+                    "--content",
+                    "remember to pack lunch",
+                    "--state-dir",
+                    str(root),
+                ]
+            )
+        self.assertEqual(code, 0)
+        payload = json.loads(stdout.getvalue())
+        vmeta = payload["facet_results"][-1]["metadata"]
+        self.assertEqual(vmeta.get("verifier_version"), "v1")
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ from fullerene.verifier import (
     VerificationStatus,
     VerificationSummary,
     run_verification_checks,
+    verifier_downgraded_decision,
 )
 
 
@@ -61,8 +62,22 @@ class VerifierFacet:
         )
         proposed_decision = self._proposed_decision(summary)
         reasons = self._reasons(summary)
+        sm = summary.metadata if isinstance(summary.metadata, dict) else {}
         initial_action = decision.action.value if decision is not None else None
         initial_reason = decision.reason if decision is not None else None
+
+        downgrade_meta = None
+        if (
+            decision is not None
+            and proposed_decision is not None
+            and decision.action == DecisionAction.ACT
+            and proposed_decision != DecisionAction.ACT
+        ):
+            downgrade_meta = {
+                "from": decision.action.value,
+                "to": proposed_decision.value,
+                "hint": verifier_downgraded_decision(summary),
+            }
 
         return FacetResult(
             facet_name=self.name,
@@ -73,6 +88,7 @@ class VerifierFacet:
                 "last_failed_checks": list(summary.failed_checks),
                 "last_warnings": list(summary.warnings),
                 "last_checked_action": initial_action,
+                "last_verifier_version": sm.get("verifier_version"),
             },
             metadata={
                 "verification_status": summary.overall_status.value,
@@ -86,6 +102,16 @@ class VerifierFacet:
                 "recommended_decision": (
                     proposed_decision.value if proposed_decision is not None else None
                 ),
+                "verifier_version": sm.get("verifier_version"),
+                "artifact_checks": sm.get("artifact_checks"),
+                "schema_checks": sm.get("schema_checks"),
+                "retry_recommended": sm.get("retry_recommended"),
+                "escalation_recommended": sm.get("escalation_recommended"),
+                "retry_reasons": sm.get("retry_reasons"),
+                "escalation_reasons": sm.get("escalation_reasons"),
+                "validation_codes": sm.get("validation_codes"),
+                "validated_artifact_kinds": sm.get("validated_artifact_kinds"),
+                "downgraded_decision": downgrade_meta,
             },
         )
 

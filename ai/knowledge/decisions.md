@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-05-06 - Verifier v1 is deterministic artifact/schema validation with retry hints only
+
+- **Status:** accepted
+- **Context:** Behavior v2 traces, Nexus v1 `CycleSignalMap` / cycle context, Planner v1 grounding metadata, Executor v0 results, and Learning v1 adjustment metadata needed a single deterministic validation layer beyond v0 structural/policy/act checks—without introducing LLM-as-judge, external fact lookup, benchmarks, fuzzy scoring, autonomous repair, policy invention, executor permission widening, or hidden retries.
+- **Decision:** Promote Verifier to **v1** by adding `fullerene/verifier/artifacts.py` validators, `ArtifactSchemaCheck`, richer `FacetResult`/`VerificationSummary` metadata (`verifier_version`, `artifact_checks`, retry/escalation reason lists, `validation_codes`, `validated_artifact_kinds`, optional `downgraded_decision` hints), and a minimal Nexus `verifier_cycle_context` injection ahead of verifier facets; keep all checks deterministic and JSON-serializable; failures that make `ACT`/execution ambiguous downgrade conservatively (`ASK` or `RECORD` per artifact rules).
+- **Consequences:** Operators and tests can introspect normalized validation rows per artifact kind; future runners may honor retry/escalation metadata without implying automatic retries inside Verifier. Verifier v2+ remains separate (eval harnesses / deeper policy still require explicit ADRs).
+
 ## 2026-05-06 - Learning v1 is a deterministic cross-facet feedback router without a Learning-owned store
 
 - **Status:** accepted

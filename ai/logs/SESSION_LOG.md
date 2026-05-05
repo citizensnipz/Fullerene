@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-05-06 - Verifier v1 artifact/schema validation
+
+- **Context:** Harness called for deterministic validation of Behavior/Nexus/Planner/Executor/Learning artifacts with retry/escalation hints, without LLMs or retries inside Verifier.
+- **Done:** Implemented Verifier v1 (`fullerene/verifier/artifacts.py`, `ArtifactSchemaCheck`, Nexus `verifier_cycle_context` injection, extended `VerifierFacet`/summary metadata, plan-safety recommendation tweak, glossary/architecture/decisions refreshed).
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py"`; `python -m fullerene --event-type user_message --content "hello nexus" --state-dir state/.fullerene-state`
+- **Next:** Verifier v2 scoped to explicit ADRs (eval/regression tooling, deeper policy surfaces) vs continuing bounded v1 tweaks.
+- **Blockers:** None.
+
 ### 2026-05-06 - Learning v1 cross-facet routing
 
 - **Context:** Nexus v1 and Behavior v2 already produced inspectable cycle maps, traces, and learning events, but Learning had not consumed them; Memory v2 had edges without retrieval-time learning updates.

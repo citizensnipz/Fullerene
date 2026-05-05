@@ -9,6 +9,13 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-06 (verifier v1)
+
+- Added `fullerene/verifier/artifacts.py` with deterministic validators for Behavior v2 `decision_trace`, Nexus signal map / verifier cycle snapshot, Planner plan hooks, Executor results, Learning v1 applied/provenance/policy rules, policy status serializability, and Context `context_load` consistency (warnings on soft issues; critical/error when safety demands).
+- Added `ArtifactSchemaCheck` wired into `DEFAULT_CHECKS`; extended `finalize_verifier_v1_summary` + richer `VerifierFacet` metadata (`verifier_version`, `artifact_checks`, retry/escalation aggregates, downgrade hints); Nexus now sets `facet_state["nexus"]["verifier_cycle_context"]` before verifier runs.
+- Tweaked deterministic plan safety recommendations toward `ASK` for unsafe plan-shape findings; clarified executable planner steps exclude `noop` metadata.
+- Expanded `tests/test_verifier.VerifierV1ArtifactTests` plus harness updates (`architecture`, `glossary`, `decisions`, this log).
+
 ### 2026-05-06 (learning v1)
 
 - Added `fullerene/learning/v1.py` (`compute_learning_v1`): deterministic ingestion of Nexus cycle maps/events, Behavior v2 traces, co-retrieval Hebbian edge strengthens (`keyword_similarity`), conservative belief confidence down/up via world store, salience validation proposals/updates, and cross-facet route records; no LLM/TD/meta/background loops.

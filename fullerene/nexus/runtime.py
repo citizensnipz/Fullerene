@@ -231,6 +231,17 @@ class Nexus:
             PHASE_LABELS["verification_output"],
             [],
         )
+        verifier_preview = working_state.facet_state.setdefault("nexus", {})
+        verifier_preview["verifier_cycle_context"] = {
+            "signal_map": signal_map.to_dict(),
+            "pressure_components": dict(pressure_components),
+            "learning_events": [dict(item) for item in cycle_learning_events],
+            "internal_events_queued": list(internal_events_queued),
+            "internal_events_processed": [],
+            "facet_order": [self._facet_name(facet) for facet in self._facets],
+            "facet_results_seen": [result.facet_name for result in facet_results],
+            "final_decision": decision.action.value,
+        }
         for verifier in verifier_facets:
             verifier_result = self._run_verifier(
                 verifier,

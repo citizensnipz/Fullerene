@@ -28,7 +28,7 @@ Product vocabulary for modular components:
 11. Behavior
 12. Learning
 
-Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `AffectFacet v0`, `AttentionFacet v1`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `PlannerFacet v0`, `ExecutorFacet v0`, `VerifierFacet v0`, `LearningFacet v1`, `ContextFacet`, and `EchoFacet`; `AffectFacet v0` covers deterministic internal VAD + novelty observation only, `AttentionFacet v1` covers deterministic fixed-weight focus scoring plus bounded broadcast/history/conflict metadata without cross-facet mutation, `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, `PlannerFacet v0` proposes deterministic inspectable plans, `ExecutorFacet v0` performs approved internal-only execution with dry-run default, `VerifierFacet v0` runs deterministic post-decision inspection before persistence, and `LearningFacet v1` ingests explicit feedback plus Nexus/Behavior trace artifacts, routes deterministic cross-facet proposals, and applies bounded safe store updates through Memory/World Model public APIs only (no Learning-owned DB).
+Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `AffectFacet v0`, `AttentionFacet v1`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `PlannerFacet v0`, `ExecutorFacet v0`, `VerifierFacet v1`, `LearningFacet v1`, `ContextFacet`, and `EchoFacet`; `AffectFacet v0` covers deterministic internal VAD + novelty observation only, `AttentionFacet v1` covers deterministic fixed-weight focus scoring plus bounded broadcast/history/conflict metadata without cross-facet mutation, `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, `PlannerFacet v0` proposes deterministic inspectable plans, `ExecutorFacet v0` performs approved internal-only execution with dry-run default, `VerifierFacet v0` runs deterministic post-decision inspection before persistence, and `LearningFacet v1` ingests explicit feedback plus Nexus/Behavior trace artifacts, routes deterministic cross-facet proposals, and applies bounded safe store updates through Memory/World Model public APIs only (no Learning-owned DB).
 
 ## Nexus loop (current v1-lite)
 
@@ -259,14 +259,23 @@ score = (
 - **Evaluation precedence** - explicit `deny` wins over everything; explicit `require_approval` wins over explicit `allow` and `prefer`; `prefer` only annotates metadata; fallback sandbox rules apply when no stronger explicit rule matched.
 - **Behavior integration only** - policy can downgrade or block a proposed `ACT` by forcing `ASK` or `RECORD`, but it does not itself execute anything.
 
-## Verifier v0 (current)
+## Verifier v1 (current)
 
-- **Deterministic and model-free** - `VerifierFacet` and `fullerene/verifier/` do not call an LLM, planner, executor, external judge, or truth-checking system.
-- **Post-decision inspection** - verifier runs after Nexus has aggregated an initial decision so it can validate the full decision trace instead of guessing from partial state.
-- **Current checks** - decision shape, facet-result shape, policy compliance, and conservative `ACT` approval requirements.
-- **Safety role** - verifier may downgrade an unsafe or structurally invalid `ACT` to `ASK` or `RECORD` before the record is persisted.
-- **Inspectable output** - verifier emits `verification_status`, `failed_checks`, `warnings`, per-check `results`, and human-readable `reasons` in its own `FacetResult` metadata.
-- **Not an LLM judge** - verifier does not decide truth, quality, or intent by heuristic language-model judgment. It only validates Fullerene's own deterministic runtime artifacts.
+- **Deterministic and model-free** - `VerifierFacet` and `fullerene/verifier/` do not call an LLM, planner, executor, external judge, or truth-checking system (no semantic grading, benchmarks, retrieval of external facts, or multi-model disagreement).
+- **Post-decision inspection** - verifier runs after Nexus has aggregated an initial decision so it can validate the aggregated decision trace and facet artifacts instead of guessing from partial state.
+- **v0 guards retained** - decision shape, facet-result shape, policy compliance (`ACT` denied or approval-required), conservative `ACT` approval requirements, and deterministic plan-risk safety (`PlanSafetyCheck`).
+- **v1 additive: structured artifact/schema validation** - `ArtifactSchemaCheck` plus `fullerene/verifier/artifacts.py` deterministically validate present payloads: Behavior v2 `decision_trace`, Nexus `CycleSignalMap` / pre-persist `verifier_cycle_context` cycle trace fields, Planner `plan` memory hooks and step risk/approval metadata, Executor `execution_result` records, Learning v1 `learning_result.metadata` lists and applied-adjustment provenance, policy status/reason serializability, and Context `context_load` ratios. Findings are JSON-serializable rows (`validator`, `artifact_kind`, `status`, `severity`, `code`, `path`, `message`, `retry_recommended`, `escalation_recommended`).
+- **Retry / escalation are recommendations only** - Verifier v1 never retries model calls or re-runs facets; it surfaces `retry_recommended`, `escalation_recommended`, `retry_reasons`, and `escalation_reasons` in summary/facet metadata for operators and future runners.
+- **Downgrade rules (conservative)** - malformed Behavior trace with final `ACT` → propose `ASK`; malformed planner output with execution-request context → propose `ASK`; malformed executor output → propose `RECORD` unless an external-side-effect failure lacks explicit reason metadata (then `ASK` + escalation); forbidden Learning-applied permission mutation → `RECORD` + critical escalation; policy-backed failures follow existing compliance checks.
+- **Summary metadata** - `verifier_version: v1`, `artifact_checks`, `schema_checks`, `validation_codes`, `validated_artifact_kinds`, preserved `verification_status`, `failed_checks`, `warnings`, `results`, `reasons`, and optional `downgraded_decision` when an `ACT` downgrade is proposed before persistence.
+- **Nexus hook** - before the verifier phase, Nexus writes `facet_state["nexus"]["verifier_cycle_context"]` (signal map, pressure components, learning-event snapshot, queued internal events, facet order/results seen, initial `final_decision`) so the verifier can inspect the same-cycle bundle without rewiring earlier phases.
+- **Not truth or quality judging** - Verifier v1 validates structure and internal consistency only; it does not score factual correctness or output usefulness.
+
+### Verifier roadmap
+
+- **v1** - deterministic artifact/schema validation + retry/escalation hints + conservative downgrades. **Current.**
+- **v2** (future) - optional eval datasets, regression harnesses, richer cross-run artifact diffing, still without LLM-as-judge unless explicitly decided later.
+- **v3** (future) - policy- or product-defined extended checks; any LLM or fuzzy evaluation would require an explicit ADR and remain off by default.
 
 ## Goals v0 (current)
 
@@ -319,7 +328,7 @@ flowchart LR
 | Planner facet | `fullerene/facets/planner.py` | Deterministic plan proposal layer with pressure-aware step shaping, policy filtering, and no execution |
 | Executor facet | `fullerene/facets/executor.py` | Deterministic internal-only execution layer with dry-run default, preflight refusal rules, and inspectable execution records |
 | Learning facet | `fullerene/facets/learning.py` | Learning v1 deterministic router: consumes Nexus/Behavior traces, emits routes and bounded adjustments via store APIs only |
-| Verifier facet | `fullerene/facets/verifier.py` | Deterministic post-decision verifier that can downgrade unsafe `ACT` decisions before persistence |
+| Verifier facet | `fullerene/facets/verifier.py` | Deterministic post-decision Verifier v1: v0 guards plus artifact/schema validation; can downgrade unsafe `ACT` decisions before persistence |
 | Affect models and derivation | `fullerene/affect/` | `AffectState`, `AffectResult`, `AffectHistoryBuffer`, and `DeterministicAffectDeriver` for observation-only affect state |
 | Learning models and rules | `fullerene/learning/` | `LearningSignal`, `AdjustmentRecord`, `LearningResult`, deterministic signal classifiers, and conservative apply-or-propose adjustment logic |
 | Context models and assembler | `fullerene/context/` | `ContextItem`, `ContextWindow`, `ContextAssemblyConfig`, `StaticContextAssembler`, and `DynamicContextAssembler` for bounded Context v0/v1 assembly |
@@ -331,7 +340,7 @@ flowchart LR
 | Memory models and store | `fullerene/memory/` | `MemoryRecord`, scoring helpers, deterministic tag/salience inference (`inference.py`), and SQLite-backed canonical memory |
 | Planner models and builder | `fullerene/planner/` | `Plan`, `PlanStep`, `RiskLevel`, and deterministic `DeterministicPlanBuilder` for inspectable plan generation |
 | Policy models and store | `fullerene/policy/` | `PolicyRule`, policy enums, and SQLite-backed canonical policy rule storage |
-| Verifier models and checks | `fullerene/verifier/` | `VerificationResult` / `VerificationSummary` plus deterministic structural and policy-compliance checks |
+| Verifier models and checks | `fullerene/verifier/` | `VerificationResult` / `VerificationSummary`, v0 structural/policy/plan/act checks, v1 `artifacts.py` schema validators + `ArtifactSchemaCheck` |
 | World model models and store | `fullerene/world_model/` | `Belief`, `BeliefStatus`, `BeliefSource`, and SQLite-backed canonical world model |
 | State store | `fullerene/state/store.py` | In-memory or file-backed JSON persistence |
 | CLI | `fullerene/cli.py`, `fullerene/__main__.py` | `python -m fullerene` |
