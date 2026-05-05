@@ -6,7 +6,7 @@ from contextlib import closing
 import json
 import sqlite3
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from fullerene.world_model.models import Belief, BeliefStatus, utcnow
 
@@ -30,6 +30,15 @@ class WorldModelStore(Protocol):
 
     def update_belief(self, belief: Belief) -> None:
         """Persist edits to an existing belief."""
+
+    def update_belief_confidence(
+        self,
+        belief_id: str,
+        confidence: float,
+        *,
+        metadata_update: dict[str, Any] | None = None,
+    ) -> Belief:
+        """Update confidence only with optional merged metadata (Learning v1 helper)."""
 
 
 class SQLiteWorldModelStore:
@@ -167,6 +176,26 @@ class SQLiteWorldModelStore:
             if cursor.rowcount == 0:
                 raise KeyError(f"Belief {belief.id!r} does not exist")
             connection.commit()
+
+    def update_belief_confidence(
+        self,
+        belief_id: str,
+        confidence: float,
+        *,
+        metadata_update: dict[str, Any] | None = None,
+    ) -> Belief:
+        belief = self.get_belief(belief_id)
+        if belief is None:
+            raise KeyError(f"Belief {belief_id!r} does not exist")
+        belief.confidence = Belief._validate_confidence(confidence)
+        if metadata_update:
+            merged = dict(belief.metadata)
+            merged.update(metadata_update)
+            belief.metadata = merged
+        self.update_belief(belief)
+        updated = self.get_belief(belief_id)
+        assert updated is not None
+        return updated
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(str(self.path), timeout=30.0)

@@ -573,6 +573,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             LearningFacet(
                 memory_store=memory_store,
                 goal_store=goal_store,
+                world_model_store=world_store,
             )
         )
     if args.attention:

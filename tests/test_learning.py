@@ -49,7 +49,7 @@ from fullerene.planner import Plan, PlanStep
 from fullerene.policy import SQLitePolicyStore
 from fullerene.state import InMemoryStateStore
 from fullerene.workspace_state import workspace_state_root
-from fullerene.world_model import SQLiteWorldModelStore
+from fullerene.world_model import Belief, BeliefStatus, SQLiteWorldModelStore
 
 
 def make_tempdir_path() -> Path:
@@ -843,6 +843,271 @@ class CLILearningIntegrationTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(payload["event"]["metadata"]["target_memory_id"], "mem-123")
+
+
+class LearningV1ComplianceTests(unittest.TestCase):
+    """Learning v1 routing, Nexus/Behavior ingestion, and store boundaries."""
+
+    def setUp(self) -> None:
+        self.root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(self.root, ignore_errors=True))
+
+    def test_v1_consumes_cycle_learning_events_and_behavior_trace_metadata(self) -> None:
+        state = NexusState(
+            facet_state={
+                "nexus": {
+                    "current_cycle_learning_events": [
+                        {"event_type": "behavior_decision_trace_v2", "trace": {"x": 1}}
+                    ],
+                    "current_cycle_signal_map": {"belief_contradiction": False},
+                },
+                "behavior": {
+                    "last_decision_trace": {
+                        "final_decision": "ask",
+                        "contradiction_flag": False,
+                        "policy_result": "allowed",
+                        "raw_candidate_scores": {"act": 0.5},
+                        "adjusted_candidate_scores": {"act": 0.5},
+                    }
+                },
+            }
+        )
+        result = build_learning_result(Event(event_type=EventType.USER_MESSAGE, content="x"), state)
+        meta = result.metadata
+        self.assertEqual(meta.get("learning_version"), "v1")
+        self.assertTrue(meta.get("consumed_learning_events"))
+        self.assertTrue(
+            any(s.source == SignalSource.BEHAVIOR_TRACE for s in result.signals)
+        )
+
+    def test_missing_nexus_v1_metadata_preserves_v0_feedback_path(self) -> None:
+        event = Event(
+            event_type=EventType.USER_MESSAGE,
+            content="that worked",
+            metadata={"feedback": "positive", "target_goal_id": "goal-1"},
+        )
+        goal_store = SQLiteGoalStore(self.root / "goals.sqlite3")
+        goal_store.add_goal(Goal(id="goal-1", description="g", priority=0.5))
+        result = build_learning_result(event, NexusState(), goal_store=goal_store)
+        self.assertTrue(result.applied)
+        self.assertEqual(result.metadata.get("learning_version"), "v1")
+
+    def test_co_retrieval_strengthens_memory_edge_bounded_pairs_only(self) -> None:
+        mem = SQLiteMemoryStore(self.root / "memory.sqlite3")
+        mem.add_memory(
+            MemoryRecord(
+                id="m1",
+                memory_type=MemoryType.EPISODIC,
+                content="a",
+                salience=0.8,
+                confidence=1.0,
+            )
+        )
+        mem.add_memory(
+            MemoryRecord(
+                id="m2",
+                memory_type=MemoryType.EPISODIC,
+                content="b",
+                salience=0.8,
+                confidence=1.0,
+            )
+        )
+        mem.add_memory(
+            MemoryRecord(
+                id="m3",
+                memory_type=MemoryType.EPISODIC,
+                content="c",
+                salience=0.1,
+                confidence=1.0,
+            )
+        )
+        state = NexusState(
+            facet_state={
+                "context": {"last_included_memory_ids": ["m1", "m2", "m3"]},
+            }
+        )
+        result = build_learning_result(
+            Event(event_type=EventType.USER_MESSAGE, content="q"),
+            state,
+            memory_store=mem,
+        )
+        edge_adj = [
+            r for r in result.adjustments if r.target == AdjustmentTarget.MEMORY_EDGE
+        ]
+        self.assertEqual(len(edge_adj), 3)  # 3 choose 2 pairs only, no graph scan
+        self.assertTrue(all(r.status == AdjustmentStatus.APPLIED for r in edge_adj))
+
+    def test_belief_contradiction_lowers_confidence(self) -> None:
+        ws = SQLiteWorldModelStore(self.root / "world.sqlite3")
+        ws.add_belief(
+            Belief(id="b1", claim="c", confidence=0.8, status=BeliefStatus.ACTIVE)
+        )
+        state = NexusState(
+            facet_state={
+                "behavior": {
+                    "last_aligned_belief_ids": ["b1"],
+                    "last_decision_trace": {"contradiction_flag": True},
+                },
+                "nexus": {
+                    "current_cycle_signal_map": {"belief_contradiction": True},
+                },
+            }
+        )
+        result = build_learning_result(
+            Event(event_type=EventType.USER_MESSAGE, content="x"),
+            state,
+            world_model_store=ws,
+        )
+        adj = [r for r in result.applied if r.target == AdjustmentTarget.BELIEF_CONFIDENCE]
+        self.assertTrue(adj)
+        self.assertLess(ws.get_belief("b1").confidence, 0.8)
+        self.assertEqual(ws.get_belief("b1").status, BeliefStatus.CONTRADICTED)
+
+    def test_belief_corroboration_raises_confidence(self) -> None:
+        ws = SQLiteWorldModelStore(self.root / "world.sqlite3")
+        ws.add_belief(
+            Belief(id="b2", claim="c2", confidence=0.5, status=BeliefStatus.ACTIVE)
+        )
+        result = build_learning_result(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="x",
+                metadata={"belief_corroboration": ["b2"]},
+            ),
+            NexusState(),
+            world_model_store=ws,
+        )
+        self.assertGreater(ws.get_belief("b2").confidence, 0.5)
+        self.assertTrue(
+            any(r.target == AdjustmentTarget.BELIEF_CONFIDENCE for r in result.applied)
+        )
+
+    def test_high_salience_non_included_memory_proposes_downweight(self) -> None:
+        mem = SQLiteMemoryStore(self.root / "memory.sqlite3")
+        mem.add_memory(
+            MemoryRecord(
+                id="high1",
+                memory_type=MemoryType.EPISODIC,
+                content="orphan",
+                salience=0.9,
+                confidence=1.0,
+                metadata={},
+            )
+        )
+        state = NexusState(
+            facet_state={
+                "context": {"last_included_memory_ids": ["other"]},
+            }
+        )
+        result = build_learning_result(
+            Event(event_type=EventType.USER_MESSAGE, content="y"),
+            state,
+            memory_store=mem,
+        )
+        prop = [
+            r
+            for r in result.adjustments
+            if r.status == AdjustmentStatus.PROPOSED
+            and r.target == AdjustmentTarget.MEMORY_SALIENCE
+            and r.target_id == "high1"
+        ]
+        self.assertTrue(prop)
+
+    def test_execution_success_and_co_retrieval_salience_upweight(self) -> None:
+        mem = SQLiteMemoryStore(self.root / "memory.sqlite3")
+        mem.add_memory(
+            MemoryRecord(
+                id="r1",
+                memory_type=MemoryType.EPISODIC,
+                content="r",
+                salience=0.4,
+                confidence=1.0,
+            )
+        )
+        state = NexusState(
+            facet_state={
+                "context": {"last_included_memory_ids": ["r1"]},
+                "executor": {
+                    "last_execution_result": {"overall_status": "success"},
+                },
+            }
+        )
+        result = build_learning_result(
+            Event(event_type=EventType.USER_MESSAGE, content="z"),
+            state,
+            memory_store=mem,
+        )
+        sal = [
+            r
+            for r in result.applied
+            if r.target == AdjustmentTarget.MEMORY_SALIENCE and r.target_id == "r1"
+        ]
+        self.assertTrue(sal)
+        self.assertGreater(mem.get_memory("r1").salience, 0.4)
+
+    def test_policy_downgrade_emits_cross_facet_route_not_behavior_mutation(self) -> None:
+        state = NexusState(
+            facet_state={
+                "behavior": {
+                    "last_decision_trace": {
+                        "policy_result": "denied",
+                        "final_decision": "record",
+                        "raw_candidate_scores": {"act": 0.9},
+                        "adjusted_candidate_scores": {"act": 0.2},
+                        "contradiction_flag": False,
+                        "context_load_ratio": 0.1,
+                    }
+                }
+            }
+        )
+        result = build_learning_result(Event(event_type=EventType.USER_MESSAGE, content="q"), state)
+        routes = result.metadata.get("cross_facet_routes", [])
+        self.assertTrue(
+            any(r.get("signal") == "policy_downgrade" for r in routes)
+        )
+        # No behavior store: facet state for behavior must be unchanged by Learning —
+        # we only assert Learning returns proposals; behavior facet state is inputs only here.
+        self.assertFalse(any(r.get("applied") for r in routes))
+
+    def test_context_overload_proposes_consolidation_route(self) -> None:
+        state = NexusState(
+            facet_state={
+                "behavior": {
+                    "last_decision_trace": {
+                        "policy_result": "allowed",
+                        "final_decision": "record",
+                        "raw_candidate_scores": {"act": 0.5},
+                        "adjusted_candidate_scores": {"act": 0.5},
+                        "contradiction_flag": False,
+                        "context_load_ratio": 0.95,
+                    }
+                }
+            }
+        )
+        result = build_learning_result(Event(event_type=EventType.USER_MESSAGE, content="q"), state)
+        routes = result.metadata.get("cross_facet_routes", [])
+        self.assertTrue(
+            any(r.get("suggested_adjustment") == "context_consolidation" for r in routes)
+        )
+
+    def test_v1_metadata_surface_keys(self) -> None:
+        r = build_learning_result(
+            Event(event_type=EventType.USER_MESSAGE, content="hello"),
+            NexusState(),
+        )
+        m = r.metadata
+        for key in (
+            "learning_version",
+            "consumed_learning_events",
+            "signal_sources",
+            "adjustment_records",
+            "proposed_adjustments",
+            "applied_adjustments",
+            "skipped_adjustments",
+            "cross_facet_routes",
+            "reasons",
+        ):
+            self.assertIn(key, m)
 
 
 if __name__ == "__main__":

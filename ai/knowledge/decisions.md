@@ -16,6 +16,14 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-05-06 - Learning v1 is a deterministic cross-facet feedback router without a Learning-owned store
+
+- **Status:** accepted
+- **Context:** Nexus v1 already emits `CycleSignalMap`, `cycle_trace`, and collects `cycle_learning_events`; Behavior v2 emits `behavior_decision_trace_v2`. Learning v0 only classified explicit feedback/execution/goal signals and did not consume those cross-facet artifacts.
+- **Decision:** Implement Learning v1 as a deterministic, JSON-inspectable router: read Nexus preview keys (`current_cycle_signal_map`, `current_cycle_learning_events` injected at the start of the learning_signal phase), Behavior/Context/Memory facet state, and v0 signals; emit `cross_facet_routes` and extended `LearningResult.metadata` (`learning_version: v1`, consumed events, signal_sources, adjustment lists, reasons). Apply mutations only through explicit store APIs (`strengthen_memory_edge`, `update_belief_confidence` / `update_belief`, existing salience/goal updates). Behavior threshold and policy/executor permission changes remain proposal-only. No TD learning, meta-learning, LLM calls, background loops, unbounded graph scans, or new Learning SQLite DB.
+- **Consequences:** Memory owns edge-weight/SQLite graph writes; World Model owns belief confidence and status flags; Learning coordinates signals and proposals. Nexus must expose current-cycle learning artifacts to facets in the same outer `process_event` call before Learning runs.
+- **Supersedes:** n/a (v0 rules remain embedded in `build_learning_result` for compatibility)
+
 ## 2026-05-05 - Nexus v1 deeper pass keeps single-cycle scope and makes Nexus the canonical signal aggregator
 
 - **Status:** accepted

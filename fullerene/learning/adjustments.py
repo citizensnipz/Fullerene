@@ -16,8 +16,14 @@ from fullerene.learning.models import (
     SignalType,
 )
 from fullerene.learning.signals import collect_learning_signals
+from fullerene.learning.v1 import (
+    compute_learning_v1,
+    merge_signal_sources,
+    read_cycle_learning_events,
+)
 from fullerene.memory import MemoryStore
 from fullerene.nexus.models import Event, NexusState
+from fullerene.world_model.store import WorldModelStore
 
 LEARNING_ALPHA = 0.1
 MINOR_NUDGE = 0.05
@@ -44,6 +50,7 @@ def build_learning_result(
     *,
     memory_store: MemoryStore | None = None,
     goal_store: GoalStore | None = None,
+    world_model_store: WorldModelStore | None = None,
     alpha: float = LEARNING_ALPHA,
     minor_nudge: float = MINOR_NUDGE,
     proposal_threshold: float = DEFAULT_PROPOSAL_THRESHOLD,
@@ -59,32 +66,64 @@ def build_learning_result(
         minor_nudge=minor_nudge,
         proposal_threshold=proposal_threshold,
     )
+    v1 = compute_learning_v1(
+        event,
+        state,
+        memory_store=memory_store,
+        goal_store=goal_store,
+        world_model_store=world_model_store,
+    )
+    all_signals = list(signals) + list(v1.signals)
+    adjustments_combined = list(adjustments) + list(v1.adjustments)
     proposals = [
-        record for record in adjustments if record.status == AdjustmentStatus.PROPOSED
+        record
+        for record in adjustments_combined
+        if record.status == AdjustmentStatus.PROPOSED
     ]
     applied = [
-        record for record in adjustments if record.status == AdjustmentStatus.APPLIED
+        record
+        for record in adjustments_combined
+        if record.status == AdjustmentStatus.APPLIED
     ]
     skipped = [
-        record for record in adjustments if record.status == AdjustmentStatus.SKIPPED
+        record
+        for record in adjustments_combined
+        if record.status == AdjustmentStatus.SKIPPED
     ]
+    consumed_events = read_cycle_learning_events(state)
+    all_reasons = [
+        reason
+        for signal in all_signals
+        for reason in signal.reasons
+    ]
+    signal_sources = merge_signal_sources(all_reasons, v1)
+    metadata = {
+        "learning_version": "v1",
+        "consumed_learning_events": consumed_events,
+        "signal_sources": signal_sources,
+        "cross_facet_routes": list(v1.cross_facet_routes),
+        "reasons": list(dict.fromkeys([*all_reasons, *v1.reasons])),
+        "adjustment_records": [record.to_dict() for record in adjustments_combined],
+        "proposed_adjustments": [record.to_dict() for record in proposals],
+        "applied_adjustments": [record.to_dict() for record in applied],
+        "skipped_adjustments": [record.to_dict() for record in skipped],
+        "signal_count": len(all_signals),
+        "adjustment_count": len(adjustments_combined),
+        "proposal_count": len(proposals),
+        "applied_count": len(applied),
+        "skipped_count": len(skipped),
+        "alpha": round(float(alpha), 3),
+        "minor_nudge": round(float(minor_nudge), 3),
+        "proposal_threshold": round(float(proposal_threshold), 3),
+        "skipped": [record.to_dict() for record in skipped],
+    }
     return LearningResult(
-        signals=signals,
-        adjustments=adjustments,
+        signals=all_signals,
+        adjustments=adjustments_combined,
         proposals=proposals,
         applied=applied,
-        overall_status=_overall_status(signals, adjustments),
-        metadata={
-            "signal_count": len(signals),
-            "adjustment_count": len(adjustments),
-            "proposal_count": len(proposals),
-            "applied_count": len(applied),
-            "skipped_count": len(skipped),
-            "alpha": round(float(alpha), 3),
-            "minor_nudge": round(float(minor_nudge), 3),
-            "proposal_threshold": round(float(proposal_threshold), 3),
-            "skipped": [record.to_dict() for record in skipped],
-        },
+        overall_status=_overall_status(all_signals, adjustments_combined),
+        metadata=metadata,
     )
 
 

@@ -176,6 +176,12 @@ class Nexus:
                 }
             )
             phase_outputs: list[dict[str, Any]] = []
+            if phase_name == "learning_signal":
+                nexus_preview = working_state.facet_state.setdefault("nexus", {})
+                nexus_preview["current_cycle_signal_map"] = signal_map.to_dict()
+                nexus_preview["current_cycle_learning_events"] = [
+                    dict(item) for item in cycle_learning_events
+                ]
             for facet in ordered_facets:
                 if self._is_post_decision_verifier(facet):
                     continue

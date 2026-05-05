@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-05-06 - Learning v1 cross-facet routing
+
+- **Context:** Nexus v1 and Behavior v2 already produced inspectable cycle maps, traces, and learning events, but Learning had not consumed them; Memory v2 had edges without retrieval-time learning updates.
+- **Done:** Implemented Learning v1 (`fullerene/learning/v1.py`): reads Nexus-injected `current_cycle_*` fields, Behavior traces, Context/Memory co-retrieval ids; bounded Hebbian `strengthen_memory_edge`; `update_belief_confidence` + contradiction flagging; salience proposals/updates; cross-facet route metadata; extended `LearningResult.metadata`; CLI wires world store; Nexus publishes current-cycle artifacts before the learning_signal phase.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py"`; `python -m fullerene --event-type user_message --content "hello nexus" --state-dir state/.fullerene-state`; `python -m fullerene --json --learning --feedback positive --content "that worked" --state-dir state/.fullerene-smoke-learning`
+- **Next:** Learning v2 (TD credit assignment, pattern library) per roadmap; optional richer memory recurrence tracking without store full scans.
+- **Blockers:** None.
+
 ### 2026-05-05 - Nexus v1 deeper pass signal aggregation and bounded interrupt routing
 
 - **Context:** Nexus needed a deeper v1 pass that improves single-cycle cross-facet signal collection/routing without turning into Nexus v2 continuous orchestration.

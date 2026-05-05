@@ -9,6 +9,15 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-06 (learning v1)
+
+- Added `fullerene/learning/v1.py` (`compute_learning_v1`): deterministic ingestion of Nexus cycle maps/events, Behavior v2 traces, co-retrieval Hebbian edge strengthens (`keyword_similarity`), conservative belief confidence down/up via world store, salience validation proposals/updates, and cross-facet route records; no LLM/TD/meta/background loops.
+- Extended `fullerene/learning/models.py` with `AdjustmentTarget.MEMORY_EDGE`, `BELIEF_CONFIDENCE`, and supplemental `SignalSource` values; extended `build_learning_result` / `LearningResult.metadata` with v1 keys (`learning_version`, `consumed_learning_events`, `signal_sources`, adjustment list mirrors, `cross_facet_routes`, `reasons`).
+- Added `SQLiteMemoryStore.strengthen_memory_edge` and `SQLiteWorldModelStore.update_belief_confidence`; Protocol surfaces updated.
+- Updated `fullerene/nexus/runtime.py` to publish `current_cycle_signal_map` and `current_cycle_learning_events` on `facet_state["nexus"]` immediately before the learning_signal phase.
+- Updated `fullerene/facets/learning.py` and `fullerene/cli.py` to pass optional `world_model_store` into Learning.
+- Added `tests/test_learning.LearningV1ComplianceTests`; full suite remains green.
+
 ### 2026-05-05 (nexus v1 deeper pass)
 
 - Updated `fullerene/nexus/models.py` with `CycleSignalMap` (deterministic JSON-serializable canonical per-cycle signal shape) and exported it from `fullerene/nexus/__init__.py`.

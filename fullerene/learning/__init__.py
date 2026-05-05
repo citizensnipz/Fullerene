@@ -7,6 +7,7 @@ from fullerene.learning.adjustments import (
     build_learning_result,
     generate_adjustments,
 )
+from fullerene.learning.v1 import read_cycle_learning_events
 from fullerene.learning.models import (
     AdjustmentRecord,
     AdjustmentStatus,
@@ -40,4 +41,5 @@ __all__ = [
     "classify_user_feedback_signal",
     "collect_learning_signals",
     "generate_adjustments",
+    "read_cycle_learning_events",
 ]

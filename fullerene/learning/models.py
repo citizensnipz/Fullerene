@@ -41,6 +41,10 @@ class SignalSource(str, Enum):
     EXECUTION_RESULT = "execution_result"
     GOAL_LIFECYCLE = "goal_lifecycle"
     SYSTEM = "system"
+    NEXUS_CYCLE = "nexus_cycle"
+    BEHAVIOR_TRACE = "behavior_trace"
+    WORLD_MODEL_SIGNAL = "world_model_signal"
+    MEMORY_CONTEXT = "memory_context"
 
 
 class AdjustmentStatus(str, Enum):
@@ -51,9 +55,11 @@ class AdjustmentStatus(str, Enum):
 
 class AdjustmentTarget(str, Enum):
     MEMORY_SALIENCE = "memory_salience"
+    MEMORY_EDGE = "memory_edge"
     GOAL_PRIORITY = "goal_priority"
     BEHAVIOR_CONFIDENCE = "behavior_confidence"
     BEHAVIOR_THRESHOLD = "behavior_threshold"
+    BELIEF_CONFIDENCE = "belief_confidence"
 
 
 @dataclass(slots=True)

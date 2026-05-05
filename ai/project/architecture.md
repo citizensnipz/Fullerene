@@ -28,7 +28,7 @@ Product vocabulary for modular components:
 11. Behavior
 12. Learning
 
-Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `AffectFacet v0`, `AttentionFacet v1`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `PlannerFacet v0`, `ExecutorFacet v0`, `VerifierFacet v0`, `LearningFacet v0`, `ContextFacet`, and `EchoFacet`; `AffectFacet v0` covers deterministic internal VAD + novelty observation only, `AttentionFacet v1` covers deterministic fixed-weight focus scoring plus bounded broadcast/history/conflict metadata without cross-facet mutation, `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, `PlannerFacet v0` proposes deterministic inspectable plans, `ExecutorFacet v0` performs approved internal-only execution with dry-run default, `VerifierFacet v0` runs deterministic post-decision inspection before persistence, and `LearningFacet v0` classifies deterministic feedback and emits traceable adjustment records without owning its own persistent store.
+Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `AffectFacet v0`, `AttentionFacet v1`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `PlannerFacet v0`, `ExecutorFacet v0`, `VerifierFacet v0`, `LearningFacet v1`, `ContextFacet`, and `EchoFacet`; `AffectFacet v0` covers deterministic internal VAD + novelty observation only, `AttentionFacet v1` covers deterministic fixed-weight focus scoring plus bounded broadcast/history/conflict metadata without cross-facet mutation, `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, `PlannerFacet v0` proposes deterministic inspectable plans, `ExecutorFacet v0` performs approved internal-only execution with dry-run default, `VerifierFacet v0` runs deterministic post-decision inspection before persistence, and `LearningFacet v1` ingests explicit feedback plus Nexus/Behavior trace artifacts, routes deterministic cross-facet proposals, and applies bounded safe store updates through Memory/World Model public APIs only (no Learning-owned DB).
 
 ## Nexus loop (current v1-lite)
 
@@ -49,7 +49,7 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - Apply policy guardrails before finalizing the initial action: policy `DENIED` results force `RECORD`, and policy `APPROVAL_REQUIRED` results force `ASK`, even if another facet proposed `ACT`.
 - Run deterministic verifier checks against the event, facet results, initial decision, and configured state-dir metadata. Unsafe or structurally invalid `ACT` decisions may be downgraded to `ASK` or `RECORD` before persistence.
 - Persist the updated runtime snapshot plus an append-only event log, including verifier metadata as a `FacetResult` and compact phase/pressure trace metadata on each `NexusRecord`.
-- Collect facet-emitted `learning_event` metadata into per-cycle `cycle_learning_events`; Nexus stores them for inspection/trace only in v1 (Learning does not consume them automatically yet).
+- Collect facet-emitted `learning_event` metadata into per-cycle `cycle_learning_events`; Nexus exposes them to Learning through `facet_state['nexus']['current_cycle_learning_events']` during the learning_signal phase (and persists `last_learning_events` after the cycle).
 - If Behavior recommends an interrupt, Nexus may queue one minimal internal event candidate and process at most one additional `internal` event immediately after the current cycle; no recursive same-call internal-event expansion is allowed.
 - Persist compact `cycle_trace` metadata each cycle (decisions, pressure before/after, pressure components, signal map, learning events, queued/processed internal events, verifier adjustments, and source facets).
 - Avoid autonomous external tool execution; `ACT` is still only a typed decision, and Executor v0 only records or applies approved internal state actions.
@@ -183,19 +183,19 @@ score = (
 - **Conservative policy** - empty/no-signal events wait; normal user messages record; response/uncertainty signals ask; explicit low-risk actions can propose `ACT`.
 - **No execution** - `ACT` is only a typed proposal for a future executor; Nexus v0 still performs no autonomous tool execution or irreversible side effects.
 
-## Learning v0 (current)
+## Learning v1 (current)
 
-- **Stateless feedback processor only** - `fullerene/learning/` plus `LearningFacet` do not own canonical memory, goals, world-model beliefs, policy rules, or behavior configuration. Learning v0 records signals and adjustment records, but it owns no persistent store of its own.
-- **Signal sources** - Learning v0 classifies explicit user feedback, executor outcomes, and goal lifecycle metadata through deterministic rules only. No LLM calls, embeddings, RAG, graph reasoning, or sentiment model are used.
-- **Outputs** - `LearningSignal`, `AdjustmentRecord`, and `LearningResult` payloads are inspectable, serializable, and traced back to a source signal/event.
-- **Safe mutation boundary** - Learning may apply only minor nudges to existing memory salience or goal priority values when the current store supports that update cleanly. Behavior-related changes are proposal-only in the current runtime because no behavior threshold/config store exists yet.
-- **Conservative update rule** - target values are nudged with a small EMA-style adjustment (`alpha = 0.1`) and capped to minor changes only. Larger changes become proposals instead of silent writes.
-- **No autonomous reconfiguration** - Learning v0 does not mutate policy rules, its own rules, executor permissions, model weights, or any other major control surface.
+- **Deterministic cross-facet feedback router** - `fullerene/learning/` plus `LearningFacet` still own no canonical store. Learning reads Nexus `CycleSignalMap` previews, per-cycle `cycle_learning_events`, `BehaviorFacet` `behavior_decision_trace_v2`, Context/Memory co-retrieval ids, and explicit metadata; it emits JSON-serializable `LearningResult.metadata` (`learning_version`, `consumed_learning_events`, `signal_sources`, adjustment lists, `cross_facet_routes`, `reasons`).
+- **Store boundaries** - Memory graph weight updates go through `SQLiteMemoryStore.strengthen_memory_edge`; belief confidence through `SQLiteWorldModelStore.update_belief_confidence` or full `update_belief`; salience/goal paths keep Learning v0 EMA rules. Behavior threshold changes remain **proposal-only** (routes/metadata). No policy/executor permission mutation, no LLM calls, no background threads, no unbounded graph traversal (only co-retrieval pairs visible in facet state).
+- **Hebbian co-retrieval** - When two or more memories appear in the same bounded co-retrieval set, Learning applies a small bounded edge weight increment (`keyword_similarity` edge type) using `learning_rate * activation_a * activation_b` with activations from hybrid/total score, salience, or neutral `0.5`.
+- **World model** - Contradiction/corroboration adjusts confidence conservatively (default `0.05`, strong dual-source `0.10`) with provenance on belief metadata; contradicted beliefs may be flagged `CONTRADICTED` without deletion.
+- **Salience validation** - High-salience memories not in the current co-retrieval window and without explicit linkage metadata may receive salience downweight **proposals**; success signals with co-retrieval may apply minor salience upweights when `update_memory_salience` is available.
+- **v0 compatibility** - Explicit user feedback, executor outcomes, and goal lifecycle signals use the same conservative v0 classifiers and minor nudges; v1 layers additional records alongside them.
 
 ## Learning roadmap
 
-- **v0** - explicit feedback only; no automatic propagation; no LLM calls; no self-modification; minor nudges only; major changes become proposals; every adjustment is traced to a source signal. **Current.**
-- **v1** - Hebbian edge strengthening, Bayesian confidence updates, salience decay validation, and cross-facet signal routing. **Future.**
+- **v0** - explicit feedback only; minor nudges; proposal-only when unsure. **Superseded by v1 for the integrated runtime; rules retained inside v1.**
+- **v1** - deterministic cross-facet routing, bounded Hebbian edge updates, conservative belief confidence edits, salience decay checks, inspectable routes. **Current.**
 - **v2** - temporal-difference credit assignment, cluster-level learning, skill track records, and an execution pattern library. **Future.**
 - **v3** - meta-learning, behavioral policy refinement, expression outcome tracking, contradiction-driven belief restructuring, and an optional small trained model for signal classification. **Future.**
 
@@ -318,7 +318,7 @@ flowchart LR
 | Policy facet | `fullerene/facets/policy.py` | Deterministic permission/approval evaluation plus built-in internal-sandbox allowance and external-approval fallback |
 | Planner facet | `fullerene/facets/planner.py` | Deterministic plan proposal layer with pressure-aware step shaping, policy filtering, and no execution |
 | Executor facet | `fullerene/facets/executor.py` | Deterministic internal-only execution layer with dry-run default, preflight refusal rules, and inspectable execution records |
-| Learning facet | `fullerene/facets/learning.py` | Stateless feedback processor that classifies signals, emits traceable adjustments, and applies only minor safe nudges when an existing store supports them |
+| Learning facet | `fullerene/facets/learning.py` | Learning v1 deterministic router: consumes Nexus/Behavior traces, emits routes and bounded adjustments via store APIs only |
 | Verifier facet | `fullerene/facets/verifier.py` | Deterministic post-decision verifier that can downgrade unsafe `ACT` decisions before persistence |
 | Affect models and derivation | `fullerene/affect/` | `AffectState`, `AffectResult`, `AffectHistoryBuffer`, and `DeterministicAffectDeriver` for observation-only affect state |
 | Learning models and rules | `fullerene/learning/` | `LearningSignal`, `AdjustmentRecord`, `LearningResult`, deterministic signal classifiers, and conservative apply-or-propose adjustment logic |

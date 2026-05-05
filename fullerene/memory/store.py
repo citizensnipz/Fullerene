@@ -24,11 +24,13 @@ remain readable without rewrite.
 from __future__ import annotations
 
 from contextlib import closing
+from datetime import datetime, timezone
 import json
 import sqlite3
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Any, Protocol
+from uuid import uuid4
 
 from fullerene.memory.edges import MemoryEdge, MemoryEdgeType
 from fullerene.memory.embeddings import deserialize_vector, serialize_vector
@@ -61,6 +63,18 @@ class MemoryStore(Protocol):
 
     def update_memory_salience(self, memory_id: str, salience: float) -> None:
         """Persist a salience-only edit to an existing memory record."""
+
+    def strengthen_memory_edge(
+        self,
+        source_memory_id: str,
+        target_memory_id: str,
+        edge_type: MemoryEdgeType,
+        delta: float,
+        *,
+        reason: str = "",
+        provenance: dict[str, Any] | None = None,
+    ) -> MemoryEdge:
+        """Increase (or create) a bounded write-time edge weight by ``delta``."""
 
 
 class SQLiteMemoryStore:
@@ -368,6 +382,123 @@ class SQLiteMemoryStore:
                 ),
             )
             connection.commit()
+
+    def strengthen_memory_edge(
+        self,
+        source_memory_id: str,
+        target_memory_id: str,
+        edge_type: MemoryEdgeType,
+        delta: float,
+        *,
+        reason: str = "",
+        provenance: dict[str, Any] | None = None,
+    ) -> MemoryEdge:
+        """Apply a bounded Hebbian-style weight increment to an existing or new edge.
+
+        Canonical orientation uses lexicographic ordering on memory ids so the
+        same undirected pair always maps to one directed row.
+        """
+        a, b = source_memory_id, target_memory_id
+        src, tgt = (a, b) if a < b else (b, a)
+        if src == tgt:
+            raise ValueError("source and target memory ids must differ")
+        delta_clamped = max(-1.0, min(float(delta), 1.0))
+        prov = dict(provenance or {})
+        if reason:
+            prov.setdefault("reason", reason)
+        meta_merge: dict[str, Any] = {"learning_v1": prov}
+
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                """
+                SELECT id, weight, metadata_json
+                FROM memory_edges
+                WHERE source_memory_id = ? AND target_memory_id = ? AND edge_type = ?
+                """,
+                (src, tgt, edge_type.value),
+            ).fetchone()
+            if row is None:
+                new_weight = MemoryRecord._validate_score(
+                    "weight",
+                    max(0.0, min(1.0, delta_clamped)),
+                )
+                meta = dict(meta_merge)
+                edge_id = uuid4().hex
+                timestamp = datetime.now(timezone.utc).isoformat()
+                connection.execute(
+                    """
+                    INSERT INTO memory_edges (
+                        id,
+                        source_memory_id,
+                        target_memory_id,
+                        edge_type,
+                        weight,
+                        created_at,
+                        metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        edge_id,
+                        src,
+                        tgt,
+                        edge_type.value,
+                        new_weight,
+                        timestamp,
+                        json.dumps(meta, sort_keys=True),
+                    ),
+                )
+                connection.commit()
+                return MemoryEdge(
+                    id=edge_id,
+                    source_memory_id=src,
+                    target_memory_id=tgt,
+                    edge_type=edge_type,
+                    weight=new_weight,
+                    created_at=datetime.now(timezone.utc),
+                    metadata=meta,
+                )
+
+            old_weight = float(row["weight"])
+            old_meta: dict[str, Any] = {}
+            if row["metadata_json"]:
+                try:
+                    old_meta = json.loads(row["metadata_json"])
+                except json.JSONDecodeError:
+                    old_meta = {}
+            merged_meta = {**old_meta, **meta_merge}
+            new_weight = MemoryRecord._validate_score(
+                "weight",
+                max(0.0, min(1.0, old_weight + delta_clamped)),
+            )
+            connection.execute(
+                """
+                UPDATE memory_edges
+                SET weight = ?, metadata_json = ?
+                WHERE id = ?
+                """,
+                (new_weight, json.dumps(merged_meta, sort_keys=True), row["id"]),
+            )
+            connection.commit()
+            refreshed = connection.execute(
+                """
+                SELECT id, source_memory_id, target_memory_id, edge_type, weight,
+                       created_at, metadata_json
+                FROM memory_edges WHERE id = ?
+                """,
+                (row["id"],),
+            ).fetchone()
+            assert refreshed is not None
+            return MemoryEdge.from_dict(
+                {
+                    "id": refreshed["id"],
+                    "source_memory_id": refreshed["source_memory_id"],
+                    "target_memory_id": refreshed["target_memory_id"],
+                    "edge_type": refreshed["edge_type"],
+                    "weight": refreshed["weight"],
+                    "created_at": refreshed["created_at"],
+                    "metadata": json.loads(refreshed["metadata_json"] or "{}"),
+                }
+            )
 
     def list_memory_edges(
         self,
