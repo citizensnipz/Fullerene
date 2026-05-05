@@ -251,12 +251,16 @@ score = (
 - **v3** - Fullerene can act in the world.
 - **Trust is not given. It is accumulated.**
 
-## Policy v0 (current)
+## Policy v1 (current)
 
-- **Deterministic constraint layer** - `PolicyFacet` does not plan, reason with an LLM, infer new rules, or execute tools. It only evaluates modeled actions against explicit rules plus built-in sandbox defaults.
+- **Deterministic constraint layer** - `PolicyFacet` is model-free and does not plan, infer rules, execute tools, or use fuzzy judgment. It evaluates modeled actions (and plan steps) against explicit rules plus built-in sandbox defaults.
+- **Policy decision model** - every evaluation emits a JSON-serializable `policy_evaluation` payload with `status` (`allowed`, `denied`, `approval_required`, `no_match`, `preferred`), `effective_action`, structured target/risk fields, approval-token gating flags, reasons/warnings, and a complete `rule_precedence_trace` for explainability.
 - **Explicit rule store** - user/system policy rules are stored as inspectable SQLite rows with `id`, `name`, `description`, `rule_type`, `target_type`, `target`, `conditions`, `priority`, `enabled`, `source`, timestamps, and metadata.
-- **Built-in sandbox defaults** - Fullerene may create, update, and delete its own internal state inside the configured state directory by default. External side effects such as shell, network, message, git, tool use, and external file writes/deletes require approval by default unless an explicit allow rule matches.
-- **Evaluation precedence** - explicit `deny` wins over everything; explicit `require_approval` wins over explicit `allow` and `prefer`; `prefer` only annotates metadata; fallback sandbox rules apply when no stronger explicit rule matched.
+- **Richer structured matching** - rule matching uses explicit action/plan-step context derived from event metadata and plan-step fields (for example `action_type`, `target_type`, `target`, `risk_level`, `dry_run`/`live_mode`, `external_side_effect`, and optional structured `approval` metadata). Matching supports exact, wildcard (`"*"`), and simple prefix/pattern behaviors for sandbox-path targets, plus deterministic equality checks for condition values.
+- **Approval token semantics** - `require_approval` outcomes become `approval_required` unless a locally validated, explicitly provided approval token is present (no cryptography, no user identity, no persistence layer required in v1).
+- **Plan-level evaluation** - when `execute_plan` is present, policy aggregates per-step `policy_evaluation` into `plan_policy_evaluation`, plus step-id groupings (`denied_step_ids`, `approval_required_step_ids`, `allowed_step_ids`, `preferred_step_ids`).
+- **Built-in sandbox defaults & fallbacks** - internal state CRUD inside the configured state-dir is allowed by default (and dry-run is always safe). External side effects (shell/network/message/git/tool and external file writes/deletes) conservatively fall back to `approval_required`. Unknown/unmodeled `target_type` falls back to `approval_required` only for ACT/execution-like contexts, otherwise it becomes a safe `no_match`/allowed outcome.
+- **Evaluation precedence** - explicit `deny` wins over everything; explicit `require_approval` wins over explicit `allow` and `prefer`; `prefer` annotates without overriding explicit denial; built-in fallbacks apply only when stronger explicit rules do not match.
 - **Behavior integration only** - policy can downgrade or block a proposed `ACT` by forcing `ASK` or `RECORD`, but it does not itself execute anything.
 
 ## Verifier v1 (current)

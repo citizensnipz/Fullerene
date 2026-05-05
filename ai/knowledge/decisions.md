@@ -31,6 +31,13 @@ Record decisions that matter later, not every small edit.
 - **Consequences:** Memory owns edge-weight/SQLite graph writes; World Model owns belief confidence and status flags; Learning coordinates signals and proposals. Nexus must expose current-cycle learning artifacts to facets in the same outer `process_event` call before Learning runs.
 - **Supersedes:** n/a (v0 rules remain embedded in `build_learning_result` for compatibility)
 
+## 2026-05-06 - Policy v1 deterministic permission evaluation (approval tokens + plan aggregation)
+
+- **Status:** accepted
+- **Context:** Policy needed to remain explicit and deterministic while becoming more expressive and inspectable: approval gating needed explicit, locally validated approval metadata; evaluation results needed a structured, JSON-serializable decision model including precedence trace; and planner plans/steps needed plan-level policy aggregation so Nexus could reliably downgrade to `ASK`/`RECORD` without bypassing Verifier.
+- **Decision:** Upgrade `PolicyFacet` to Policy v1 by emitting a comprehensive `policy_evaluation` payload (status/effective_action/risk/target fields, approval token validity, fallbacks, reasons/warnings, and `rule_precedence_trace`), adding richer structured matching over explicit action/plan-step context (wildcard targets and deterministic metadata equality/conditions matching), implementing deterministic approval-token semantics for `require_approval` conversions, and adding `execute_plan` aggregation to produce `plan_policy_evaluation` plus per-step lists (`denied_step_ids`, `approval_required_step_ids`, `allowed_step_ids`, `preferred_step_ids`). Preserve v0 deny-wins and do not add LLM policy inference, learned rule acceptance, policy self-modification, external authorization, or Learning-driven automatic rule updates.
+- **Consequences:** Operators and tests can inspect why a decision happened (including which rule was decisive), approval requirements are deterministic and locally validated, and plan-level safety decisions become uniform across Nexus/Behavior/Executor integration. Policy v2+ remains separate for deeper learning/eval harnesses or any future broadened capability work behind explicit ADRs.
+
 ## 2026-05-05 - Nexus v1 deeper pass keeps single-cycle scope and makes Nexus the canonical signal aggregator
 
 - **Status:** accepted

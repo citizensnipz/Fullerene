@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-05-06 - Policy v1 deterministic permission evaluation
+
+- **Context:** Upgrade Policy from v0 to v1 with structured `policy_evaluation`, local approval-token gating, richer action/plan-step matching context, precedence trace explainability, and plan-level `execute_plan` aggregation.
+- **Done:** Implemented/validated Policy v1 evaluation semantics and refined unknown-target fallback so it only triggers for ACT/execution-like contexts; added focused Policy v1 unit tests covering precedence trace, approval token valid/invalid behavior (warnings on failure), metadata conditions matching, unknown target fallback behavior, and plan-step + plan-level aggregation (`plan_policy_evaluation`, step-id groupings).
+- **Verified:** `python -m unittest discover -s tests -p "test*.py" -q` (full suite).
+- **Next:** Policy v2 remains separate—future deeper capability work should be driven by new ADRs (no policy inference, no Learning-owned rule mutation, no executor permission expansion).
+- **Blockers:** None.
+
 ### 2026-05-06 - Verifier v1 artifact/schema validation
 
 - **Context:** Harness called for deterministic validation of Behavior/Nexus/Planner/Executor/Learning artifacts with retry/escalation hints, without LLMs or retries inside Verifier.

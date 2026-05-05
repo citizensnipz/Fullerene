@@ -1289,6 +1289,10 @@ class DeterministicPlanBuilder:
                 )
                 result = policy_evaluator.process(policy_event, state)
                 policy_status = result.metadata.get("policy_status")
+                policy_eval = result.metadata.get("policy_evaluation")
+                if isinstance(policy_eval, dict):
+                    # Preserve step-level v1 policy details for PolicyFacet plan evaluation.
+                    step.metadata["policy_evaluation"] = policy_eval
                 if isinstance(policy_status, str):
                     step.policy_status = policy_status
                 if step.policy_status == PolicyStatus.DENIED.value:
@@ -1300,10 +1304,13 @@ class DeterministicPlanBuilder:
                     all_constraints_satisfied = False
 
             if step.risk_level == RiskLevel.HIGH:
-                step.requires_approval = True
-                if step.status != PlanStepStatus.BLOCKED:
-                    step.status = PlanStepStatus.REQUIRES_APPROVAL
-                all_constraints_satisfied = False
+                # Preserve PolicyFacet v1 approval-token conversions:
+                # if policy explicitly allowed the step, don't force approval.
+                if step.policy_status != PolicyStatus.ALLOWED.value:
+                    step.requires_approval = True
+                    if step.status != PlanStepStatus.BLOCKED:
+                        step.status = PlanStepStatus.REQUIRES_APPROVAL
+                    all_constraints_satisfied = False
 
         return all_constraints_satisfied
 
@@ -1313,7 +1320,40 @@ class DeterministicPlanBuilder:
         metadata = {
             "explicit_action": True,
             "target_type": step.target_type,
+            "plan_step_id": step.id,
+            # Used by PolicyFacet to treat this evaluation as plan-step scoped.
+            "plan_id": None,
+            "risk_level": step.risk_level.value,
+            "action_type": (
+                step.metadata.get("action_type")
+                if isinstance(step.metadata.get("action_type"), str)
+                else None
+            ),
         }
+
+        dry_run = event_metadata.get("dry_run")
+        if isinstance(dry_run, bool):
+            metadata["dry_run"] = dry_run
+        elif dry_run is None:
+            metadata["dry_run"] = True
+
+        metadata["live_mode"] = not bool(metadata.get("dry_run", True))
+
+        target_type_str = str(step.target_type).strip().casefold()
+        metadata["external_side_effect"] = target_type_str in {
+            PolicyTargetType.FILE_WRITE.value,
+            PolicyTargetType.FILE_DELETE.value,
+            PolicyTargetType.SHELL.value,
+            PolicyTargetType.NETWORK.value,
+            PolicyTargetType.MESSAGE.value,
+            PolicyTargetType.GIT.value,
+            PolicyTargetType.TOOL.value,
+        }
+
+        approval = event_metadata.get("approval")
+        if isinstance(approval, dict):
+            metadata["approval"] = approval
+
         for key in ("target", "path", "operation", "tags"):
             if key in step.metadata:
                 metadata[key] = step.metadata[key]

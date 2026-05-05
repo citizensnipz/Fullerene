@@ -63,6 +63,113 @@ class PolicyStatus(str, Enum):
     NO_MATCH = "no_match"
 
 
+class PolicyRiskLevel(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    UNKNOWN = "unknown"
+
+
+class PolicyEffectiveAction(str, Enum):
+    ALLOW = "allow"
+    DENY = "deny"
+    REQUIRE_APPROVAL = "require_approval"
+    PREFER = "prefer"
+    NONE = "none"
+
+
+class PolicyApprovalScope(str, Enum):
+    PLAN_STEP = "plan_step"
+    PLAN = "plan"
+    ACTION = "action"
+    SESSION = "session"
+    NONE = "none"
+
+
+@dataclass(slots=True)
+class PolicyPrecedenceTraceEntry:
+    rule_id: str
+    rule_name: str
+    rule_type: str
+    priority: float
+    match_score: float | None = None
+    match_reason: str | None = None
+    conditions_matched: list[str] = field(default_factory=list)
+    effect: str = ""
+    decisive: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "rule_id": self.rule_id,
+            "name": self.rule_name,
+            "rule_type/action": self.rule_type,
+            "priority": float(self.priority),
+            "match_score": self.match_score,
+            "match_reason": self.match_reason,
+            "conditions_matched": list(self.conditions_matched),
+            "effect": self.effect,
+            "decisive": bool(self.decisive),
+        }
+
+
+@dataclass(slots=True)
+class PolicyEvaluation:
+    """Deterministic v1 policy evaluation (JSON-serializable)."""
+
+    status: str
+    effective_action: str
+    target_type: str | None
+    target: str | None
+    risk_level: str
+
+    matched_rule_ids: list[str] = field(default_factory=list)
+    matched_rule_names: list[str] = field(default_factory=list)
+
+    decisive_rule_id: str | None = None
+    decisive_rule_name: str | None = None
+    decisive_reason: str = ""
+
+    approval_required: bool = False
+    approval_token_required: bool = False
+    approval_token_valid: bool = False
+    approval_scope: str = PolicyApprovalScope.NONE.value
+
+    rule_precedence_trace: list[PolicyPrecedenceTraceEntry] = field(
+        default_factory=list
+    )
+
+    fallback_applied: bool = False
+    sandbox_scope: str = ""
+
+    reasons: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "effective_action": self.effective_action,
+            "target_type": self.target_type,
+            "target": self.target,
+            "risk_level": self.risk_level,
+            "matched_rule_ids": list(self.matched_rule_ids),
+            "matched_rule_names": list(self.matched_rule_names),
+            "decisive_rule_id": self.decisive_rule_id,
+            "decisive_rule_name": self.decisive_rule_name,
+            "decisive_reason": self.decisive_reason,
+            "approval_required": bool(self.approval_required),
+            "approval_token_required": bool(self.approval_token_required),
+            "approval_token_valid": bool(self.approval_token_valid),
+            "approval_scope": self.approval_scope,
+            "rule_precedence_trace": [
+                entry.to_dict() for entry in self.rule_precedence_trace
+            ],
+            "fallback_applied": bool(self.fallback_applied),
+            "sandbox_scope": self.sandbox_scope,
+            "reasons": list(self.reasons),
+            "warnings": list(self.warnings),
+        }
+
+
 def coerce_policy_rule_type(raw_value: Any) -> PolicyRuleType | None:
     if isinstance(raw_value, PolicyRuleType):
         return raw_value

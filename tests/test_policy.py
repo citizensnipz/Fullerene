@@ -5,6 +5,7 @@ import json
 import shutil
 import sqlite3
 import unittest
+from datetime import datetime, timedelta, timezone
 from contextlib import redirect_stdout
 from pathlib import Path
 from uuid import uuid4
@@ -28,10 +29,12 @@ from fullerene.policy import (
     PolicySource,
     PolicyStatus,
     PolicyTargetType,
+    PolicyEffectiveAction,
     SQLitePolicyStore,
 )
 from fullerene.state import FileStateStore, InMemoryStateStore
 from fullerene.world_model import Belief, SQLiteWorldModelStore
+from fullerene.planner import DeterministicPlanBuilder
 
 
 def make_tempdir_path() -> Path:
@@ -372,6 +375,363 @@ class PolicyFacetTests(unittest.TestCase):
             PolicyStatus.APPROVAL_REQUIRED.value,
         )
         self.assertEqual(result.metadata["effective_policy"]["id"], "approval-high")
+
+    def test_v1_precedence_trace_decisive_deny_beats_allow_and_prefer(self) -> None:
+        self.store.add_policy(
+            PolicyRule(
+                id="allow-shell",
+                name="Allow shell",
+                description="Allow shell use.",
+                rule_type=PolicyRuleType.ALLOW,
+                target_type=PolicyTargetType.SHELL,
+                target="*",
+                priority=5.0,
+            )
+        )
+        self.store.add_policy(
+            PolicyRule(
+                id="prefer-shell",
+                name="Prefer shell logging",
+                description="Prefer logging shell activity.",
+                rule_type=PolicyRuleType.PREFER,
+                target_type=PolicyTargetType.SHELL,
+                target="*",
+                priority=2.0,
+            )
+        )
+        self.store.add_policy(
+            PolicyRule(
+                id="deny-shell",
+                name="Deny shell",
+                description="Deny shell use.",
+                rule_type=PolicyRuleType.DENY,
+                target_type=PolicyTargetType.SHELL,
+                target="*",
+                priority=8.0,
+            )
+        )
+
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="run a shell command",
+                metadata={"explicit_action": True, "target_type": "shell"},
+            ),
+            NexusState(),
+        )
+
+        self.assertEqual(result.metadata["policy_status"], PolicyStatus.DENIED.value)
+        policy_eval = result.metadata["policy_evaluation"]
+        self.assertEqual(policy_eval["decisive_rule_id"], "deny-shell")
+        decisive_entries = [
+            entry
+            for entry in policy_eval.get("rule_precedence_trace", [])
+            if entry.get("decisive") is True
+        ]
+        self.assertTrue(decisive_entries)
+        self.assertEqual(decisive_entries[0]["rule_id"], "deny-shell")
+        self.assertEqual(decisive_entries[0]["effect"], "deny")
+
+    def test_v1_require_approval_wins_without_token(self) -> None:
+        self.store.add_policy(
+            PolicyRule(
+                id="allow-shell",
+                name="Allow shell",
+                description="Allow shell use.",
+                rule_type=PolicyRuleType.ALLOW,
+                target_type=PolicyTargetType.SHELL,
+                target="*",
+                priority=5.0,
+            )
+        )
+        self.store.add_policy(
+            PolicyRule(
+                id="require-approval-shell",
+                name="Require approval for shell",
+                description="Require approval before shell commands.",
+                rule_type=PolicyRuleType.REQUIRE_APPROVAL,
+                target_type=PolicyTargetType.SHELL,
+                target="*",
+                priority=10.0,
+            )
+        )
+
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="run a shell command",
+                metadata={"explicit_action": True, "target_type": "shell"},
+            ),
+            NexusState(),
+        )
+
+        self.assertEqual(
+            result.metadata["policy_status"], PolicyStatus.APPROVAL_REQUIRED.value
+        )
+        self.assertEqual(result.proposed_decision, DecisionAction.ASK)
+        policy_eval = result.metadata["policy_evaluation"]
+        self.assertTrue(policy_eval["approval_required"])
+        self.assertTrue(policy_eval["approval_token_required"])
+        self.assertFalse(policy_eval["approval_token_valid"])
+
+    def test_v1_valid_approval_token_converts_require_approval_to_allowed(self) -> None:
+        self.store.add_policy(
+            PolicyRule(
+                id="require-approval-shell",
+                name="Require approval for shell",
+                description="Require approval before shell commands.",
+                rule_type=PolicyRuleType.REQUIRE_APPROVAL,
+                target_type=PolicyTargetType.SHELL,
+                target="*",
+                priority=10.0,
+            )
+        )
+        approval = {
+            "approved": True,
+            "token": "t1",
+            "scope": "action",
+            "target_type": "shell",
+            "target": "*",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        }
+
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="run a shell command",
+                metadata={
+                    "explicit_action": True,
+                    "target_type": "shell",
+                    "approval": approval,
+                },
+            ),
+            NexusState(),
+        )
+
+        self.assertEqual(result.metadata["policy_status"], PolicyStatus.ALLOWED.value)
+        self.assertIsNone(result.proposed_decision)
+        policy_eval = result.metadata["policy_evaluation"]
+        self.assertTrue(policy_eval["approval_token_valid"])
+        self.assertFalse(policy_eval["approval_required"])
+        self.assertEqual(
+            policy_eval["effective_action"], PolicyEffectiveAction.ALLOW.value
+        )
+        self.assertEqual(policy_eval["decisive_rule_id"], "require-approval-shell")
+
+    def test_v1_invalid_approval_token_keeps_approval_required_and_warns(self) -> None:
+        self.store.add_policy(
+            PolicyRule(
+                id="require-approval-shell",
+                name="Require approval for shell",
+                description="Require approval before shell commands.",
+                rule_type=PolicyRuleType.REQUIRE_APPROVAL,
+                target_type=PolicyTargetType.SHELL,
+                target="*",
+                priority=10.0,
+            )
+        )
+
+        # Invalid because the token is marked approved, but scope doesn't match
+        # ACTION evaluation and the token is expired.
+        approval = {
+            "approved": True,
+            "token": "t1",
+            "scope": "plan_step",
+            "target_type": "shell",
+            "target": "*",
+            "expires_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+        }
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="run a shell command",
+                metadata={
+                    "explicit_action": True,
+                    "target_type": "shell",
+                    "approval": approval,
+                },
+            ),
+            NexusState(),
+        )
+
+        self.assertEqual(
+            result.metadata["policy_status"], PolicyStatus.APPROVAL_REQUIRED.value
+        )
+        policy_eval = result.metadata["policy_evaluation"]
+        self.assertFalse(policy_eval["approval_token_valid"])
+        self.assertTrue(policy_eval.get("warnings"))
+        self.assertTrue(
+            any("approval_token" in w.lower() for w in policy_eval.get("warnings", []))
+        )
+
+    def test_v1_condition_matching_metadata_dictionary_values(self) -> None:
+        self.store.add_policy(
+            PolicyRule(
+                id="allow-shell-noop",
+                name="Allow shell when action_type matches",
+                description="Condition match on action_type for shell operations.",
+                rule_type=PolicyRuleType.ALLOW,
+                target_type=PolicyTargetType.SHELL,
+                target="*",
+                priority=10.0,
+                conditions={"action_type": "noop"},
+            )
+        )
+
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="run a shell command",
+                metadata={
+                    "explicit_action": True,
+                    "target_type": "shell",
+                    "action_type": "noop",
+                },
+            ),
+            NexusState(),
+        )
+
+        self.assertEqual(result.metadata["policy_status"], PolicyStatus.ALLOWED.value)
+        policy_eval = result.metadata["policy_evaluation"]
+        self.assertIn("allow-shell-noop", policy_eval["matched_rule_ids"])
+        trace_entries = policy_eval.get("rule_precedence_trace", [])
+        self.assertTrue(
+            any(
+                entry.get("rule_id") == "allow-shell-noop"
+                and "action_type" in entry.get("conditions_matched", [])
+                for entry in trace_entries
+            )
+        )
+
+    def test_v1_unknown_target_type_fallback_applies_for_act_context(self) -> None:
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="do something execution-like",
+                metadata={
+                    "explicit_action": True,
+                    "target_type": "unmodeled_target_type",
+                    "target": "something",
+                },
+            ),
+            NexusState(facet_state={"behavior": {"last_selected_decision": "act"}}),
+        )
+
+        policy_eval = result.metadata["policy_evaluation"]
+        self.assertEqual(result.metadata["policy_status"], PolicyStatus.APPROVAL_REQUIRED.value)
+        self.assertTrue(policy_eval["fallback_applied"])
+        self.assertEqual(policy_eval["sandbox_scope"], "unknown_target_type_fallback")
+        self.assertTrue(
+            any("unknown_target_type_fallback" in r for r in policy_eval.get("reasons", []))
+        )
+
+    def test_v1_plan_level_aggregation_denied_over_approval_and_allowed(self) -> None:
+        plan_dict = {
+            "id": "plan-1",
+            "steps": [
+                {
+                    "id": "s-denied",
+                    "target_type": PolicyTargetType.SHELL.value,
+                    "risk_level": "high",
+                    "policy_status": PolicyStatus.DENIED.value,
+                    "metadata": {
+                        "policy_evaluation": {
+                            "status": PolicyStatus.DENIED.value,
+                            "effective_action": PolicyEffectiveAction.DENY.value,
+                            "decisive_reason": "explicit_deny_wins",
+                        }
+                    },
+                },
+                {
+                    "id": "s-approval",
+                    "target_type": PolicyTargetType.SHELL.value,
+                    "risk_level": "medium",
+                    "policy_status": PolicyStatus.APPROVAL_REQUIRED.value,
+                    "metadata": {
+                        "policy_evaluation": {
+                            "status": PolicyStatus.APPROVAL_REQUIRED.value,
+                            "effective_action": PolicyEffectiveAction.REQUIRE_APPROVAL.value,
+                            "decisive_reason": "approval_required_rule",
+                        }
+                    },
+                },
+                {
+                    "id": "s-allowed",
+                    "target_type": PolicyTargetType.INTERNAL_STATE.value,
+                    "risk_level": "low",
+                    "policy_status": PolicyStatus.ALLOWED.value,
+                    "metadata": {
+                        "policy_evaluation": {
+                            "status": PolicyStatus.ALLOWED.value,
+                            "effective_action": PolicyEffectiveAction.ALLOW.value,
+                            "decisive_reason": "baseline_internal_state_allow",
+                        }
+                    },
+                },
+            ],
+        }
+
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="execute plan",
+                metadata={"execute_plan": True},
+            ),
+            NexusState(facet_state={"planner": {"last_plan": plan_dict}}),
+        )
+
+        self.assertEqual(result.metadata["policy_status"], PolicyStatus.DENIED.value)
+        self.assertEqual(result.proposed_decision, DecisionAction.RECORD)
+        self.assertEqual(result.metadata["denied_step_ids"], ["s-denied"])
+        self.assertEqual(result.metadata["approval_required_step_ids"], ["s-approval"])
+        self.assertEqual(result.metadata["allowed_step_ids"], ["s-allowed"])
+        self.assertEqual(
+            result.metadata["plan_policy_evaluation"]["effective_action"],
+            PolicyEffectiveAction.DENY.value,
+        )
+
+    def test_v1_plan_step_approval_token_converts_require_approval_to_allowed(self) -> None:
+        self.store.add_policy(
+            PolicyRule(
+                id="req-file-write",
+                name="Require approval file write",
+                description="Require approval before file writes.",
+                rule_type=PolicyRuleType.REQUIRE_APPROVAL,
+                target_type=PolicyTargetType.FILE_WRITE,
+                target="*",
+                priority=10.0,
+            )
+        )
+
+        builder = DeterministicPlanBuilder(policy_store=self.store, state_dir=self.root)
+        approval = {
+            "approved": True,
+            "token": "t1",
+            "scope": "plan_step",
+            "target_type": "file_write",
+            "target": "*",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+        }
+        plan = builder.build(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="make a plan for this",
+                metadata={
+                    "explicit_action": True,
+                    "target_type": "file_write",
+                    "approval": approval,
+                },
+            ),
+            NexusState(),
+        )
+
+        self.assertIsNotNone(plan)
+        assert plan is not None
+        last_step = plan.steps[-1]
+        self.assertEqual(last_step.target_type, "file_write")
+        self.assertEqual(last_step.policy_status, PolicyStatus.ALLOWED.value)
+        self.assertFalse(last_step.requires_approval)
+        self.assertIn("policy_evaluation", last_step.metadata)
 
 
 class PolicyRuntimeIntegrationTests(unittest.TestCase):

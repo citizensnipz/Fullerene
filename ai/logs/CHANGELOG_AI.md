@@ -25,6 +25,12 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 - Updated `fullerene/facets/learning.py` and `fullerene/cli.py` to pass optional `world_model_store` into Learning.
 - Added `tests/test_learning.LearningV1ComplianceTests`; full suite remains green.
 
+### 2026-05-06 (policy v1)
+
+- Upgraded `fullerene/facets/policy.py` to deterministic Policy v1: structured `policy_evaluation` output, richer action/plan-step matching context, local approval-token gating, plan-level aggregation (`plan_policy_evaluation`, per-step ids), explicit built-in sandbox fallbacks, and `rule_precedence_trace` explainability.
+- Added comprehensive Policy v1 tests in `tests/test_policy.py` (precedence/decisive trace, approval token valid/invalid behavior + warnings, conditions matching, unknown target-type fallback semantics, and plan-step aggregation + execute_plan hook).
+- Updated harness docs (`ai/project/architecture.md`, `ai/knowledge/glossary.md`, `ai/knowledge/decisions.md`, this changelog, and `ai/logs/SESSION_LOG.md`) to reflect Policy v1 as the current permission/approval layer.
+
 ### 2026-05-05 (nexus v1 deeper pass)
 
 - Updated `fullerene/nexus/models.py` with `CycleSignalMap` (deterministic JSON-serializable canonical per-cycle signal shape) and exported it from `fullerene/nexus/__init__.py`.
