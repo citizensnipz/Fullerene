@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-05-06 - Latent Pressure Buffer v1 signal infrastructure
+
+- **Context:** `latent_pressure` existed as a pressure slot but not as persistent inspectable unresolved-pressure tracking.
+- **Done:** Added LPB v1 under `fullerene/signals/latent_pressure/` (entry/result models + buffer update logic), integrated LPB into Nexus runtime as support infrastructure (not a facet), persisted LPB under `facet_state["signals"]["latent_pressure"]`, exposed LPB metadata on record/cycle trace, and wired pressure aggregation to LPB `latent_pressure_total`; Behavior now reads prior LPB totals via state adapter when explicit metadata is absent.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -v`; `python -m fullerene --event-type user_message --content "hello nexus" --state-dir state/.fullerene-state`; `python -m fullerene --full --latent-pressure --json --content "what should I do next?"`
+- **Next:** Potential LPB v2 work: deeper Attention/Context candidate reinsertion and richer resolver hooks while keeping LPB non-facet infrastructure.
+- **Blockers:** None.
+
 ### 2026-05-06 - Policy v1 deterministic permission evaluation
 
 - **Context:** Upgrade Policy from v0 to v1 with structured `policy_evaluation`, local approval-token gating, richer action/plan-step matching context, precedence trace explainability, and plan-level `execute_plan` aggregation.

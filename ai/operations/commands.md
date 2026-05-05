@@ -16,6 +16,7 @@ python -m fullerene --event-type user_message --content "hello nexus" --state-di
 python -m fullerene --memory --content "hello memory"
 python -m fullerene --memory --behavior --content "don't ever skip my boss emails"
 python -m fullerene --behavior --content "what should I do next?"
+python -m fullerene --full --latent-pressure --json --content "what should I do next?"
 ```
 
 ## Tests

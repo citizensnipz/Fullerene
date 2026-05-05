@@ -7,6 +7,7 @@ Terms for harness and design discussions. Definitions follow the current repo wh
 | **Facet** | One of twelve modular components (Memory through Learning); the current v0 terminology uses **Behavior** in place of the earlier confidence/decision placeholder. |
 | **Nexus** | Central interpreter/integrator loop that accepts events, asks facets for results, integrates a decision, and persists runtime state/logs. |
 | **CycleSignalMap** | Canonical per-cycle Nexus signal packet. It normalizes inspectable cross-facet signals (pressure components, policy/verifier flags, grounding and relevance signals, interrupt recommendation, learning-event count, and internal-event queue/process flags) into a deterministic JSON-serializable shape. |
+| **Latent Pressure Buffer (LPB)** | Signal infrastructure (not a canonical facet) that tracks unresolved pressure entries across cycles, applies conservative decay/escalation, computes bounded `latent_pressure_total`, and emits ignition recommendations as metadata only. LPB does not execute actions, does not speak, and does not run background loops. |
 | **Conductor** | Deprecated harness-era name for the runtime loop; use **Nexus** for implemented runtime behavior. |
 | **Event** | Typed runtime input such as a user message, system tick, or system note. |
 | **Behavior Facet** | Deterministic decision-policy layer that proposes whether Fullerene should `WAIT`, `RECORD`, `ASK`, or `ACT`, along with inspectable reasons, tags, salience, and confidence. `ACT` is still only a typed proposal in v0. |

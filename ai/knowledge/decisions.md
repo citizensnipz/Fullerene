@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-05-06 - Latent Pressure Buffer v1 is Nexus-owned signal infrastructure, not a facet
+
+- **Status:** accepted
+- **Context:** Fullerene already had a `latent_pressure` slot in pressure aggregation, but it was not a persistent inspectable subsystem and could not track unresolved pressure recurrence/decay across cycles.
+- **Decision:** Implement LPB v1 under `fullerene/signals/latent_pressure/` as reusable support infrastructure (`LatentPressureEntry`, `LatentPressureResult`, `update_latent_pressure`) and integrate it directly in Nexus runtime after facet results and before final persistence. Persist LPB state under `facet_state["signals"]["latent_pressure"]`; expose LPB result metadata on `NexusRecord`; feed LPB `latent_pressure_total` into `CycleSignalMap` pressure components. LPB remains non-facet infrastructure and does not execute actions, emit user-facing speech, run autonomous loops, or perform LLM calls.
+- **Consequences:** Latent pressure is now deterministic, bounded, JSON-inspectable, and persistent across cycles. Behavior/Nexus can consume LPB totals without adding a 13th facet. Deeper Attention/Context reinsertion behavior remains future work.
+
 ## 2026-05-06 - Verifier v1 is deterministic artifact/schema validation with retry hints only
 
 - **Status:** accepted

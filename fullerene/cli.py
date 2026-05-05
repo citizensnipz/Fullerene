@@ -166,6 +166,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable all implemented runtime facets for this run.",
     )
     parser.add_argument(
+        "--latent-pressure",
+        action="store_true",
+        help=(
+            "Enable latent pressure support metadata in runtime output. "
+            "LPB infrastructure is integrated into Nexus and persists regardless."
+        ),
+    )
+    parser.add_argument(
         "--memory",
         action="store_true",
         help="Enable the SQLite-backed MemoryFacet for this run.",

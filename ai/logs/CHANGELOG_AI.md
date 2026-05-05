@@ -9,6 +9,14 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-06 (latent pressure buffer v1)
+
+- Added `fullerene/signals/latent_pressure/` (`models.py`, `buffer.py`, `__init__.py`) with serializable `LatentPressureEntry` / `LatentPressureResult`, bounded extraction/dedup/escalation/decay/resolution logic, weighted top-entry total, and ignition recommendation metadata.
+- Updated `fullerene/nexus/runtime.py` to run LPB as support infrastructure (not a registered facet), persist LPB under `facet_state["signals"]["latent_pressure"]`, expose LPB result metadata on records/cycle trace, and consume `latent_pressure_total` for pressure aggregation.
+- Updated `fullerene/facets/behavior.py` latent-pressure adapter to read prior LPB totals from Nexus state when explicit metadata is absent.
+- Added `tests/test_latent_pressure.py` plus `tests/test_nexus_runtime.py` expectation updates for LPB-backed latent pressure.
+- Updated harness docs (`architecture`, `glossary`, `decisions`, `commands`, this changelog, and session log) to clarify LPB as supporting signal infrastructure rather than a canonical facet.
+
 ### 2026-05-06 (verifier v1)
 
 - Added `fullerene/verifier/artifacts.py` with deterministic validators for Behavior v2 `decision_trace`, Nexus signal map / verifier cycle snapshot, Planner plan hooks, Executor results, Learning v1 applied/provenance/policy rules, policy status serializability, and Context `context_load` consistency (warnings on soft issues; critical/error when safety demands).

@@ -54,6 +54,7 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - Persist compact `cycle_trace` metadata each cycle (decisions, pressure before/after, pressure components, signal map, learning events, queued/processed internal events, verifier adjustments, and source facets).
 - Avoid autonomous external tool execution; `ACT` is still only a typed decision, and Executor v0 only records or applies approved internal state actions.
 - Scope guardrail: this deeper pass is still **single-cycle orchestration only**; it is not an always-on daemon loop, sleep/wake system, dynamic suppression engine, or autonomous expression system.
+- Latent Pressure Buffer (LPB) v1 now runs as **signal infrastructure** under `fullerene/signals/latent_pressure/` (not a canonical facet). Nexus calls LPB after facet results are available, persists LPB state under `facet_state["signals"]["latent_pressure"]`, exposes LPB metadata on records (`latent_pressure`, `latent_pressure_result`, top entries, ignition recommendation), and feeds `latent_pressure_total` into pressure aggregation.
 
 ## Data stores (current v0)
 

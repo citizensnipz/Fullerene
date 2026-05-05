@@ -769,6 +769,17 @@ class BehaviorFacet:
         explicit = BehaviorFacet._numeric_unit_value(metadata.get("latent_pressure"))
         if explicit is not None:
             return explicit
+        signals_state = state.facet_state.get("signals")
+        if isinstance(signals_state, dict):
+            latent_state = signals_state.get("latent_pressure")
+            if isinstance(latent_state, dict):
+                last_result = latent_state.get("last_result")
+                if isinstance(last_result, dict):
+                    total = BehaviorFacet._numeric_unit_value(
+                        last_result.get("latent_pressure_total")
+                    )
+                    if total is not None:
+                        return total
         attention_state = state.facet_state.get("attention")
         if isinstance(attention_state, dict):
             contribution = BehaviorFacet._numeric_unit_value(

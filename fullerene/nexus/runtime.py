@@ -16,6 +16,7 @@ from fullerene.nexus.models import (
     NexusState,
 )
 from fullerene.policy.models import PolicyStatus
+from fullerene.signals.latent_pressure import update_latent_pressure
 from fullerene.state.store import InMemoryStateStore, StateStore
 
 # Higher score wins when multiple facets explicitly propose a decision.
@@ -147,6 +148,7 @@ class Nexus:
             learning_events=[],
             internal_event_queued=False,
             internal_event_processed=False,
+            latent_pressure_total=0.0,
         )
         working_state.system_pressure = signal_map.system_pressure
         pressure_components = dict(signal_map.pressure_components)
@@ -214,6 +216,7 @@ class Nexus:
                     learning_events=cycle_learning_events,
                     internal_event_queued=bool(internal_events_queued),
                     internal_event_processed=False,
+                    latent_pressure_total=self._latest_latent_pressure_total(working_state),
                 )
                 working_state.system_pressure = signal_map.system_pressure
                 pressure_components = dict(signal_map.pressure_components)
@@ -265,6 +268,7 @@ class Nexus:
                 learning_events=cycle_learning_events,
                 internal_event_queued=bool(internal_events_queued),
                 internal_event_processed=False,
+                latent_pressure_total=self._latest_latent_pressure_total(working_state),
             )
             working_state.system_pressure = signal_map.system_pressure
             pressure_components = dict(signal_map.pressure_components)
@@ -278,6 +282,12 @@ class Nexus:
                         "reason": verifier_result.summary,
                     }
                 )
+        lpb_state, lpb_result = update_latent_pressure(
+            event=event,
+            state=working_state,
+            facet_results=facet_results,
+        )
+        working_state.facet_state.setdefault("signals", {})["latent_pressure"] = lpb_state
         signal_map = self._build_cycle_signal_map(
             event=event,
             state=working_state,
@@ -285,8 +295,10 @@ class Nexus:
             learning_events=cycle_learning_events,
             internal_event_queued=bool(internal_events_queued),
             internal_event_processed=False,
+            latent_pressure_total=lpb_result.latent_pressure_total,
         )
         system_pressure = signal_map.system_pressure
+        pressure_components = dict(signal_map.pressure_components)
         working_state.system_pressure = system_pressure
         self.state = working_state
         self.state.apply(
@@ -307,6 +319,7 @@ class Nexus:
             "pressure_after": round(system_pressure, 3),
             "pressure_components": dict(pressure_components),
             "signal_map": signal_map.to_dict(),
+            "latent_pressure_result": lpb_result.to_dict(),
             "learning_events": list(cycle_learning_events),
             "internal_events_queued": list(internal_events_queued),
             "internal_events_processed": [],
@@ -317,6 +330,7 @@ class Nexus:
             {
                 "last_cycle_signal_map": signal_map.to_dict(),
                 "last_cycle_trace": cycle_trace,
+                "last_latent_pressure_result": lpb_result.to_dict(),
                 "last_system_pressure": round(system_pressure, 3),
                 "last_pressure_components": dict(pressure_components),
                 "last_learning_events": list(cycle_learning_events),
@@ -333,6 +347,11 @@ class Nexus:
                 "system_pressure": system_pressure,
                 "pressure_components": dict(pressure_components),
                 "signal_map": signal_map.to_dict(),
+                "latent_pressure": signal_map.latent_pressure,
+                "latent_pressure_result": lpb_result.to_dict(),
+                "top_latent_pressure_entries": lpb_result.to_dict().get("top_entries", []),
+                "latent_pressure_ignition_recommended": lpb_result.ignition_recommended,
+                "latent_pressure_ignition_reason": lpb_result.ignition_reason,
                 "cycle_learning_events": list(cycle_learning_events),
                 "learning_event_count": len(cycle_learning_events),
                 "cycle_trace": cycle_trace,
@@ -465,6 +484,7 @@ class Nexus:
         learning_events: list[dict[str, Any]],
         internal_event_queued: bool,
         internal_event_processed: bool,
+        latent_pressure_total: float,
     ) -> CycleSignalMap:
         behavior_metadata = self._latest_facet_metadata(facet_results, "behavior")
         attention_metadata = self._latest_facet_metadata(facet_results, "attention")
@@ -478,11 +498,7 @@ class Nexus:
             attention_metadata=attention_metadata,
             state=state,
         )
-        latent_pressure = self._resolve_latent_pressure(
-            event=event,
-            behavior_metadata=behavior_metadata,
-            state=state,
-        )
+        latent_pressure = self._clamp_unit(latent_pressure_total)
         context_load_ratio, context_overloaded = self._resolve_context_load(
             context_metadata=context_metadata,
             behavior_metadata=behavior_metadata,
@@ -587,27 +603,17 @@ class Nexus:
             return round(peak * 0.2, 3)
         return 0.0
 
-    def _resolve_latent_pressure(
-        self,
-        *,
-        event: Event,
-        behavior_metadata: dict[str, Any],
-        state: NexusState,
-    ) -> float:
-        for raw in (
-            behavior_metadata.get("latent_pressure"),
-            event.metadata.get("latent_pressure"),
-        ):
-            value = self._numeric_unit(raw)
-            if value is not None:
-                return value
-        attention_state = state.facet_state.get("attention")
-        if isinstance(attention_state, dict):
-            value = self._numeric_unit(
-                attention_state.get("last_attention_pressure_contribution")
-            )
-            if value is not None:
-                return value
+    @staticmethod
+    def _latest_latent_pressure_total(state: NexusState) -> float:
+        signals = state.facet_state.get("signals")
+        if not isinstance(signals, dict):
+            return 0.0
+        latent = signals.get("latent_pressure")
+        if not isinstance(latent, dict):
+            return 0.0
+        result = latent.get("last_result")
+        if isinstance(result, dict):
+            return Nexus._clamp_unit(result.get("latent_pressure_total", 0.0))
         return 0.0
 
     def _resolve_context_load(
