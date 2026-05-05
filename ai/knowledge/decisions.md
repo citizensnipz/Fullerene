@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-05-05 - Nexus v1 deeper pass keeps single-cycle scope and makes Nexus the canonical signal aggregator
+
+- **Status:** accepted
+- **Context:** Behavior v2, Attention v1, Context v1, Planner v1, Verifier v0, and Learning v0 already emitted useful metadata, but cross-facet signals were spread across facet payloads and pressure aggregation was implicit/averaged rather than a single canonical inspectable map owned by Nexus.
+- **Decision:** Keep Nexus v1 as a bounded single-cycle runtime (no always-on daemon loop, no sleep/wake cycle, no dynamic suppression/reordering, no autonomous expression), and add a canonical per-cycle `CycleSignalMap` in Nexus. Compute `system_pressure` from explicit components (`event_pressure + attention_pressure + latent_pressure + contradiction_pressure + context_overload_pressure + interrupt_pressure`, clamped to `[0.0, 1.0]`) and persist `pressure_components`. Collect facet `learning_event` payloads into cycle metadata/trace only. Allow Behavior interrupt recommendations to queue at most one inspectable internal event candidate per outer `process_event` call, with no same-call recursive expansion. Persist compact `cycle_trace` and last-cycle nexus state artifacts for inspection/debugging.
+- **Consequences:** Nexus now owns canonical cross-facet signal aggregation and exposes deterministic inspectable cycle artifacts without widening authority boundaries. Behavior v2 traces are captured but not directly consumed by Learning yet. Nexus v2 can later build continuous orchestration on top of these inspectable artifacts without rewriting this bounded v1 contract.
+
 ## 2026-05-05 - Memory v2 adds optional embedding index, role/domain classification, hybrid retrieval, and bounded write-time edges
 
 - **Status:** accepted

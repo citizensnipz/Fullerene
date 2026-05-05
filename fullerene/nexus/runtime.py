@@ -6,6 +6,7 @@ from typing import Any, Iterable
 
 from fullerene.facets.base import Facet
 from fullerene.nexus.models import (
+    CycleSignalMap,
     DecisionAction,
     Event,
     EventType,
@@ -91,22 +92,33 @@ class Nexus:
         primary_record, internal_events = self._process_event_cycle(
             event,
             collect_internal_events=True,
+            allow_behavior_interrupt_queue=True,
         )
         internal_records: list[NexusRecord] = []
+        processed_internal_events: list[dict[str, Any]] = []
         if internal_events:
             internal_event = internal_events[0]
             internal_record, _ = self._process_event_cycle(
                 internal_event,
                 collect_internal_events=False,
+                allow_behavior_interrupt_queue=False,
             )
             internal_records.append(internal_record)
-            primary_record.metadata["internal_events_processed"] = [
-                internal_event.to_dict()
-            ]
+            processed_internal_events = [internal_event.to_dict()]
+            primary_record.metadata["internal_events_processed"] = processed_internal_events
             primary_record.metadata["internal_events_dropped"] = max(
                 len(internal_events) - 1,
                 0,
             )
+            signal_map = self._dict_payload(primary_record.metadata.get("signal_map"))
+            signal_map["internal_event_processed"] = True
+            primary_record.metadata["signal_map"] = signal_map
+            cycle_trace = self._dict_payload(primary_record.metadata.get("cycle_trace"))
+            cycle_trace["internal_events_processed"] = list(processed_internal_events)
+            primary_record.metadata["cycle_trace"] = cycle_trace
+            self.state.facet_state.setdefault("nexus", {})[
+                "last_internal_events_processed"
+            ] = list(processed_internal_events)
 
         self._store.save_state(self.state)
         self._store.append_record(primary_record)
@@ -119,18 +131,30 @@ class Nexus:
         event: Event,
         *,
         collect_internal_events: bool,
+        allow_behavior_interrupt_queue: bool,
     ) -> tuple[NexusRecord, list[Event]]:
         working_state = NexusState.from_dict(self.state.to_dict())
-        working_state.system_pressure = self._aggregate_pressure(
-            event,
-            working_state,
-            [],
-        )
         facet_results: list[FacetResult] = []
         internal_events: list[Event] = []
+        cycle_learning_events: list[dict[str, Any]] = []
         phase_execution_order: list[dict[str, Any]] = []
         facet_outputs_by_phase: dict[str, list[dict[str, Any]]] = {}
         phase_buckets = self._phase_buckets(self._facets)
+        signal_map = self._build_cycle_signal_map(
+            event=event,
+            state=working_state,
+            facet_results=[],
+            learning_events=[],
+            internal_event_queued=False,
+            internal_event_processed=False,
+        )
+        working_state.system_pressure = signal_map.system_pressure
+        pressure_components = dict(signal_map.pressure_components)
+        pressure_before = self._clamp_unit(signal_map.system_pressure)
+        initial_decision: NexusDecision | None = None
+        verifier_adjustments: list[dict[str, Any]] = []
+        decision_source_facets: list[str] = []
+        internal_events_queued: list[dict[str, Any]] = []
 
         for phase_name in PHASE_ORDER:
             phase_facets = phase_buckets.get(phase_name, [])
@@ -158,18 +182,39 @@ class Nexus:
                 result = self._run_facet(facet, event, working_state)
                 emitted_events = self._extract_internal_events(result)
                 self._normalize_internal_event_metadata(result)
+                behavior_interrupt_event = self._behavior_interrupt_event_candidate(
+                    result=result,
+                    event=event,
+                    signal_map=signal_map,
+                )
+                if (
+                    collect_internal_events
+                    and allow_behavior_interrupt_queue
+                    and behavior_interrupt_event is not None
+                ):
+                    internal_events.append(behavior_interrupt_event)
+                    internal_events_queued.append(behavior_interrupt_event.to_dict())
+                    signal_map.internal_event_queued = True
                 if collect_internal_events:
                     internal_events.extend(emitted_events)
                 facet_results.append(result)
+                cycle_learning_events.extend(self._extract_learning_events(result))
                 phase_outputs.append(self._facet_output_summary(result))
                 self._apply_result_to_state(working_state, result)
-                working_state.system_pressure = self._aggregate_pressure(
-                    event,
-                    working_state,
-                    facet_results,
+                signal_map = self._build_cycle_signal_map(
+                    event=event,
+                    state=working_state,
+                    facet_results=facet_results,
+                    learning_events=cycle_learning_events,
+                    internal_event_queued=bool(internal_events_queued),
+                    internal_event_processed=False,
                 )
+                working_state.system_pressure = signal_map.system_pressure
+                pressure_components = dict(signal_map.pressure_components)
             facet_outputs_by_phase[phase_label] = phase_outputs
         decision = self._integrate(event, facet_results)
+        initial_decision = decision
+        decision_source_facets = list(decision.source_facets)
 
         verifier_facets = [
             facet
@@ -193,15 +238,38 @@ class Nexus:
             if collect_internal_events:
                 internal_events.extend(emitted_events)
             facet_results.append(verifier_result)
+            cycle_learning_events.extend(self._extract_learning_events(verifier_result))
             verifier_outputs.append(self._facet_output_summary(verifier_result))
             self._apply_result_to_state(working_state, verifier_result)
-            working_state.system_pressure = self._aggregate_pressure(
-                event,
-                working_state,
-                facet_results,
+            signal_map = self._build_cycle_signal_map(
+                event=event,
+                state=working_state,
+                facet_results=facet_results,
+                learning_events=cycle_learning_events,
+                internal_event_queued=bool(internal_events_queued),
+                internal_event_processed=False,
             )
+            working_state.system_pressure = signal_map.system_pressure
+            pressure_components = dict(signal_map.pressure_components)
+            pre_verifier_action = decision.action
             decision = self._apply_verifier_decision(decision, verifier_result)
-        system_pressure = self._aggregate_pressure(event, working_state, facet_results)
+            if decision.action != pre_verifier_action:
+                verifier_adjustments.append(
+                    {
+                        "from": pre_verifier_action.value,
+                        "to": decision.action.value,
+                        "reason": verifier_result.summary,
+                    }
+                )
+        signal_map = self._build_cycle_signal_map(
+            event=event,
+            state=working_state,
+            facet_results=facet_results,
+            learning_events=cycle_learning_events,
+            internal_event_queued=bool(internal_events_queued),
+            internal_event_processed=False,
+        )
+        system_pressure = signal_map.system_pressure
         working_state.system_pressure = system_pressure
         self.state = working_state
         self.state.apply(
@@ -210,6 +278,35 @@ class Nexus:
             decision,
             system_pressure=system_pressure,
         )
+        cycle_trace = {
+            "event_id": event.event_id,
+            "facet_order": [self._facet_name(facet) for facet in self._facets],
+            "facet_results_seen": [result.facet_name for result in facet_results],
+            "initial_decision": (
+                initial_decision.action.value if initial_decision is not None else None
+            ),
+            "final_decision": decision.action.value,
+            "pressure_before": round(pressure_before, 3),
+            "pressure_after": round(system_pressure, 3),
+            "pressure_components": dict(pressure_components),
+            "signal_map": signal_map.to_dict(),
+            "learning_events": list(cycle_learning_events),
+            "internal_events_queued": list(internal_events_queued),
+            "internal_events_processed": [],
+            "verifier_adjustments": verifier_adjustments,
+            "decision_source_facets": list(decision_source_facets),
+        }
+        self.state.facet_state.setdefault("nexus", {}).update(
+            {
+                "last_cycle_signal_map": signal_map.to_dict(),
+                "last_cycle_trace": cycle_trace,
+                "last_system_pressure": round(system_pressure, 3),
+                "last_pressure_components": dict(pressure_components),
+                "last_learning_events": list(cycle_learning_events),
+                "last_internal_events_queued": list(internal_events_queued),
+                "last_internal_events_processed": [],
+            }
+        )
 
         record = NexusRecord(
             event=event,
@@ -217,6 +314,11 @@ class Nexus:
             decision=decision,
             metadata={
                 "system_pressure": system_pressure,
+                "pressure_components": dict(pressure_components),
+                "signal_map": signal_map.to_dict(),
+                "cycle_learning_events": list(cycle_learning_events),
+                "learning_event_count": len(cycle_learning_events),
+                "cycle_trace": cycle_trace,
                 "phase_execution_order": phase_execution_order,
                 "facet_outputs_by_phase": facet_outputs_by_phase,
                 "internal_events_processed": [],
@@ -338,32 +440,179 @@ class Nexus:
             "state_updated": bool(result.state_updates),
         }
 
-    def _aggregate_pressure(
+    def _build_cycle_signal_map(
         self,
         event: Event,
         state: NexusState,
         facet_results: list[FacetResult],
+        learning_events: list[dict[str, Any]],
+        internal_event_queued: bool,
+        internal_event_processed: bool,
+    ) -> CycleSignalMap:
+        behavior_metadata = self._latest_facet_metadata(facet_results, "behavior")
+        attention_metadata = self._latest_facet_metadata(facet_results, "attention")
+        planner_metadata = self._latest_facet_metadata(facet_results, "planner")
+        verifier_metadata = self._latest_facet_metadata(facet_results, "verifier")
+        policy_metadata = self._latest_facet_metadata(facet_results, "policy")
+        context_metadata = self._latest_facet_metadata(facet_results, "context")
+
+        event_pressure = self._numeric_unit(event.metadata.get("pressure")) or 0.0
+        attention_pressure = self._resolve_attention_pressure(
+            attention_metadata=attention_metadata,
+            state=state,
+        )
+        latent_pressure = self._resolve_latent_pressure(
+            event=event,
+            behavior_metadata=behavior_metadata,
+            state=state,
+        )
+        context_load_ratio, context_overloaded = self._resolve_context_load(
+            context_metadata=context_metadata,
+            behavior_metadata=behavior_metadata,
+            state=state,
+        )
+        belief_contradiction = bool(behavior_metadata.get("belief_contradiction", False))
+        contradiction_pressure = 0.15 if belief_contradiction else 0.0
+        context_overload_pressure = 0.1 if context_overloaded else 0.0
+        interrupt_recommended = bool(
+            behavior_metadata.get("interrupt_recommended", False)
+        )
+        interrupt_pressure = 0.1 if interrupt_recommended else 0.0
+        pressure_components = {
+            "event_pressure": round(event_pressure, 3),
+            "attention_pressure": round(attention_pressure, 3),
+            "latent_pressure": round(latent_pressure, 3),
+            "contradiction_pressure": round(contradiction_pressure, 3),
+            "context_overload_pressure": round(context_overload_pressure, 3),
+            "interrupt_pressure": round(interrupt_pressure, 3),
+        }
+        system_pressure = round(
+            self._clamp_unit(sum(pressure_components.values())),
+            3,
+        )
+
+        policy_status = str(
+            policy_metadata.get("policy_status")
+            or behavior_metadata.get("policy_result")
+            or "unknown"
+        )
+        verifier_status = str(verifier_metadata.get("verification_status") or "unknown")
+        verifier_downgraded = bool(verifier_metadata.get("override_applied", False))
+
+        return CycleSignalMap(
+            event_id=event.event_id,
+            event_type=event.event_type.value,
+            event_pressure=event_pressure,
+            system_pressure=system_pressure,
+            pressure_components=pressure_components,
+            attention_pressure=attention_pressure,
+            latent_pressure=latent_pressure,
+            context_load_ratio=context_load_ratio,
+            context_overloaded=context_overloaded,
+            interrupt_recommended=interrupt_recommended,
+            interrupt_reason=behavior_metadata.get("interrupt_reason"),
+            policy_status=policy_status,
+            policy_blocks_act=bool(behavior_metadata.get("policy_blocks_act", False)),
+            policy_requires_approval=bool(
+                behavior_metadata.get("policy_requires_approval", False)
+            ),
+            verifier_status=verifier_status,
+            verifier_downgraded=verifier_downgraded,
+            goal_relevance=float(behavior_metadata.get("goal_relevance", 0.0) or 0.0),
+            memory_relevance=float(
+                behavior_metadata.get("retrieval_strength", 0.0) or 0.0
+            ),
+            belief_confidence=float(
+                behavior_metadata.get("belief_confidence", 0.0) or 0.0
+            ),
+            belief_contradiction=belief_contradiction,
+            planner_grounding_status=str(
+                planner_metadata.get("grounding_status", "unknown")
+            ),
+            planner_grounding_score=float(
+                planner_metadata.get("grounding_score", 0.0) or 0.0
+            ),
+            learning_event_count=float(len(learning_events)),
+            internal_event_queued=internal_event_queued,
+            internal_event_processed=internal_event_processed,
+        )
+
+    @staticmethod
+    def _latest_facet_metadata(
+        facet_results: list[FacetResult],
+        facet_name: str,
+    ) -> dict[str, Any]:
+        for result in reversed(facet_results):
+            if result.facet_name != facet_name:
+                continue
+            if isinstance(result.metadata, dict):
+                return result.metadata
+        return {}
+
+    def _resolve_attention_pressure(
+        self,
+        *,
+        attention_metadata: dict[str, Any],
+        state: NexusState,
     ) -> float:
-        signals: list[float] = []
-        event_pressure = self._numeric_unit(event.metadata.get("pressure"))
-        if event_pressure is not None:
-            signals.append(event_pressure)
-        attention_peak = self._attention_peak_from_results(facet_results)
-        if attention_peak is None:
-            attention_peak = self._attention_peak_from_state(state)
-        if attention_peak is not None:
-            signals.append(attention_peak)
-        affect_arousal = self._affect_arousal_from_results(facet_results)
-        if affect_arousal is None:
-            affect_arousal = self._affect_arousal_from_state(state)
-        if affect_arousal is not None:
-            signals.append(affect_arousal)
-        learning_signal = self._learning_pressure_from_results(facet_results)
-        if learning_signal is not None:
-            signals.append(learning_signal)
-        if not signals:
-            return 0.0
-        return round(self._clamp_unit(sum(signals) / len(signals)), 3)
+        contribution = self._numeric_unit(attention_metadata.get("pressure_contribution"))
+        if contribution is not None:
+            return contribution
+        attention_state = state.facet_state.get("attention")
+        if isinstance(attention_state, dict):
+            contribution = self._numeric_unit(
+                attention_state.get("last_attention_pressure_contribution")
+            )
+            if contribution is not None:
+                return contribution
+        peak = self._attention_peak_from_payload(attention_metadata)
+        if peak is not None:
+            return round(peak * 0.2, 3)
+        return 0.0
+
+    def _resolve_latent_pressure(
+        self,
+        *,
+        event: Event,
+        behavior_metadata: dict[str, Any],
+        state: NexusState,
+    ) -> float:
+        for raw in (
+            behavior_metadata.get("latent_pressure"),
+            event.metadata.get("latent_pressure"),
+        ):
+            value = self._numeric_unit(raw)
+            if value is not None:
+                return value
+        attention_state = state.facet_state.get("attention")
+        if isinstance(attention_state, dict):
+            value = self._numeric_unit(
+                attention_state.get("last_attention_pressure_contribution")
+            )
+            if value is not None:
+                return value
+        return 0.0
+
+    def _resolve_context_load(
+        self,
+        *,
+        context_metadata: dict[str, Any],
+        behavior_metadata: dict[str, Any],
+        state: NexusState,
+    ) -> tuple[float, bool]:
+        context_load = behavior_metadata.get("context_load")
+        if not isinstance(context_load, dict):
+            context_load = context_metadata.get("context_load")
+        if isinstance(context_load, dict):
+            ratio = self._numeric_unit(context_load.get("load_ratio")) or 0.0
+            overloaded = bool(context_load.get("overloaded", False))
+            return ratio, overloaded
+        context_state = state.facet_state.get("context")
+        if isinstance(context_state, dict):
+            ratio = self._numeric_unit(context_state.get("last_context_load_ratio")) or 0.0
+            overloaded = bool(context_state.get("last_context_overloaded", False))
+            return ratio, overloaded
+        return 0.0, False
 
     @staticmethod
     def _attention_peak_from_results(facet_results: list[FacetResult]) -> float | None:
@@ -471,6 +720,44 @@ class Nexus:
             if magnitudes:
                 return max(magnitudes)
         return None
+
+    @staticmethod
+    def _extract_learning_events(result: FacetResult) -> list[dict[str, Any]]:
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        learning_event = metadata.get("learning_event")
+        if isinstance(learning_event, dict):
+            return [dict(learning_event)]
+        learning_events = metadata.get("learning_events")
+        if isinstance(learning_events, list):
+            return [dict(item) for item in learning_events if isinstance(item, dict)]
+        return []
+
+    def _behavior_interrupt_event_candidate(
+        self,
+        *,
+        result: FacetResult,
+        event: Event,
+        signal_map: CycleSignalMap,
+    ) -> Event | None:
+        if result.facet_name != "behavior":
+            return None
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        if not bool(metadata.get("interrupt_recommended", False)):
+            return None
+        return Event(
+            event_type=EventType.INTERNAL,
+            content="behavior_interrupt_recommended",
+            metadata={
+                "source": "behavior",
+                "reason": metadata.get("interrupt_reason"),
+                "parent_event_id": event.event_id,
+                "system_pressure": signal_map.system_pressure,
+            },
+        )
+
+    @staticmethod
+    def _dict_payload(raw_value: Any) -> dict[str, Any]:
+        return dict(raw_value) if isinstance(raw_value, dict) else {}
 
     @staticmethod
     def _extract_internal_events(result: FacetResult) -> list[Event]:

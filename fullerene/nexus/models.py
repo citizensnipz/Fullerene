@@ -128,6 +128,105 @@ class NexusDecision:
 
 
 @dataclass(slots=True)
+class CycleSignalMap:
+    event_id: str = ""
+    event_type: str = "unknown"
+    event_pressure: float = 0.0
+    system_pressure: float = 0.0
+    pressure_components: dict[str, float] = field(default_factory=dict)
+    attention_pressure: float = 0.0
+    latent_pressure: float = 0.0
+    context_load_ratio: float = 0.0
+    context_overloaded: bool = False
+    interrupt_recommended: bool = False
+    interrupt_reason: str | None = None
+    policy_status: str = "unknown"
+    policy_blocks_act: bool = False
+    policy_requires_approval: bool = False
+    verifier_status: str = "unknown"
+    verifier_downgraded: bool = False
+    goal_relevance: float = 0.0
+    memory_relevance: float = 0.0
+    belief_confidence: float = 0.0
+    belief_contradiction: bool = False
+    planner_grounding_status: str = "unknown"
+    planner_grounding_score: float = 0.0
+    learning_event_count: float = 0.0
+    internal_event_queued: bool = False
+    internal_event_processed: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "event_type": self.event_type,
+            "event_pressure": _clamp_unit(self.event_pressure),
+            "system_pressure": _clamp_unit(self.system_pressure),
+            "pressure_components": _serialize_value(self.pressure_components),
+            "attention_pressure": _clamp_unit(self.attention_pressure),
+            "latent_pressure": _clamp_unit(self.latent_pressure),
+            "context_load_ratio": _clamp_unit(self.context_load_ratio),
+            "context_overloaded": bool(self.context_overloaded),
+            "interrupt_recommended": bool(self.interrupt_recommended),
+            "interrupt_reason": self.interrupt_reason,
+            "policy_status": self.policy_status or "unknown",
+            "policy_blocks_act": bool(self.policy_blocks_act),
+            "policy_requires_approval": bool(self.policy_requires_approval),
+            "verifier_status": self.verifier_status or "unknown",
+            "verifier_downgraded": bool(self.verifier_downgraded),
+            "goal_relevance": _clamp_unit(self.goal_relevance),
+            "memory_relevance": _clamp_unit(self.memory_relevance),
+            "belief_confidence": _clamp_unit(self.belief_confidence),
+            "belief_contradiction": bool(self.belief_contradiction),
+            "planner_grounding_status": self.planner_grounding_status or "unknown",
+            "planner_grounding_score": _clamp_unit(self.planner_grounding_score),
+            "learning_event_count": max(float(self.learning_event_count), 0.0),
+            "internal_event_queued": bool(self.internal_event_queued),
+            "internal_event_processed": bool(self.internal_event_processed),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "CycleSignalMap":
+        raw_learning_event_count = data.get("learning_event_count", 0.0)
+        try:
+            learning_event_count = max(float(raw_learning_event_count), 0.0)
+        except (TypeError, ValueError):
+            learning_event_count = 0.0
+        return cls(
+            event_id=str(data.get("event_id", "")),
+            event_type=str(data.get("event_type", "unknown")),
+            event_pressure=_clamp_unit(data.get("event_pressure", 0.0)),
+            system_pressure=_clamp_unit(data.get("system_pressure", 0.0)),
+            pressure_components=(
+                dict(data.get("pressure_components", {}))
+                if isinstance(data.get("pressure_components"), dict)
+                else {}
+            ),
+            attention_pressure=_clamp_unit(data.get("attention_pressure", 0.0)),
+            latent_pressure=_clamp_unit(data.get("latent_pressure", 0.0)),
+            context_load_ratio=_clamp_unit(data.get("context_load_ratio", 0.0)),
+            context_overloaded=bool(data.get("context_overloaded", False)),
+            interrupt_recommended=bool(data.get("interrupt_recommended", False)),
+            interrupt_reason=data.get("interrupt_reason"),
+            policy_status=str(data.get("policy_status", "unknown")),
+            policy_blocks_act=bool(data.get("policy_blocks_act", False)),
+            policy_requires_approval=bool(data.get("policy_requires_approval", False)),
+            verifier_status=str(data.get("verifier_status", "unknown")),
+            verifier_downgraded=bool(data.get("verifier_downgraded", False)),
+            goal_relevance=_clamp_unit(data.get("goal_relevance", 0.0)),
+            memory_relevance=_clamp_unit(data.get("memory_relevance", 0.0)),
+            belief_confidence=_clamp_unit(data.get("belief_confidence", 0.0)),
+            belief_contradiction=bool(data.get("belief_contradiction", False)),
+            planner_grounding_status=str(
+                data.get("planner_grounding_status", "unknown")
+            ),
+            planner_grounding_score=_clamp_unit(data.get("planner_grounding_score", 0.0)),
+            learning_event_count=learning_event_count,
+            internal_event_queued=bool(data.get("internal_event_queued", False)),
+            internal_event_processed=bool(data.get("internal_event_processed", False)),
+        )
+
+
+@dataclass(slots=True)
 class NexusState:
     created_at: datetime = field(default_factory=utcnow)
     updated_at: datetime = field(default_factory=utcnow)

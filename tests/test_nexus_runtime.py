@@ -79,7 +79,7 @@ class AttentionPressureFacet:
         return FacetResult(
             facet_name=self.name,
             summary="Emitted a deterministic attention peak.",
-            metadata={"scores": {"event": 0.6}},
+            metadata={"pressure_contribution": 0.2, "scores": {"event": 0.6}},
         )
 
 
@@ -119,6 +119,39 @@ class InternalEmitterFacet:
                     ),
                 ]
             },
+        )
+
+
+class BehaviorSignalFacet:
+    name = "behavior"
+
+    def process(self, event: Event, state: NexusState) -> FacetResult:
+        return FacetResult(
+            facet_name=self.name,
+            summary="Emitted behavior v2-like signals for nexus aggregation.",
+            metadata={
+                "latent_pressure": 0.3,
+                "belief_contradiction": True,
+                "interrupt_recommended": True,
+                "interrupt_reason": "pressure_spike",
+                "goal_relevance": 0.8,
+                "retrieval_strength": 0.7,
+                "belief_confidence": 0.4,
+                "policy_blocks_act": True,
+                "policy_requires_approval": True,
+                "policy_result": "approval_required",
+                "context_load": {
+                    "item_count": 9,
+                    "max_items": 10,
+                    "load_ratio": 0.9,
+                    "overloaded": True,
+                },
+                "learning_event": {
+                    "event_type": "behavior_decision_trace_v2",
+                    "trace": {"decision": "ask"},
+                },
+            },
+            proposed_decision=DecisionAction.ASK,
         )
 
 
@@ -269,8 +302,54 @@ class NexusRuntimeTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(record.metadata["system_pressure"], 0.6)
-        self.assertEqual(runtime.state.system_pressure, 0.6)
+        self.assertEqual(record.metadata["system_pressure"], 1.0)
+        self.assertEqual(runtime.state.system_pressure, 1.0)
+
+    def test_cycle_signal_map_uses_neutral_defaults_without_optional_facets(self) -> None:
+        runtime = NexusRuntime(facets=[SilentFacet()], store=InMemoryStateStore())
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="neutral")
+        )
+        signal_map = record.metadata["signal_map"]
+        self.assertEqual(signal_map["event_type"], "user_message")
+        self.assertEqual(signal_map["attention_pressure"], 0.0)
+        self.assertEqual(signal_map["latent_pressure"], 0.0)
+        self.assertEqual(signal_map["policy_status"], "unknown")
+        self.assertEqual(signal_map["verifier_status"], "unknown")
+        self.assertEqual(signal_map["planner_grounding_status"], "unknown")
+        self.assertEqual(signal_map["learning_event_count"], 0.0)
+        self.assertFalse(signal_map["interrupt_recommended"])
+
+    def test_system_pressure_uses_canonical_component_formula(self) -> None:
+        runtime = NexusRuntime(
+            facets=[BehaviorSignalFacet(), AttentionPressureFacet()],
+            store=InMemoryStateStore(),
+        )
+        record = runtime.process_event(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="aggregate pressure",
+                metadata={"pressure": 0.4},
+            )
+        )
+        components = record.metadata["pressure_components"]
+        self.assertEqual(components["event_pressure"], 0.4)
+        self.assertEqual(components["attention_pressure"], 0.2)
+        self.assertEqual(components["latent_pressure"], 0.3)
+        self.assertEqual(components["contradiction_pressure"], 0.15)
+        self.assertEqual(components["context_overload_pressure"], 0.1)
+        self.assertEqual(components["interrupt_pressure"], 0.1)
+        self.assertEqual(record.metadata["system_pressure"], 1.0)
+
+    def test_behavior_learning_event_is_collected_on_cycle(self) -> None:
+        runtime = NexusRuntime(facets=[BehaviorSignalFacet()], store=InMemoryStateStore())
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="collect learning event")
+        )
+        learning_events = record.metadata["cycle_learning_events"]
+        self.assertEqual(len(learning_events), 1)
+        self.assertEqual(learning_events[0]["event_type"], "behavior_decision_trace_v2")
+        self.assertEqual(record.metadata["signal_map"]["learning_event_count"], 1.0)
 
     def test_phases_execute_in_declared_order_and_facets_run_once(self) -> None:
         calls: list[str] = []
@@ -344,6 +423,37 @@ class NexusRuntimeTests(unittest.TestCase):
         self.assertEqual(store.records[1].event.event_type, EventType.INTERNAL)
         self.assertEqual(len(record.metadata["internal_events_processed"]), 1)
         self.assertEqual(record.metadata["internal_events_dropped"], 1)
+
+    def test_behavior_interrupt_queues_at_most_one_internal_event(self) -> None:
+        store = InMemoryStateStore()
+        runtime = NexusRuntime(facets=[BehaviorSignalFacet()], store=store)
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="interrupt route")
+        )
+        queued = record.metadata["cycle_trace"]["internal_events_queued"]
+        processed = record.metadata["internal_events_processed"]
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(len(processed), 1)
+        self.assertEqual(len(store.records), 2)
+        self.assertEqual(processed[0]["event_type"], "internal")
+        self.assertEqual(processed[0]["content"], "behavior_interrupt_recommended")
+
+    def test_cycle_trace_contains_signal_map_pressure_and_learning(self) -> None:
+        runtime = NexusRuntime(
+            facets=[BehaviorSignalFacet(), AttentionPressureFacet(), EchoFacet()],
+            store=InMemoryStateStore(),
+        )
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="trace coverage")
+        )
+        cycle_trace = record.metadata["cycle_trace"]
+        self.assertIn("facet_order", cycle_trace)
+        self.assertIn("signal_map", cycle_trace)
+        self.assertIn("pressure_components", cycle_trace)
+        self.assertIn("final_decision", cycle_trace)
+        self.assertIn("learning_events", cycle_trace)
+        self.assertIn("internal_events_queued", cycle_trace)
+        self.assertIn("internal_events_processed", cycle_trace)
 
     def test_low_pressure_behavior_decision_remains_unchanged(self) -> None:
         runtime = NexusRuntime(

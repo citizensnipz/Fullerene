@@ -9,6 +9,15 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-05 (nexus v1 deeper pass)
+
+- Updated `fullerene/nexus/models.py` with `CycleSignalMap` (deterministic JSON-serializable canonical per-cycle signal shape) and exported it from `fullerene/nexus/__init__.py`.
+- Updated `fullerene/nexus/runtime.py` so Nexus now computes canonical pressure components (`event_pressure`, `attention_pressure`, `latent_pressure`, `contradiction_pressure`, `context_overload_pressure`, `interrupt_pressure`) and `system_pressure = clamp01(sum(components))`, persists `pressure_components`, and emits a per-cycle `signal_map`.
+- Updated Nexus runtime cycle metadata/state persistence with compact `cycle_trace` plus persisted `last_cycle_signal_map`, `last_cycle_trace`, `last_system_pressure`, `last_pressure_components`, `last_learning_events`, `last_internal_events_queued`, and `last_internal_events_processed`.
+- Added per-cycle learning-event collection in Nexus (`cycle_learning_events`, `learning_event_count`) by collecting facet metadata `learning_event`/`learning_events`; this pass stores/exports them only (Learning does not consume them yet).
+- Added bounded Behavior interrupt routing in Nexus: when `interrupt_recommended` is true, queue one minimal inspectable internal event candidate (`content=behavior_interrupt_recommended`) and still process at most one internal event per outer `process_event` call with no same-call recursive expansion.
+- Expanded `tests/test_nexus_runtime.py` for neutral signal-map defaults, canonical pressure-component aggregation, learning-event collection, bounded behavior-interrupt internal-event routing, and richer cycle-trace assertions.
+
 ### 2026-05-05 (behavior v2)
 
 - Upgraded `fullerene/facets/behavior.py` to Behavior v2 with deterministic candidate-score post-adjustments for policy constraints, world-model belief confidence/contradiction guardrails, context-load biasing, latent-pressure contribution, interrupt recommendation metadata, and structured `decision_trace` + `learning_event` emission while preserving existing decision enums/interfaces.

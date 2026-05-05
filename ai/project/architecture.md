@@ -33,7 +33,14 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 ## Nexus loop (current v1-lite)
 
 - Accept an event plus the current runtime state.
-- Aggregate bounded `system_pressure` from event metadata plus available attention, affect, and learning signals; pressure is persisted on Nexus state and each record.
+- Build a canonical per-cycle `signal_map` (`CycleSignalMap`) so cross-facet signals are normalized and inspectable in one place.
+- Aggregate bounded canonical `system_pressure` from explicit components and persist both `system_pressure` and `pressure_components` on Nexus state/records:
+  - `event_pressure`
+  - `attention_pressure`
+  - `latent_pressure`
+  - `contradiction_pressure` (`0.15` when contradiction is true)
+  - `context_overload_pressure` (`0.1` when context is overloaded)
+  - `interrupt_pressure` (`0.1` when interrupt is recommended)
 - Pass the event and state through registered facets in deterministic phases: INPUT / CONTEXT, STATE, DECISION, PLANNING / EXECUTION, LEARNING / SIGNAL, and VERIFICATION / OUTPUT.
 - Preserve registered order within phases except for small pressure-priority weights in the decision, planning/execution, and learning/signal phases; no arbitrary reordering or phase skipping is implemented.
 - When enabled, Attention runs after the signal-producing facets already registered for the current run, scores candidate focus items from the current event plus available memory / goals / world-model / execution metadata, classifies bottom-up vs top-down mode, and stores a bounded broadcast/history/conflict packet on attention facet state.
@@ -42,8 +49,11 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - Apply policy guardrails before finalizing the initial action: policy `DENIED` results force `RECORD`, and policy `APPROVAL_REQUIRED` results force `ASK`, even if another facet proposed `ACT`.
 - Run deterministic verifier checks against the event, facet results, initial decision, and configured state-dir metadata. Unsafe or structurally invalid `ACT` decisions may be downgraded to `ASK` or `RECORD` before persistence.
 - Persist the updated runtime snapshot plus an append-only event log, including verifier metadata as a `FacetResult` and compact phase/pressure trace metadata on each `NexusRecord`.
-- If a facet emits internal event metadata, process at most one additional `internal` event immediately after the current cycle and append that record to the log; additional internal events are dropped for the cycle to avoid loops.
+- Collect facet-emitted `learning_event` metadata into per-cycle `cycle_learning_events`; Nexus stores them for inspection/trace only in v1 (Learning does not consume them automatically yet).
+- If Behavior recommends an interrupt, Nexus may queue one minimal internal event candidate and process at most one additional `internal` event immediately after the current cycle; no recursive same-call internal-event expansion is allowed.
+- Persist compact `cycle_trace` metadata each cycle (decisions, pressure before/after, pressure components, signal map, learning events, queued/processed internal events, verifier adjustments, and source facets).
 - Avoid autonomous external tool execution; `ACT` is still only a typed decision, and Executor v0 only records or applies approved internal state actions.
+- Scope guardrail: this deeper pass is still **single-cycle orchestration only**; it is not an always-on daemon loop, sleep/wake system, dynamic suppression engine, or autonomous expression system.
 
 ## Data stores (current v0)
 

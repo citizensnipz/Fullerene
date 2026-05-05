@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-05-05 - Nexus v1 deeper pass signal aggregation and bounded interrupt routing
+
+- **Context:** Nexus needed a deeper v1 pass that improves single-cycle cross-facet signal collection/routing without turning into Nexus v2 continuous orchestration.
+- **Done:** Added `CycleSignalMap` in `fullerene/nexus/models.py` and wired Nexus runtime to compute canonical per-cycle `signal_map` with explicit pressure components (`event`, `attention`, `latent`, `contradiction`, `context_overload`, `interrupt`) and clamped summed `system_pressure`; added cycle learning-event collection from facet metadata (`learning_event`/`learning_events`) into `cycle_learning_events` and `learning_event_count`; added bounded Behavior interrupt routing to queue at most one minimal internal event candidate (`behavior_interrupt_recommended`) per outer call; upgraded cycle metadata to persist compact `cycle_trace` (facet order/results, initial/final decisions, pressure before/after/components, signal map, learning events, queued/processed internal events, verifier adjustments, decision source facets); persisted nexus state snapshots for last cycle signal/trace/pressure/events.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -v`; `python -m fullerene --event-type user_message --content "hello nexus" --state-dir state/.fullerene-state`
+- **Next:** Keep Nexus v1 bounded and inspectable; defer continuous loop, autonomous expression, dynamic suppression/reordering, and multi-pass internal routing to explicit Nexus v2 scope.
+- **Blockers:** None so far.
+
 ### 2026-05-05 - Memory v2 hybrid retrieval, role/domain, optional embeddings, write-time edges
 
 - **Context:** Memory v1 over-ranked prior repeated questions ("What kind of book should I read next?") above useful preference memory ("I like to read sci-fi novels and non-fiction autobiographies"). Memory v2 should fix grounding without becoming Memory v3 (no full linked graph, no Leiden, no LLM summarization, no mandatory external services). SQLite must remain source of truth and tests must run offline.

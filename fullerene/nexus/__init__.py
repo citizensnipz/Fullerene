@@ -5,6 +5,7 @@ from __future__ import annotations
 from importlib import import_module
 
 __all__ = [
+    "CycleSignalMap",
     "DecisionAction",
     "Event",
     "EventType",
@@ -19,6 +20,7 @@ __all__ = [
 
 def __getattr__(name: str):
     if name in {
+        "CycleSignalMap",
         "DecisionAction",
         "Event",
         "EventType",
