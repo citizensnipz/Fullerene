@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-05-06 - Nexus v2 bounded interrupts + suppression
+
+- **Context:** Need a unified deterministic gate for Behavior/LPB/Verifier/Policy/Learning/Planner/Attention interrupt-like signals without widening always-on or autonomous speech scope.
+- **Done:** Added `fullerene/nexus/interrupts.py`, post-LPB arbitration in `fullerene/nexus/runtime.py`, LPB ignition entry metadata, Verifier prior-cycle audit hook, unit tests + harness updates; internal follow-up event is `nexus_interrupt` when no explicit facet internal events are queued.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -q`; `python -m fullerene --event-type user_message --content "hello nexus" --state-dir state/.fullerene-state`
+- **Next:** Expression Gate for `allowed_user_expression`; optional always-on Nexus scheduling remains explicitly out of this ADR.
+- **Blockers:** None.
+
 ### 2026-05-06 - Latent Pressure Buffer v1 signal infrastructure
 
 - **Context:** `latent_pressure` existed as a pressure slot but not as persistent inspectable unresolved-pressure tracking.

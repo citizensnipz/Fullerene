@@ -1226,11 +1226,154 @@ def validate_context_load_metadata(
     return out
 
 
+def validate_nexus_interrupt_v2_audit(
+    prior_cycle_trace: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Inspect prior persisted cycle_trace for Nexus v2 interrupt/suppression semantics."""
+    out: list[dict[str, Any]] = []
+    kind = "nexus_interrupt_v2"
+    if not isinstance(prior_cycle_trace, Mapping):
+        return out
+    suppressions = prior_cycle_trace.get("suppression_decisions")
+    if suppressions is None:
+        return out
+
+    if not isinstance(suppressions, Sequence) or isinstance(suppressions, (str, bytes)):
+        out.append(
+            artifact_result(
+                validator="nexus_interrupt_v2",
+                artifact_kind=kind,
+                status="failed",
+                severity="error",
+                code="malformed_suppression_decisions",
+                path="nexus.last_cycle_trace.suppression_decisions",
+                message="suppression_decisions must be a list when present.",
+            )
+        )
+        return out
+
+    for idx, row in enumerate(suppressions):
+        if not isinstance(row, Mapping):
+            out.append(
+                artifact_result(
+                    validator="nexus_interrupt_v2",
+                    artifact_kind=kind,
+                    status="failed",
+                    severity="error",
+                    code="malformed_suppression_row",
+                    path=f"nexus.last_cycle_trace.suppression_decisions[{idx}]",
+                    message="Suppression decision row must be a mapping.",
+                )
+            )
+            continue
+        if row.get("allowed_user_expression") is True:
+            out.append(
+                artifact_result(
+                    validator="nexus_interrupt_v2",
+                    artifact_kind=kind,
+                    status="failed",
+                    severity="critical",
+                    code="illegal_user_expression_flag",
+                    path=f"nexus.last_cycle_trace.suppression_decisions[{idx}].allowed_user_expression",
+                    message="allowed_user_expression must remain false until an Expression Gate exists.",
+                    escalation_recommended=True,
+                )
+            )
+
+    allowed_any_internal = any(
+        isinstance(row, Mapping) and row.get("allowed_internal_event") is True
+        for row in suppressions
+    )
+
+    suppressed_ids = {
+        str(d.get("candidate_id"))
+        for d in suppressions
+        if isinstance(d, Mapping) and d.get("suppressed") is True and d.get("candidate_id")
+    }
+
+    queued_id_blob = prior_cycle_trace.get("interrupt_processed")
+    iq = queued_id_blob.get("candidate_id") if isinstance(queued_id_blob, dict) else None
+    cand_raw = prior_cycle_trace.get("allowed_interrupt_candidate")
+
+    cq = cand_raw.get("id") if isinstance(cand_raw, dict) else None
+    if iq and str(iq) in suppressed_ids:
+        out.append(
+            artifact_result(
+                validator="nexus_interrupt_v2",
+                artifact_kind=kind,
+                status="failed",
+                severity="error",
+                code="processed_suppressed_interrupt",
+                path="nexus.last_cycle_trace.interrupt_processed.candidate_id",
+                message="Interrupt candidate marked processed but its row was suppressed.",
+                retry_recommended=True,
+            )
+        )
+
+    if allowed_any_internal and cq and str(cq) in suppressed_ids:
+        out.append(
+            artifact_result(
+                validator="nexus_interrupt_v2",
+                artifact_kind=kind,
+                status="failed",
+                severity="error",
+                code="allowed_interrupt_was_suppressed",
+                path="nexus.last_cycle_trace.allowed_interrupt_candidate.id",
+                message="Allowed interrupt candidate id appears in suppressed outcomes.",
+                retry_recommended=True,
+            )
+        )
+
+    cand = cand_raw if isinstance(cand_raw, dict) else None
+    proc = queued_id_blob if isinstance(queued_id_blob, dict) else {}
+    if cand is not None and allowed_any_internal:
+        meta = cand.get("metadata") if isinstance(cand.get("metadata"), dict) else {}
+        crit = cand.get("interrupt_type") == "verifier_escalation" and (
+            cand.get("suppressible") is False or meta.get("artifact_critical_or_error") is True
+        )
+        if not crit:
+            pval = cand.get("priority")
+            try:
+                pfloat = float(pval)
+            except (TypeError, ValueError):
+                pfloat = 0.0
+            if proc.get("queued") is True and pfloat + 1e-9 < 0.55:
+                out.append(
+                    artifact_result(
+                        validator="nexus_interrupt_v2",
+                        artifact_kind=kind,
+                        status="warning",
+                        severity="warning",
+                        code="allowed_interrupt_priority_below_threshold",
+                        path="nexus.last_cycle_trace.allowed_interrupt_candidate.priority",
+                        message="Queued internal interrupt priority below nominal safety threshold.",
+                    )
+                )
+
+    if not any(
+        isinstance(it, Mapping) and str(it.get("status") or "").lower() == "failed"
+        for it in out
+    ):
+        out.append(
+            artifact_result(
+                validator="nexus_interrupt_v2",
+                artifact_kind=kind,
+                status="passed",
+                severity="info",
+                code="ok",
+                path="nexus.last_cycle_trace",
+                message="Nexus v2 interrupt audit checked prior cycle.",
+            )
+        )
+    return out
+
+
 def run_all_artifact_validators(
     *,
     facet_results: Sequence[Any],
     decision_action: DecisionAction | None,
     nexus_ctx: Mapping[str, Any] | None,
+    prior_cycle_trace: Mapping[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], DecisionAction | None]:
     """Collect structured artifact checks plus optional risk downgrade."""
     rows: list[dict[str, Any]] = []
@@ -1343,5 +1486,8 @@ def run_all_artifact_validators(
         chunk, r = validate_cycle_trace_structure(trace)
         rows.extend(chunk)
         _merge_r(r)
+
+    if isinstance(prior_cycle_trace, Mapping):
+        rows.extend(validate_nexus_interrupt_v2_audit(prior_cycle_trace))
 
     return rows, reco

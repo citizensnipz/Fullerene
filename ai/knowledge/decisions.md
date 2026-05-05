@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-05-06 - Nexus v2 bounded interrupt arbitration and suppression (single-cycle)
+
+- **Status:** accepted
+- **Context:** Behavior v2, LPB v1, Verifier v1, Policy v1, Learning v1, Planner v1, and Attention v1 all emit signals that can recommend interrupts, retries, approvals, or ignition-like pressure relief, but Nexus v1 lacked a unified deterministic gate against internal-event chatter, duplicate interrupts, cooldown storms, or unsafe ACT implications.
+- **Decision:** Implement Nexus v2 as a **purely internal**, **deterministic**, **single outer-call** arbitration layer (`fullerene/nexus/interrupts.py` + hooks in `fullerene/nexus/runtime.py`): extract JSON-serializable `InterruptCandidate` records after LPB updates, compute clamped additive priority with inspectable score components, run ordered suppression rules (cooldown keyed by deterministic `cooldown_key`, duplicate equivalents within a cycle, low-priority cutoff, context-overload downgrade for non-safety interrupts, suppression when policy denies the ACT execution path, user-expression permanently false, at most one internal winner, bounded queue depth), optionally queue one `INTERNAL`/`nexus_interrupt` event when no explicit facet `internal_events` are already present, persist cooldown and audit metadata under `facet_state["nexus"]` (no new DB), extend `cycle_trace` / record metadata with compact interrupt audit fields, and add Verifier v1 prior-cycle audit rows (`validate_nexus_interrupt_v2_audit`) without LLM judging. LPB ignition remains **candidate-only** (no speech, no execution).
+- **Consequences:** Operators gain inspectable interrupt/suppression traces; internal routing stays bounded and policy-safe; always-on daemons, Expression Gate / user-visible speech, dynamic facet reorder, and autonomous tool use remain explicitly out of scope for this ADR.
+
 ## 2026-05-06 - Latent Pressure Buffer v1 is Nexus-owned signal infrastructure, not a facet
 
 - **Status:** accepted

@@ -320,10 +320,17 @@ class ArtifactSchemaCheck:
         if not isinstance(nexus_ctx, Mapping):
             nexus_ctx = {}
 
+        prior_trace_raw = nexus_bucket.get("last_cycle_trace")
+        prior_cycle_trace = (
+            dict(prior_trace_raw)
+            if isinstance(prior_trace_raw, Mapping)
+            else None
+        )
         artifact_rows, reco = run_all_artifact_validators(
             facet_results=context.facet_results,
             decision_action=_decision_action(context.decision),
             nexus_ctx=nexus_ctx,
+            prior_cycle_trace=prior_cycle_trace,
         )
 
         interesting: list[dict[str, Any]] = []

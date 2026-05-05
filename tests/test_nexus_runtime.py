@@ -141,10 +141,10 @@ class BehaviorSignalFacet:
                 "policy_requires_approval": True,
                 "policy_result": "approval_required",
                 "context_load": {
-                    "item_count": 9,
+                    "item_count": 4,
                     "max_items": 10,
-                    "load_ratio": 0.9,
-                    "overloaded": True,
+                    "load_ratio": 0.4,
+                    "overloaded": False,
                 },
                 "learning_event": {
                     "event_type": "behavior_decision_trace_v2",
@@ -338,7 +338,7 @@ class NexusRuntimeTests(unittest.TestCase):
         self.assertGreater(components["latent_pressure"], 0.0)
         self.assertLessEqual(components["latent_pressure"], 1.0)
         self.assertEqual(components["contradiction_pressure"], 0.15)
-        self.assertEqual(components["context_overload_pressure"], 0.1)
+        self.assertEqual(components["context_overload_pressure"], 0.0)
         self.assertEqual(components["interrupt_pressure"], 0.1)
         self.assertEqual(record.metadata["system_pressure"], 1.0)
 
@@ -437,7 +437,7 @@ class NexusRuntimeTests(unittest.TestCase):
         self.assertEqual(len(processed), 1)
         self.assertEqual(len(store.records), 2)
         self.assertEqual(processed[0]["event_type"], "internal")
-        self.assertEqual(processed[0]["content"], "behavior_interrupt_recommended")
+        self.assertEqual(processed[0]["content"], "nexus_interrupt")
 
     def test_cycle_trace_contains_signal_map_pressure_and_learning(self) -> None:
         runtime = NexusRuntime(

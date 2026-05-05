@@ -19,6 +19,8 @@ python -m fullerene --behavior --content "what should I do next?"
 python -m fullerene --full --latent-pressure --json --content "what should I do next?"
 ```
 
+`--json` / `--debug` emit the full `NexusRecord`, including Nexus v2 `interrupt_candidates`, `suppression_decisions`, and related `cycle_trace` fields when present.
+
 ## Tests
 
 ```bash

@@ -119,6 +119,8 @@ class LatentPressureResult:
     resolved_entries: list[dict[str, Any]] = field(default_factory=list)
     ignition_recommended: bool = False
     ignition_reason: str | None = None
+    ignition_entry_id: str | None = None
+    ignition_entry_type: str | None = None
     reasons: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -133,6 +135,12 @@ class LatentPressureResult:
         self.ignition_reason = (
             str(self.ignition_reason).strip() if self.ignition_reason else None
         )
+        self.ignition_entry_id = (
+            str(self.ignition_entry_id).strip() if self.ignition_entry_id else None
+        )
+        self.ignition_entry_type = (
+            str(self.ignition_entry_type).strip() if self.ignition_entry_type else None
+        )
         self.reasons = [str(item) for item in self.reasons if str(item).strip()]
 
     def to_dict(self) -> dict[str, Any]:
@@ -146,6 +154,8 @@ class LatentPressureResult:
             "resolved_entries": list(self.resolved_entries),
             "ignition_recommended": bool(self.ignition_recommended),
             "ignition_reason": self.ignition_reason,
+            "ignition_entry_id": self.ignition_entry_id,
+            "ignition_entry_type": self.ignition_entry_type,
             "reasons": list(self.reasons),
             "active_count": len(self.active_entries),
             "total_count": len(self.active_entries) + len(self.resolved_entries),
@@ -163,6 +173,8 @@ class LatentPressureResult:
             resolved_entries=data.get("resolved_entries", []),
             ignition_recommended=bool(data.get("ignition_recommended", False)),
             ignition_reason=data.get("ignition_reason"),
+            ignition_entry_id=data.get("ignition_entry_id"),
+            ignition_entry_type=data.get("ignition_entry_type"),
             reasons=data.get("reasons", []),
         )
 

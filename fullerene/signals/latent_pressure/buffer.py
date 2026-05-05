@@ -77,17 +77,19 @@ def _compute_total(active: list[LatentPressureEntry]) -> float:
     return _clamp01(total)
 
 
-def _ignition_info(active: list[LatentPressureEntry], total: float) -> tuple[bool, str | None]:
+def _ignition_info(
+    active: list[LatentPressureEntry], total: float
+) -> tuple[bool, str | None, str | None, str | None]:
     if not active:
-        return False, None
+        return False, None, None, None
     top = max(active, key=lambda item: item.intensity)
     if top.intensity >= 0.75:
-        return True, "top_entry_intensity_high"
+        return True, "top_entry_intensity_high", top.id, top.entry_type
     if total >= 0.85:
-        return True, "latent_pressure_total_high"
+        return True, "latent_pressure_total_high", top.id, top.entry_type
     if top.retrigger_count >= 3 and top.intensity >= 0.55:
-        return True, "retrigger_threshold"
-    return False, None
+        return True, "retrigger_threshold", top.id, top.entry_type
+    return False, None, None, None
 
 
 def _signals_from_behavior(metadata: dict[str, Any]) -> list[dict[str, Any]]:
@@ -357,7 +359,7 @@ def _signals_from_learning(metadata: dict[str, Any], event_id: str) -> list[dict
     for route in metadata.get("cross_facet_routes", []):
         if not isinstance(route, dict):
             continue
-        target = str(route.get("target_facet") or "")
+        target = str(route.get("target_facet") or route.get("target") or "")
         if target in {"nexus", "context", "behavior", "world_model"}:
             out.append(
                 {
@@ -508,10 +510,10 @@ def update_latent_pressure(
     entries = active_entries + resolved
     top_entries = sorted(active_entries, key=lambda item: item.intensity, reverse=True)[:TOP_ENTRY_LIMIT]
     total = _compute_total(active_entries)
-    ignition_recommended, ignition_reason = _ignition_info(active_entries, total)
+    ign_rec, ign_reason, ign_id, ign_et = _ignition_info(active_entries, total)
     reasons.append(f"signals_ingested={len(incoming)}")
-    if ignition_recommended and ignition_reason:
-        reasons.append(f"ignition_reason={ignition_reason}")
+    if ign_rec and ign_reason:
+        reasons.append(f"ignition_reason={ign_reason}")
 
     result = LatentPressureResult(
         latent_pressure_total=total,
@@ -521,8 +523,10 @@ def update_latent_pressure(
         updated_entries=updated_entries,
         decayed_entries=decayed_entries,
         resolved_entries=resolved_entries,
-        ignition_recommended=ignition_recommended,
-        ignition_reason=ignition_reason,
+        ignition_recommended=ign_rec,
+        ignition_reason=ign_reason,
+        ignition_entry_id=ign_id,
+        ignition_entry_type=ign_et,
         reasons=reasons,
     )
     state_blob = {

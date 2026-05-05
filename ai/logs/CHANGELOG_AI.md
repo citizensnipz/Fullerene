@@ -9,6 +9,14 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-06 (Nexus v2 bounded interrupts + suppression)
+
+- Added `fullerene/nexus/interrupts.py` with deterministic `InterruptCandidate` / `SuppressionDecision`, candidate extraction across Behavior/LPB/Verifier/Policy/Learning/Planner/Attention/Nexus signals, Nexus v2 priority scoring with inspectable components, suppression (cooldown, duplicate, low-priority, context overload for non-critical candidates, denied-ACT-path policy suppression, bounded queue=5, max one internal winner, `allowed_user_expression` permanently false).
+- Wired `fullerene/nexus/runtime.py` to run arbitration after LPB, prioritize explicit facet `internal_events`, emit optional `nexus_interrupt` internals, persist `facet_state["nexus"]` interrupt cooldown/history/last audit fields, and extend `cycle_trace` + record metadata JSON.
+- Extended LPB `LatentPressureResult` with `ignition_entry_id` / `ignition_entry_type`; fixed Learning route ingestion to honor `target` as well as `target_facet`.
+- Added Verifier v1 `validate_nexus_interrupt_v2_audit` (prior `last_cycle_trace` when `suppression_decisions` present) and plumbed `prior_cycle_trace` through `run_all_artifact_validators` / `ArtifactSchemaCheck`.
+- Added `tests/test_nexus_interrupts_v2.py`, updated `tests/test_nexus_runtime.py` (internal content + pressure expectations), refreshed harness (`architecture`, `glossary`, `decisions`, this log, session log, `commands`).
+
 ### 2026-05-06 (latent pressure buffer v1)
 
 - Added `fullerene/signals/latent_pressure/` (`models.py`, `buffer.py`, `__init__.py`) with serializable `LatentPressureEntry` / `LatentPressureResult`, bounded extraction/dedup/escalation/decay/resolution logic, weighted top-entry total, and ignition recommendation metadata.

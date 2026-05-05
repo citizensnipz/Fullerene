@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from fullerene.facets.base import Facet
 from fullerene.nexus.models import (
@@ -16,6 +16,12 @@ from fullerene.nexus.models import (
     NexusState,
 )
 from fullerene.policy.models import PolicyStatus
+from fullerene.nexus.interrupts import (
+    apply_suppression,
+    build_nexus_internal_event,
+    extract_interrupt_candidates,
+    update_cooldown_entry,
+)
 from fullerene.signals.latent_pressure import update_latent_pressure
 from fullerene.state.store import InMemoryStateStore, StateStore
 
@@ -59,6 +65,26 @@ FACET_PHASES = {
     "verifier": "verification_output",
     "echo": "verification_output",
 }
+def _compact_cooldowns_view(store: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    keys = sorted(store.keys(), key=lambda k: str(k))[:40]
+    for key in keys:
+        raw_v = store.get(key)
+        if not isinstance(raw_v, dict):
+            continue
+        out[str(key)] = {
+            kk: raw_v[kk]
+            for kk in (
+                "cooldown_key",
+                "trigger_count",
+                "last_triggered_event_count",
+                "last_candidate_id",
+            )
+            if kk in raw_v
+        }
+    return out
+
+
 PHASE_FACET_ORDER = {
     "input_context": ("context", "memory"),
     "state": ("goals", "world_model", "worldmodel"),
@@ -93,7 +119,6 @@ class Nexus:
         primary_record, internal_events = self._process_event_cycle(
             event,
             collect_internal_events=True,
-            allow_behavior_interrupt_queue=True,
         )
         internal_records: list[NexusRecord] = []
         processed_internal_events: list[dict[str, Any]] = []
@@ -102,7 +127,6 @@ class Nexus:
             internal_record, _ = self._process_event_cycle(
                 internal_event,
                 collect_internal_events=False,
-                allow_behavior_interrupt_queue=False,
             )
             internal_records.append(internal_record)
             processed_internal_events = [internal_event.to_dict()]
@@ -132,7 +156,6 @@ class Nexus:
         event: Event,
         *,
         collect_internal_events: bool,
-        allow_behavior_interrupt_queue: bool,
     ) -> tuple[NexusRecord, list[Event]]:
         working_state = NexusState.from_dict(self.state.to_dict())
         facet_results: list[FacetResult] = []
@@ -190,21 +213,11 @@ class Nexus:
                 result = self._run_facet(facet, event, working_state)
                 emitted_events = self._extract_internal_events(result)
                 self._normalize_internal_event_metadata(result)
-                behavior_interrupt_event = self._behavior_interrupt_event_candidate(
-                    result=result,
-                    event=event,
-                    signal_map=signal_map,
-                )
-                if (
-                    collect_internal_events
-                    and allow_behavior_interrupt_queue
-                    and behavior_interrupt_event is not None
-                ):
-                    internal_events.append(behavior_interrupt_event)
-                    internal_events_queued.append(behavior_interrupt_event.to_dict())
-                    signal_map.internal_event_queued = True
                 if collect_internal_events:
                     internal_events.extend(emitted_events)
+                    for queued in emitted_events:
+                        internal_events_queued.append(queued.to_dict())
+                        signal_map.internal_event_queued = True
                 facet_results.append(result)
                 cycle_learning_events.extend(self._extract_learning_events(result))
                 phase_outputs.append(self._facet_output_summary(result))
@@ -257,6 +270,9 @@ class Nexus:
             self._normalize_internal_event_metadata(verifier_result)
             if collect_internal_events:
                 internal_events.extend(emitted_events)
+                for queued in emitted_events:
+                    internal_events_queued.append(queued.to_dict())
+                    signal_map.internal_event_queued = True
             facet_results.append(verifier_result)
             cycle_learning_events.extend(self._extract_learning_events(verifier_result))
             verifier_outputs.append(self._facet_output_summary(verifier_result))
@@ -297,6 +313,111 @@ class Nexus:
             internal_event_processed=False,
             latent_pressure_total=lpb_result.latent_pressure_total,
         )
+        suppress_summary_text = ""
+        interrupt_candidates_out: list[dict[str, Any]] = []
+        suppression_decisions_out: list[dict[str, Any]] = []
+        interrupt_processed_blob: dict[str, Any] | None = None
+        allowed_interrupt_candidate: dict[str, Any] | None = None
+        suppressed_interrupts_blob: list[str] = []
+
+        nb = working_state.facet_state.setdefault("nexus", {})
+        cooldowns_blob = nb.get("interrupt_cooldowns")
+        cooldown_store: dict[str, Any] = (
+            dict(cooldowns_blob) if isinstance(cooldowns_blob, dict) else {}
+        )
+        dup_scope: set[str] = set()
+        if event.event_type == EventType.INTERNAL:
+            cand_objs = []
+        else:
+            cand_objs = extract_interrupt_candidates(
+                event=event,
+                facet_results=facet_results,
+                signal_map_dict=signal_map.to_dict(),
+                latent_pressure_total=float(lpb_result.latent_pressure_total),
+                lpb_ignition_recommended=bool(lpb_result.ignition_recommended),
+                lpb_ignition_reason=lpb_result.ignition_reason,
+                lpb_ignition_entry_id=getattr(lpb_result, "ignition_entry_id", None),
+                lpb_ignition_entry_type=getattr(lpb_result, "ignition_entry_type", None),
+            )
+        interrupt_candidates_out = [c.to_dict() for c in cand_objs]
+        cooldown_seq = int(getattr(working_state, "event_count", 0) or 0) + 1
+
+        winner_obj = None
+        if collect_internal_events and event.event_type != EventType.INTERNAL:
+            _decisions, winner_obj, suppressed_interrupts_blob = apply_suppression(
+                scored_sorted=cand_objs,
+                cycle_duplicate_keys=dup_scope,
+                context_overloaded=bool(signal_map.context_overloaded),
+                cooldowns=cooldown_store,
+                current_event_count=cooldown_seq,
+            )
+            suppression_decisions_out = [d.to_dict() for d in _decisions]
+            suppress_summary_text = ";".join(suppressed_interrupts_blob[:12])
+            if winner_obj is not None and len(internal_events) == 0:
+                nexus_evt = build_nexus_internal_event(event, winner_obj)
+                internal_events.append(nexus_evt)
+                internal_events_queued.append(nexus_evt.to_dict())
+                signal_map.internal_event_queued = True
+                ck = winner_obj.cooldown_key
+                cooldown_store[ck] = update_cooldown_entry(
+                    cooldown_key=ck,
+                    candidate_id=winner_obj.id,
+                    reason=winner_obj.reason,
+                    event_count=cooldown_seq,
+                    prior=cooldown_store.get(ck),
+                )
+                interrupt_processed_blob = {
+                    "queued": True,
+                    "candidate_id": winner_obj.id,
+                    "interrupt_type": winner_obj.interrupt_type,
+                    "cooldown_key": ck,
+                }
+                allowed_interrupt_candidate = winner_obj.to_dict()
+            else:
+                if winner_obj is not None:
+                    allowed_interrupt_candidate = winner_obj.to_dict()
+                    interrupt_processed_blob = {
+                        "queued": False,
+                        "blocked_by_explicit_internal_queue": True,
+                        "candidate_id": winner_obj.id,
+                    }
+
+        nb["interrupt_cooldowns"] = cooldown_store
+        nb["last_interrupt_candidates"] = list(interrupt_candidates_out)
+        nb["last_suppression_decisions"] = list(suppression_decisions_out)
+        nb["last_allowed_interrupt_candidate"] = allowed_interrupt_candidate
+        nb["last_suppressed_interrupts"] = list(suppressed_interrupts_blob)
+        nb["last_interrupt_processed"] = interrupt_processed_blob
+
+        ih = list(nb.get("interrupt_history") or [])
+        if not isinstance(ih, list):
+            ih = []
+        ih.append(
+            {
+                "event_id": event.event_id,
+                "candidate_ids": [c["id"] for c in interrupt_candidates_out if c.get("id")],
+                "winner_id": winner_obj.id if winner_obj else None,
+            }
+        )
+        nb["interrupt_history"] = ih[-20:]
+        nb["interrupt_queue_size"] = min(len(interrupt_candidates_out), 5)
+
+        signal_map = self._build_cycle_signal_map(
+            event=event,
+            state=working_state,
+            facet_results=facet_results,
+            learning_events=cycle_learning_events,
+            internal_event_queued=bool(internal_events_queued),
+            internal_event_processed=False,
+            latent_pressure_total=lpb_result.latent_pressure_total,
+        )
+        if winner_obj is not None:
+            signal_map.interrupt_recommended = True
+            signal_map.interrupt_reason = winner_obj.reason
+        elif cand_objs:
+            top = max(cand_objs, key=lambda c: c.priority)
+            signal_map.interrupt_reason = signal_map.interrupt_reason or top.reason
+
         system_pressure = signal_map.system_pressure
         pressure_components = dict(signal_map.pressure_components)
         working_state.system_pressure = system_pressure
@@ -325,6 +446,14 @@ class Nexus:
             "internal_events_processed": [],
             "verifier_adjustments": verifier_adjustments,
             "decision_source_facets": list(decision_source_facets),
+            "interrupt_candidates": list(interrupt_candidates_out),
+            "suppression_decisions": list(suppression_decisions_out),
+            "allowed_interrupt_candidate": allowed_interrupt_candidate,
+            "suppressed_interrupts": list(suppressed_interrupts_blob),
+            "interrupt_cooldowns": _compact_cooldowns_view(cooldown_store),
+            "interrupt_queue_size": int(nb.get("interrupt_queue_size") or 0),
+            "interrupt_processed": interrupt_processed_blob,
+            "suppression_summary": suppress_summary_text,
         }
         self.state.facet_state.setdefault("nexus", {}).update(
             {
@@ -336,6 +465,8 @@ class Nexus:
                 "last_learning_events": list(cycle_learning_events),
                 "last_internal_events_queued": list(internal_events_queued),
                 "last_internal_events_processed": [],
+                "interrupt_cooldowns": dict(cooldown_store),
+                "interrupt_queue_size": int(nb.get("interrupt_queue_size") or 0),
             }
         )
 
@@ -358,6 +489,14 @@ class Nexus:
                 "phase_execution_order": phase_execution_order,
                 "facet_outputs_by_phase": facet_outputs_by_phase,
                 "internal_events_processed": [],
+                "interrupt_candidates": list(interrupt_candidates_out),
+                "suppression_decisions": list(suppression_decisions_out),
+                "allowed_interrupt_candidate": allowed_interrupt_candidate,
+                "suppressed_interrupts": list(suppressed_interrupts_blob),
+                "interrupt_cooldowns": _compact_cooldowns_view(cooldown_store),
+                "interrupt_queue_size": int(nb.get("interrupt_queue_size") or 0),
+                "interrupt_processed": interrupt_processed_blob,
+                "suppression_summary": suppress_summary_text,
             },
         )
         if not collect_internal_events and internal_events:
@@ -754,29 +893,6 @@ class Nexus:
         if isinstance(learning_events, list):
             return [dict(item) for item in learning_events if isinstance(item, dict)]
         return []
-
-    def _behavior_interrupt_event_candidate(
-        self,
-        *,
-        result: FacetResult,
-        event: Event,
-        signal_map: CycleSignalMap,
-    ) -> Event | None:
-        if result.facet_name != "behavior":
-            return None
-        metadata = result.metadata if isinstance(result.metadata, dict) else {}
-        if not bool(metadata.get("interrupt_recommended", False)):
-            return None
-        return Event(
-            event_type=EventType.INTERNAL,
-            content="behavior_interrupt_recommended",
-            metadata={
-                "source": "behavior",
-                "reason": metadata.get("interrupt_reason"),
-                "parent_event_id": event.event_id,
-                "system_pressure": signal_map.system_pressure,
-            },
-        )
 
     @staticmethod
     def _dict_payload(raw_value: Any) -> dict[str, Any]:
