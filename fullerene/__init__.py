@@ -14,7 +14,11 @@ __all__ = [
     "AffectResult",
     "AffectState",
     "AttentionFacet",
+    "AttentionBroadcast",
+    "AttentionConflict",
+    "AttentionHistoryEntry",
     "AttentionItem",
+    "AttentionMode",
     "AttentionResult",
     "AttentionSource",
     "BehaviorFacet",
@@ -121,7 +125,11 @@ def __getattr__(name: str):
     }:
         return getattr(import_module("fullerene.affect"), name)
     if name in {
+        "AttentionBroadcast",
+        "AttentionConflict",
+        "AttentionHistoryEntry",
         "AttentionItem",
+        "AttentionMode",
         "AttentionResult",
         "AttentionSource",
         "FixedWeightAttentionScorer",

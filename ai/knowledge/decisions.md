@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-05-05 - Attention v1 broadcasts the winning focus item as metadata/state only
+
+- **Status:** accepted
+- **Context:** Attention v0 could score and rank focus candidates, but it stopped at top-N metadata. Context and later facets had no stable, minimal way to observe the winning attention item, repeated focus pressure, or close-score competition without a broader Nexus rewrite.
+- **Decision:** Upgrade Attention to v1 by keeping the existing deterministic fixed-weight scorer, then adding deterministic bottom-up vs top-down classification, winner broadcast, close-score conflict signaling, and bounded winner history. The winning item is stored as `last_attention_broadcast` plus related ids/mode/history on attention facet state and is mirrored in `AttentionResult` metadata. Context may expose that broadcast as an `attention` context item, and Behavior may read prior-cycle top-down broadcasts for a small confidence-only bias. Attention v1 does not mutate Memory, Goals, World Model, Policy, Planner, or Executor stores; it does not trigger another Nexus cycle; and it does not add ignition, refractory, predictive, learned, or cluster-based attention mechanics.
+- **Consequences:** Fullerene now has a minimal broadcast contract for the attention winner without widening authority boundaries. Later work can build on the existing inspectable broadcast/conflict/history packet for ignition thresholds, pressure integration, or richer routing, but v1 remains deterministic, bounded, and state-first rather than mutation-first.
+
 ## 2026-05-04 - Goal intent creation and Context v1 both deduplicate active goals deterministically
 
 - **Status:** accepted

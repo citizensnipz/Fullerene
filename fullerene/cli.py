@@ -225,6 +225,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum number of focus items emitted by --attention.",
     )
     parser.add_argument(
+        "--attention-history-size",
+        type=int,
+        default=20,
+        help="Maximum number of recent attention broadcasts retained by --attention.",
+    )
+    parser.add_argument(
         "--behavior",
         action="store_true",
         help="Enable the deterministic BehaviorFacet for this run.",
@@ -417,6 +423,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         metadata["dry_run"] = False
     if args.attention_top_n < 1:
         parser.error("--attention-top-n must be at least 1.")
+    if args.attention_history_size < 1:
+        parser.error("--attention-history-size must be at least 1.")
     if args.affect_history_size < 1:
         parser.error("--affect-history-size must be at least 1.")
     if args.context_max_goals < 0:
@@ -535,6 +543,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             AttentionFacet(
                 memory_store=memory_store,
                 top_n=args.attention_top_n,
+                history_size=args.attention_history_size,
             )
         )
     if args.affect:
@@ -743,6 +752,7 @@ def _working_context_prompt_lines(record) -> list[str]:
         _prompt_line(record.event.content) if record.event.content.strip() else "none",
     )
     lines.append(f"- current event: {current_event}")
+    lines.append(f"- attention broadcast: {_context_attention_summary(items) or 'none'}")
     lines.append(f"- active goals: {_context_goal_summary(items) or 'none'}")
     lines.append(
         f"- relevant memories: {_context_memory_summary(items, context_source='relevant') or 'none'}"
@@ -799,6 +809,28 @@ def _context_goal_summary(items: list[dict[str, Any]]) -> str | None:
             break
     if summaries:
         return "; ".join(summaries)
+    return None
+
+
+def _context_attention_summary(items: list[dict[str, Any]]) -> str | None:
+    for item in items:
+        if item.get("item_type") != "attention":
+            continue
+        content = _coerce_prompt_string(item.get("content"))
+        if content is None:
+            continue
+        metadata = item.get("metadata", {})
+        if not isinstance(metadata, dict):
+            return content
+        source = _coerce_prompt_string(metadata.get("attention_source"))
+        mode = _coerce_prompt_string(metadata.get("attention_mode"))
+        score = metadata.get("attention_score")
+        if isinstance(score, (int, float)):
+            return (
+                f"{content} (source {source or 'unknown'}, "
+                f"mode {mode or 'unknown'}, score {float(score):.2f})"
+            )
+        return content
     return None
 
 

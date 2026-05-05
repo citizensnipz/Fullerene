@@ -9,6 +9,14 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-05 (attention v1)
+
+- Added `AttentionMode`, `AttentionBroadcast`, `AttentionConflict`, and `AttentionHistoryEntry` to `fullerene/attention/`; `AttentionFacet` now classifies bottom-up vs top-down candidates, emits a winner broadcast, records close-score conflicts, stores bounded `attention_history`, and computes repeated-attention `pressure_contribution` without mutating other stores.
+- Updated `fullerene/context/models.py` and `fullerene/context/assembler.py` so Context v1 can expose a prior attention broadcast as an `attention` context item while avoiding duplication when the same source item is already present.
+- Updated `fullerene/facets/behavior.py` with a small confidence-only bias for response-needed cases when prior attention state carries a top-down broadcast; decision enums and action semantics are unchanged.
+- Updated `fullerene/cli.py` with `--attention-history-size` and prompt-grounding support for attention broadcast lines.
+- Expanded `tests/test_attention.py`, added `tests/test_attention_v1.py`, and expanded `tests/test_context.py` for broadcast creation, mode classification, close-score conflicts, bounded history, repeated-attention pressure, and context integration.
+
 ### 2026-05-04 (goal dedupe polish)
 
 - Added `fullerene/goals/normalization.py` with deterministic goal normalization, conservative keyword-overlap comparison, and active-goal dedupe helpers; exported them through `fullerene/goals/__init__.py`.

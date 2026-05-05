@@ -1,4 +1,4 @@
-"""Deterministic attention facet for Fullerene Attention v0."""
+"""Deterministic attention facet for Fullerene Attention v1."""
 
 from __future__ import annotations
 
@@ -6,7 +6,11 @@ from datetime import datetime
 from typing import Any
 
 from fullerene.attention import (
+    AttentionBroadcast,
+    AttentionConflict,
+    AttentionHistoryEntry,
     AttentionItem,
+    AttentionMode,
     AttentionResult,
     AttentionSource,
     FixedWeightAttentionScorer,
@@ -15,9 +19,19 @@ from fullerene.memory import MemoryRecord, MemoryStore, extract_event_tags
 from fullerene.memory.scoring import explain_score
 from fullerene.nexus.models import DecisionAction, Event, FacetResult, NexusState
 
+ATTENTION_BROADCAST_RECIPIENTS = [
+    "memory",
+    "goals",
+    "world_model",
+    "behavior",
+    "context",
+    "nexus",
+]
+ATTENTION_CONFLICT_THRESHOLD = 0.05
+
 
 class AttentionFacet:
-    """Score current-cycle focus candidates without broadcasting them."""
+    """Score current-cycle focus candidates and broadcast the winner."""
 
     name = "attention"
 
@@ -27,19 +41,23 @@ class AttentionFacet:
         *,
         top_n: int = 3,
         memory_limit: int | None = None,
+        history_size: int = 20,
         scorer: FixedWeightAttentionScorer | None = None,
     ) -> None:
         self.memory_store = memory_store
         self.top_n = max(int(top_n), 1)
         self.memory_limit = max(int(memory_limit or max(self.top_n, 3)), 1)
+        self.history_size = max(int(history_size), 1)
         self.scorer = scorer or FixedWeightAttentionScorer()
 
     def process(self, event: Event, state: NexusState) -> FacetResult:
         candidates, reasons, limitations = self._build_candidates(event, state)
         evaluation = self.scorer.evaluate(candidates, top_n=self.top_n)
-        ranked = evaluation["ranked"]
+        ranked = [self._annotate_attention_mode(item) for item in evaluation["ranked"]]
+        conflict = self._detect_conflict(ranked, event)
+        ranked = self._apply_conflict_resolution(ranked, conflict)
         focus_payloads = [
-            item for item in evaluation["selected"] if float(item["score"]) > 0.0
+            item for item in ranked[: self.top_n] if float(item["score"]) > 0.0
         ]
         focus_items = [
             AttentionItem(
@@ -55,9 +73,18 @@ class AttentionFacet:
             for item in focus_payloads
         ]
         dominant_source = focus_items[0].source if focus_items else None
+        prior_history = self._history_from_state(state)
+        winner_payload = ranked[0] if ranked and float(ranked[0]["score"]) > 0.0 else None
+        broadcast = self._build_broadcast(
+            winner_payload,
+            conflict=conflict,
+            history=prior_history,
+            event=event,
+        )
+        attention_history = self._updated_history(prior_history, broadcast)
         attention_result = AttentionResult(
             focus_items=focus_items,
-            scores=evaluation["scores"],
+            scores={item["id"]: item["score"] for item in ranked},
             dominant_source=dominant_source,
             strategy=evaluation["strategy"],
             metadata={
@@ -67,6 +94,29 @@ class AttentionFacet:
                 "available_sources": sorted({item["source"] for item in ranked}),
                 "limitations": list(limitations),
                 "weights": dict(self.scorer.weights),
+                "attention_version": "v1",
+                "broadcast": broadcast.to_dict() if broadcast is not None else None,
+                "broadcast_item_id": (
+                    broadcast.item_id if broadcast is not None else None
+                ),
+                "broadcast_mode": (
+                    broadcast.mode.value if broadcast is not None else None
+                ),
+                "recipients": (
+                    list(broadcast.recipients) if broadcast is not None else []
+                ),
+                "pressure_contribution": (
+                    broadcast.pressure_contribution if broadcast is not None else 0.0
+                ),
+                "attention_history_count": len(attention_history),
+                "attention_conflict": conflict is not None,
+                "conflict": conflict.to_dict() if conflict is not None else None,
+                "conflict_items": (
+                    list(conflict.item_ids) if conflict is not None else []
+                ),
+                "score_delta": (
+                    conflict.score_delta if conflict is not None else None
+                ),
             },
         )
         focus_item_payload = [item.to_dict() for item in focus_items]
@@ -86,6 +136,25 @@ class AttentionFacet:
                 "last_dominant_source": dominant_source_value,
                 "last_strategy": attention_result.strategy,
                 "last_scores": dict(attention_result.scores),
+                "last_attention_broadcast": (
+                    broadcast.to_dict() if broadcast is not None else None
+                ),
+                "last_attention_broadcast_item_id": (
+                    broadcast.item_id if broadcast is not None else None
+                ),
+                "last_attention_mode": (
+                    broadcast.mode.value if broadcast is not None else None
+                ),
+                "last_attention_conflict": (
+                    conflict.to_dict() if conflict is not None else None
+                ),
+                "attention_history": [
+                    entry.to_dict() for entry in attention_history
+                ],
+                "last_attention_history_count": len(attention_history),
+                "last_attention_pressure_contribution": (
+                    broadcast.pressure_contribution if broadcast is not None else 0.0
+                ),
             },
             metadata={
                 "attention_result": attention_result.to_dict(),
@@ -94,7 +163,33 @@ class AttentionFacet:
                 "dominant_source": dominant_source_value,
                 "strategy": attention_result.strategy,
                 "top_n": self.top_n,
+                "history_size": self.history_size,
                 "weights": dict(self.scorer.weights),
+                "broadcast": broadcast.to_dict() if broadcast is not None else None,
+                "broadcast_item_id": (
+                    broadcast.item_id if broadcast is not None else None
+                ),
+                "broadcast_mode": (
+                    broadcast.mode.value if broadcast is not None else None
+                ),
+                "recipients": (
+                    list(broadcast.recipients) if broadcast is not None else []
+                ),
+                "pressure_contribution": (
+                    broadcast.pressure_contribution if broadcast is not None else 0.0
+                ),
+                "attention_conflict": conflict is not None,
+                "conflict": conflict.to_dict() if conflict is not None else None,
+                "conflict_items": (
+                    list(conflict.item_ids) if conflict is not None else []
+                ),
+                "score_delta": (
+                    conflict.score_delta if conflict is not None else None
+                ),
+                "attention_history": [
+                    entry.to_dict() for entry in attention_history
+                ],
+                "attention_history_count": len(attention_history),
                 "reasons": reasons,
                 "limitations": limitations,
             },
@@ -373,6 +468,196 @@ class AttentionFacet:
                 "reasons": list(reasons) if isinstance(reasons, list) else [],
             },
         }
+
+    @staticmethod
+    def _annotate_attention_mode(item: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(item)
+        components = dict(payload.get("components") or {})
+        goal_priority = float(components.get("goal_priority", 0.0))
+        novelty = float(components.get("novelty", 0.0))
+        pressure = float(components.get("pressure", 0.0))
+        execution_recency = float(components.get("execution_recency", 0.0))
+        if goal_priority >= novelty and goal_priority > 0.0:
+            mode = AttentionMode.TOP_DOWN
+        elif pressure + goal_priority >= novelty + execution_recency:
+            mode = AttentionMode.TOP_DOWN
+        else:
+            mode = AttentionMode.BOTTOM_UP
+        metadata = dict(payload.get("metadata") or {})
+        metadata["mode"] = mode.value
+        payload["metadata"] = metadata
+        payload["mode"] = mode.value
+        return payload
+
+    def _detect_conflict(
+        self,
+        ranked: list[dict[str, Any]],
+        event: Event,
+    ) -> AttentionConflict | None:
+        if len(ranked) < 2:
+            return None
+        first, second = ranked[0], ranked[1]
+        score_delta = abs(float(first.get("score", 0.0)) - float(second.get("score", 0.0)))
+        if score_delta > ATTENTION_CONFLICT_THRESHOLD:
+            return None
+        return AttentionConflict(
+            id=f"attention-conflict:{event.event_id}",
+            item_ids=[str(first.get("id") or ""), str(second.get("id") or "")],
+            score_delta=round(score_delta, 3),
+            reason="close_score_competition",
+            metadata={
+                "modes": [
+                    str(first.get("mode") or ""),
+                    str(second.get("mode") or ""),
+                ],
+                "sources": [
+                    str(first.get("source") or ""),
+                    str(second.get("source") or ""),
+                ],
+            },
+        )
+
+    def _apply_conflict_resolution(
+        self,
+        ranked: list[dict[str, Any]],
+        conflict: AttentionConflict | None,
+    ) -> list[dict[str, Any]]:
+        if conflict is None or len(ranked) < 2:
+            return ranked
+        first, second = ranked[0], ranked[1]
+        preferred = self._preferred_conflict_item(first, second)
+        if preferred is first:
+            return ranked
+        return [second, first, *ranked[2:]]
+
+    @staticmethod
+    def _preferred_conflict_item(
+        first: dict[str, Any],
+        second: dict[str, Any],
+    ) -> dict[str, Any]:
+        first_mode = str(first.get("mode") or AttentionMode.BOTTOM_UP.value)
+        second_mode = str(second.get("mode") or AttentionMode.BOTTOM_UP.value)
+        if first_mode != second_mode:
+            if second_mode == AttentionMode.TOP_DOWN.value:
+                return second
+            return first
+        first_score = float(first.get("score", 0.0))
+        second_score = float(second.get("score", 0.0))
+        if second_score > first_score:
+            return second
+        if first_score > second_score:
+            return first
+        if (str(second.get("source") or ""), str(second.get("id") or "")) < (
+            str(first.get("source") or ""),
+            str(first.get("id") or ""),
+        ):
+            return second
+        return first
+
+    def _build_broadcast(
+        self,
+        winner_payload: dict[str, Any] | None,
+        *,
+        conflict: AttentionConflict | None,
+        history: list[AttentionHistoryEntry],
+        event: Event,
+    ) -> AttentionBroadcast | None:
+        if winner_payload is None:
+            return None
+        normalized_content = self._normalize_content(
+            str(winner_payload.get("content") or "")
+        )
+        repeated_count = self._repeated_count(
+            history,
+            item_id=str(winner_payload.get("id") or ""),
+            normalized_content=normalized_content,
+        )
+        pressure_contribution = min(repeated_count * 0.05, 0.25)
+        metadata = dict(winner_payload.get("metadata") or {})
+        metadata["normalized_content"] = normalized_content
+        metadata["repeated_count"] = repeated_count
+        metadata["pressure_contribution"] = pressure_contribution
+        return AttentionBroadcast(
+            id=f"attention-broadcast:{event.event_id}",
+            created_at=event.timestamp,
+            item_id=str(winner_payload.get("id") or ""),
+            source=AttentionSource(str(winner_payload.get("source") or "system")),
+            source_id=winner_payload.get("source_id"),
+            content=str(winner_payload.get("content") or ""),
+            score=float(winner_payload.get("score", 0.0)),
+            mode=AttentionMode(str(winner_payload.get("mode") or AttentionMode.BOTTOM_UP.value)),
+            components=dict(winner_payload.get("components") or {}),
+            metadata=metadata,
+            recipients=list(ATTENTION_BROADCAST_RECIPIENTS),
+            conflict_ids=[conflict.id] if conflict is not None else [],
+            repeated_count=repeated_count,
+            pressure_contribution=round(pressure_contribution, 3),
+        )
+
+    def _history_from_state(self, state: NexusState) -> list[AttentionHistoryEntry]:
+        facet_state = state.facet_state.get(self.name)
+        if not isinstance(facet_state, dict):
+            return []
+        raw_history = facet_state.get("attention_history")
+        if not isinstance(raw_history, list):
+            return []
+        history: list[AttentionHistoryEntry] = []
+        for raw_entry in raw_history:
+            if not isinstance(raw_entry, dict):
+                continue
+            try:
+                history.append(AttentionHistoryEntry.from_dict(raw_entry))
+            except (KeyError, TypeError, ValueError):
+                continue
+        return history[-self.history_size :]
+
+    def _updated_history(
+        self,
+        history: list[AttentionHistoryEntry],
+        broadcast: AttentionBroadcast | None,
+    ) -> list[AttentionHistoryEntry]:
+        if broadcast is None:
+            return history[-self.history_size :]
+        next_history = list(history)
+        next_history.append(
+            AttentionHistoryEntry(
+                broadcast_id=broadcast.id,
+                item_id=broadcast.item_id,
+                source=broadcast.source,
+                source_id=broadcast.source_id,
+                score=broadcast.score,
+                created_at=broadcast.created_at,
+                metadata={
+                    "mode": broadcast.mode.value,
+                    "normalized_content": broadcast.metadata.get("normalized_content", ""),
+                    "repeated_count": broadcast.repeated_count,
+                    "pressure_contribution": broadcast.pressure_contribution,
+                },
+            )
+        )
+        return next_history[-self.history_size :]
+
+    def _repeated_count(
+        self,
+        history: list[AttentionHistoryEntry],
+        *,
+        item_id: str,
+        normalized_content: str,
+    ) -> int:
+        repeated_count = 0
+        for entry in history[-self.history_size :]:
+            entry_normalized_content = str(
+                entry.metadata.get("normalized_content", "")
+            )
+            if entry.item_id == item_id or (
+                normalized_content and entry_normalized_content == normalized_content
+            ):
+                repeated_count += 1
+        return repeated_count
+
+    @staticmethod
+    def _normalize_content(content: str) -> str:
+        return " ".join(content.casefold().split())
 
     @staticmethod
     def _top_numeric(matches: list[dict[str, Any]], *, key: str) -> float:

@@ -28,7 +28,7 @@ Product vocabulary for modular components:
 11. Behavior
 12. Learning
 
-Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `AffectFacet v0`, `AttentionFacet v0`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `PlannerFacet v0`, `ExecutorFacet v0`, `VerifierFacet v0`, `LearningFacet v0`, `ContextFacet`, and `EchoFacet`; `AffectFacet v0` covers deterministic internal VAD + novelty observation only, `AttentionFacet v0` covers deterministic fixed-weight focus scoring without broadcast, `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, `PlannerFacet v0` proposes deterministic inspectable plans, `ExecutorFacet v0` performs approved internal-only execution with dry-run default, `VerifierFacet v0` runs deterministic post-decision inspection before persistence, and `LearningFacet v0` classifies deterministic feedback and emits traceable adjustment records without owning its own persistent store.
+Harness note: treat each as an interface-friendly boundary in design discussions. The current runtime implements `MemoryFacet`, `AffectFacet v0`, `AttentionFacet v1`, `GoalsFacet`, `WorldModelFacet`, `BehaviorFacet v0`, `PolicyFacet v0`, `PlannerFacet v0`, `ExecutorFacet v0`, `VerifierFacet v0`, `LearningFacet v0`, `ContextFacet`, and `EchoFacet`; `AffectFacet v0` covers deterministic internal VAD + novelty observation only, `AttentionFacet v1` covers deterministic fixed-weight focus scoring plus bounded broadcast/history/conflict metadata without cross-facet mutation, `BehaviorFacet v0` covers the first deterministic decision-selection role, `PolicyFacet v0` enforces deterministic permission boundaries, `PlannerFacet v0` proposes deterministic inspectable plans, `ExecutorFacet v0` performs approved internal-only execution with dry-run default, `VerifierFacet v0` runs deterministic post-decision inspection before persistence, and `LearningFacet v0` classifies deterministic feedback and emits traceable adjustment records without owning its own persistent store.
 
 ## Nexus loop (current v1-lite)
 
@@ -36,7 +36,7 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - Aggregate bounded `system_pressure` from event metadata plus available attention, affect, and learning signals; pressure is persisted on Nexus state and each record.
 - Pass the event and state through registered facets in deterministic phases: INPUT / CONTEXT, STATE, DECISION, PLANNING / EXECUTION, LEARNING / SIGNAL, and VERIFICATION / OUTPUT.
 - Preserve registered order within phases except for small pressure-priority weights in the decision, planning/execution, and learning/signal phases; no arbitrary reordering or phase skipping is implemented.
-- When enabled, Attention runs after the signal-producing facets already registered for the current run and scores candidate focus items from the current event plus available memory / goals / world-model / execution metadata.
+- When enabled, Attention runs after the signal-producing facets already registered for the current run, scores candidate focus items from the current event plus available memory / goals / world-model / execution metadata, classifies bottom-up vs top-down mode, and stores a bounded broadcast/history/conflict packet on attention facet state.
 - Collect structured `FacetResult` objects.
 - Integrate those results into a small initial `NexusDecision` (`WAIT`, `ASK`, `ACT`, `RECORD`), using explicit proposal priority `ACT > ASK > RECORD > WAIT` when multiple facets disagree.
 - Apply policy guardrails before finalizing the initial action: policy `DENIED` results force `RECORD`, and policy `APPROVAL_REQUIRED` results force `ASK`, even if another facet proposed `ACT`.
@@ -91,13 +91,14 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - **v2** - deterministic appraisal layer (`goal relevance`, `goal congruence`, `agency`, `coping potential`), expression-character influence, and a possible small local regression model later. **Future.**
 - **v3** - goal-priority influence, memory-decay influence, attention-competition influence, system-health signaling, and cross-facet affect broadcast. **Future.**
 
-## Attention v0 (current)
+## Attention v1 (current)
 
-- **Deterministic spotlight only** - `fullerene/attention/` plus `AttentionFacet` implement a fixed-weight competition that scores what should receive focus right now. No LLM calls, embeddings, graph reasoning, RAG, or learned weights are involved.
-- **Metadata-only output** - Attention emits inspectable `AttentionItem` and `AttentionResult` payloads with weighted component breakdowns, per-candidate scores, dominant components, and top-N focus items. The default `top_n` is `3`.
+- **Deterministic spotlight plus broadcast** - `fullerene/attention/` plus `AttentionFacet` implement a fixed-weight competition that scores what should receive focus right now, classifies candidates as bottom-up vs top-down, and broadcasts the winning item as inspectable metadata/state. No LLM calls, embeddings, graph reasoning, RAG, or learned weights are involved.
+- **Inspectable output** - Attention emits inspectable `AttentionItem`, `AttentionBroadcast`, `AttentionConflict`, `AttentionHistoryEntry`, and `AttentionResult` payloads with weighted component breakdowns, per-candidate scores, dominant components, top-N focus items, winner broadcast metadata, conflict signals, and bounded winner history. The default `top_n` is `3`.
 - **Current inputs** - the current event always becomes an attention candidate; relevant memories come from the optional memory store; relevant goals, beliefs, and execution outcomes are read from already-produced facet state when those facets are enabled earlier in the same run.
-- **No broadcast yet** - Attention v0 selects focus items but does not broadcast a winner to other facets, modify Context, or change stores. This keeps Attention separate from planning, execution, and decision authority.
-- **Global Workspace inspiration** - conceptually, Nexus is the director and Attention is the spotlight in a global-workspace-style loop. v0 implements only spotlight selection; the later broadcast mechanism remains future work.
+- **Conservative broadcast only** - Attention v1 stores `last_attention_broadcast`, `last_attention_broadcast_item_id`, `last_attention_mode`, `last_attention_conflict`, and bounded `attention_history` on attention facet state. Context may expose the broadcast as an `attention` context item, but Attention still does not mutate Memory, Goals, World Model, Policy, Planner, or Executor stores, trigger another Nexus cycle, or change facet order.
+- **Conflict and repetition signals** - when the top two scores are within `0.05`, Attention emits an `AttentionConflict`; repeated recent winners add a small inspectable `pressure_contribution` field to the broadcast without redesigning global pressure aggregation.
+- **Global Workspace inspiration** - conceptually, Nexus is the director and Attention is the spotlight in a global-workspace-style loop. The current implementation now includes spotlight selection plus a bounded broadcast packet, while ignition/refractory mechanics remain future work.
 
 ### Attention scoring formula
 
@@ -119,8 +120,8 @@ score = (
 
 ### Attention roadmap
 
-- **v0** - deterministic fixed-weight scoring, top-N focus items, metadata only, no broadcast. **Current.**
-- **v1** - broadcast to facets, bottom-up vs top-down competition, conflict detection, and attention history. **Future.**
+- **v0** - deterministic fixed-weight scoring, top-N focus items, metadata only, no broadcast. **Implemented as the base scorer.**
+- **v1** - broadcast to facets, bottom-up vs top-down competition, conflict detection, and attention history. **Current.**
 - **v2** - ignition threshold, refractory period, cluster attention, and pressure modification. **Future.**
 - **v3** - learned weights, predictive attention, meta-attention, and an optional local classifier. **Future.**
 
@@ -136,7 +137,7 @@ score = (
 ## Context v1 (current)
 
 - **Deterministic working packet** - `ContextFacet` now assembles a bounded inspectable `ContextWindow` from active runtime state at the start of the Nexus cycle, rather than exposing only a static recent-memory slice.
-- **Current sources** - the current event is always included directly, followed by bounded active goals, relevant memories, recent episodic memories, active beliefs, a compact policy summary, and optional compact planner / executor / attention / affect / learning summaries when those signals are available.
+- **Current sources** - the current event is always included directly, followed by an optional attention-broadcast context item, bounded active goals, relevant memories, recent episodic memories, active beliefs, a compact policy summary, and optional compact planner / executor / attention / affect / learning summaries when those signals are available.
 - **Deterministic scoping** - bounds come from `ContextAssemblyConfig` (`max_goals`, `max_memories`, `max_beliefs`, `salience_threshold`, `include_policy_summary`, `include_signal_summaries`). Context v1 deduplicates repeated memories, deduplicates active goals by deterministic normalized description before exposure, preserves `source_id`, and does not load whole stores without limits.
 - **Strategy support** - `ContextFacet` supports both `static_recent_episodic_v0` and `dynamic_active_facets_v1`; the dynamic strategy is the default when context is enabled through the current CLI/runtime wiring.
 - **Goal hygiene** - goal-intent creation now normalizes descriptions (case, punctuation, spacing, and common intent prefixes) and merges exact normalized duplicates into an existing active goal instead of creating a second row. Context also shields reused state directories by deduplicating already-persisted active goals before prompt grounding.
@@ -300,10 +301,10 @@ flowchart LR
 | Affect models and derivation | `fullerene/affect/` | `AffectState`, `AffectResult`, `AffectHistoryBuffer`, and `DeterministicAffectDeriver` for observation-only affect state |
 | Learning models and rules | `fullerene/learning/` | `LearningSignal`, `AdjustmentRecord`, `LearningResult`, deterministic signal classifiers, and conservative apply-or-propose adjustment logic |
 | Context models and assembler | `fullerene/context/` | `ContextItem`, `ContextWindow`, `ContextAssemblyConfig`, `StaticContextAssembler`, and `DynamicContextAssembler` for bounded Context v0/v1 assembly |
-| Attention models and scorer | `fullerene/attention/` | `AttentionItem`, `AttentionResult`, `AttentionSource`, and `FixedWeightAttentionScorer` for deterministic focus scoring |
+| Attention models and scorer | `fullerene/attention/` | `AttentionItem`, `AttentionBroadcast`, `AttentionConflict`, `AttentionHistoryEntry`, `AttentionMode`, `AttentionResult`, `AttentionSource`, and `FixedWeightAttentionScorer` for deterministic focus scoring plus bounded broadcast state |
 | Executor models and runner | `fullerene/executor/` | `ExecutionRecord`, `ExecutionResult`, `ExecutionStatus`, and `InternalActionExecutor` for controlled internal action execution |
 | Memory facet | `fullerene/facets/memory.py` | Deterministic episodic storage with v1 tag/salience inference plus bounded retrieval |
-| Attention facet | `fullerene/facets/attention.py` | Deterministic top-N focus scoring from event, memory, goals, world-model, and execution signals; no broadcast in v0 |
+| Attention facet | `fullerene/facets/attention.py` | Deterministic top-N focus scoring from event, memory, goals, world-model, and execution signals; stores winner broadcast, conflict metadata, and bounded attention history in v1 |
 | Goals models and store | `fullerene/goals/` | `Goal`, `GoalStatus`, `GoalSource`, and SQLite-backed canonical goals store |
 | Memory models and store | `fullerene/memory/` | `MemoryRecord`, scoring helpers, deterministic tag/salience inference (`inference.py`), and SQLite-backed canonical memory |
 | Planner models and builder | `fullerene/planner/` | `Plan`, `PlanStep`, `RiskLevel`, and deterministic `DeterministicPlanBuilder` for inspectable plan generation |

@@ -37,6 +37,7 @@ def _parse_datetime(raw: str | None) -> datetime | None:
 
 class ContextItemType(str, Enum):
     EVENT = "event"
+    ATTENTION = "attention"
     MEMORY = "memory"
     GOAL = "goal"
     BELIEF = "belief"

@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-05-05 - Attention v1 broadcast, conflict, and history
+
+- **Context:** Upgrade Attention from passive top-N scoring to a bounded broadcast mechanism without adding ignition thresholds, refractory logic, embeddings, LLM calls, or broader Nexus rewrites.
+- **Done:** Extended `fullerene/attention/` with `AttentionMode`, `AttentionBroadcast`, `AttentionConflict`, and `AttentionHistoryEntry`; updated `fullerene/facets/attention.py` to classify bottom-up vs top-down candidates, resolve close-score conflicts, emit a winner broadcast, persist bounded attention history, and compute repeated-attention pressure contribution; updated `fullerene/context/assembler.py` / `fullerene/context/models.py` so Context v1 can include a non-duplicated `attention` context item from prior attention state; added `--attention-history-size` and prompt-grounding visibility in `fullerene/cli.py`; added a conservative prior-cycle top-down confidence bias in `fullerene/facets/behavior.py`; expanded `tests/test_attention.py`, added `tests/test_attention_v1.py`, and expanded `tests/test_context.py`.
+- **Verified:** `python -B -m unittest tests.test_attention tests.test_attention_v1 tests.test_context -v`; `python -B -m unittest tests.test_behavior -v`
+- **Next:** Run the full suite plus the requested `python -m fullerene --full ... --debug` smoke commands on the updated attention contract and keep future attention work inside the declared v2/v3 roadmap.
+- **Blockers:** None so far.
+
 ### 2026-05-04 - Goals normalization and Context v1 dedupe
 
 - **Context:** Clean up repeated active-goal phrasing before Planner v1 so reused state directories do not leak duplicate near-identical goals into the Context v1 working packet or the prompt-grounding layer.

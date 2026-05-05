@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
+from fullerene.attention import AttentionBroadcast
 from fullerene.context.models import (
     STATIC_RECENT_EPISODIC_V0,
     ContextAssemblyConfig,
@@ -154,6 +155,17 @@ class DynamicContextAssembler:
         event_item = self._event_item(event)
         items.append(event_item)
 
+        attention_item = self._attention_context_item(
+            state=working_state,
+            facet_results=facet_results,
+            existing_items=items,
+        )
+        if attention_item is not None:
+            items.append(attention_item)
+            reasons.append("included_attention_broadcast")
+        else:
+            reasons.append("attention_broadcast_unavailable_or_duplicate")
+
         goal_items, goal_deduplication = self._goal_items()
         items.extend(goal_items)
         reasons.append(f"included_goals={len(goal_items)}")
@@ -187,6 +199,11 @@ class DynamicContextAssembler:
         metadata = {
             "source_types": self._source_types(items),
             "item_count": len(items),
+            "included_attention_item_ids": (
+                [attention_item.metadata["attention_item_id"]]
+                if attention_item is not None
+                else []
+            ),
             "included_goal_ids": [item.id for item in goal_items],
             "deduped_goal_count": goal_deduplication.deduped_goal_count,
             "deduped_goal_ids": list(goal_deduplication.deduped_goal_ids),
@@ -222,6 +239,46 @@ class DynamicContextAssembler:
                 "context_source": "current_event",
                 "event_type": event.event_type.value,
                 "event_metadata": dict(event.metadata),
+            },
+        )
+
+    def _attention_context_item(
+        self,
+        *,
+        state: NexusState,
+        facet_results: Sequence[FacetResult] | None,
+        existing_items: Sequence[ContextItem],
+    ) -> ContextItem | None:
+        attention_state = self._facet_bucket("attention", state, facet_results)
+        if not attention_state:
+            return None
+        raw_broadcast = attention_state.get("last_attention_broadcast")
+        if not isinstance(raw_broadcast, dict):
+            return None
+        try:
+            broadcast = AttentionBroadcast.from_dict(raw_broadcast)
+        except (KeyError, TypeError, ValueError):
+            return None
+        if self._is_duplicate_attention_source_item(existing_items, broadcast):
+            return None
+        return ContextItem(
+            id=f"attention:{broadcast.id}",
+            item_type=ContextItemType.ATTENTION,
+            content=broadcast.content,
+            source_id=broadcast.item_id,
+            created_at=broadcast.created_at,
+            metadata={
+                "context_source": "attention_broadcast",
+                "attention_broadcast_id": broadcast.id,
+                "attention_item_id": broadcast.item_id,
+                "attention_source": broadcast.source.value,
+                "attention_score": broadcast.score,
+                "attention_mode": broadcast.mode.value,
+                "attention_source_id": broadcast.source_id,
+                "attention_recipients": list(broadcast.recipients),
+                "attention_conflict_ids": list(broadcast.conflict_ids),
+                "attention_repeated_count": broadcast.repeated_count,
+                "attention_pressure_contribution": broadcast.pressure_contribution,
             },
         )
 
@@ -479,16 +536,20 @@ class DynamicContextAssembler:
         attention_state = self._facet_bucket("attention", state, facet_results)
         if not attention_state:
             return None
-        dominant_source = self._coerce_string(
-            attention_state.get("last_dominant_source")
-        )
+        dominant_source = self._coerce_string(attention_state.get("last_dominant_source"))
         raw_focus_ids = attention_state.get("last_focus_item_ids")
         focus_count = len(raw_focus_ids) if isinstance(raw_focus_ids, list) else 0
-        if dominant_source is None and focus_count == 0:
+        raw_broadcast = attention_state.get("last_attention_broadcast")
+        broadcast_mode = None
+        broadcast_source = None
+        if isinstance(raw_broadcast, dict):
+            broadcast_mode = self._coerce_string(raw_broadcast.get("mode"))
+            broadcast_source = self._coerce_string(raw_broadcast.get("source"))
+        if dominant_source is None and focus_count == 0 and broadcast_mode is None:
             return None
         content = (
-            f"Attention: dominant source {dominant_source or 'none'}, "
-            f"{focus_count} focus item(s)."
+            f"Attention: dominant source {dominant_source or broadcast_source or 'none'}, "
+            f"broadcast mode {broadcast_mode or 'none'}, {focus_count} focus item(s)."
         )
         return ContextItem(
             id="signal-attention",
@@ -639,6 +700,23 @@ class DynamicContextAssembler:
             seen.add(value)
             source_types.append(value)
         return source_types
+
+    @staticmethod
+    def _is_duplicate_attention_source_item(
+        existing_items: Sequence[ContextItem],
+        broadcast: AttentionBroadcast,
+    ) -> bool:
+        candidate_ids = {
+            broadcast.item_id,
+            str(broadcast.source_id or ""),
+        }
+        candidate_ids.discard("")
+        for item in existing_items:
+            if item.id in candidate_ids:
+                return True
+            if item.source_id in candidate_ids:
+                return True
+        return False
 
     @staticmethod
     def _memory_to_context_item(

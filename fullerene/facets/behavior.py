@@ -150,8 +150,22 @@ class BehaviorFacet:
             world_alignment_score=signals.world_alignment_score,
             world_alignment_confidence=signals.world_alignment_confidence,
         )
+        attention_confidence_bias = self._attention_confidence_bias(
+            state,
+            response_needed=signals.response_needed,
+        )
+        if attention_confidence_bias > 0.0:
+            confidence_breakdown["attention_broadcast_contribution"] = (
+                attention_confidence_bias
+            )
+            confidence_breakdown["total"] = round(
+                _clamp_unit(confidence_breakdown["total"] + attention_confidence_bias),
+                3,
+            )
         confidence = confidence_breakdown["total"]
         reasons.extend(self._contribution_reasons(signals, confidence_breakdown))
+        if attention_confidence_bias > 0.0:
+            reasons.append("top_down_attention_broadcast increased response confidence")
         priority_level = "high" if signals.high_priority else "normal"
 
         response_metadata = self._response_metadata(selected_decision, signals)
@@ -185,6 +199,7 @@ class BehaviorFacet:
                 "last_query_intent": signals.query_intent,
                 "last_context_sufficiency": signals.context_sufficiency,
                 "last_missing_context": list(signals.missing_context),
+                "last_attention_confidence_bias": attention_confidence_bias,
             },
             metadata={
                 "selected_decision": selected_decision.value,
@@ -210,6 +225,7 @@ class BehaviorFacet:
                 "planner_available": signals.planner_available,
                 "context_sufficiency": signals.context_sufficiency,
                 "missing_context": list(signals.missing_context),
+                "attention_confidence_bias": attention_confidence_bias,
                 "memory_signal_available": signals.memory_signal_available,
                 "goal_signal_available": signals.goal_signal_available,
                 "goal_alignment_score": signals.goal_alignment_score,
@@ -1095,6 +1111,24 @@ class BehaviorFacet:
         else:
             score_breakdown[DecisionAction.WAIT]["low_signal_wait_bias"] = 0.15
             reasons.append("low signal environment favored WAIT")
+
+    @staticmethod
+    def _attention_confidence_bias(
+        state: NexusState,
+        *,
+        response_needed: bool,
+    ) -> float:
+        if not response_needed:
+            return 0.0
+        attention_state = state.facet_state.get("attention")
+        if not isinstance(attention_state, dict):
+            return 0.0
+        raw_broadcast = attention_state.get("last_attention_broadcast")
+        if not isinstance(raw_broadcast, dict):
+            return 0.0
+        if str(raw_broadcast.get("mode") or "").strip().lower() != "top_down":
+            return 0.0
+        return 0.05
 
     @staticmethod
     def _score_confidence(

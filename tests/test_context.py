@@ -21,6 +21,7 @@ from fullerene.context import (
     DynamicContextAssembler,
     StaticContextAssembler,
 )
+from fullerene.attention import AttentionBroadcast, AttentionMode, AttentionSource
 from fullerene.facets import ContextFacet, EchoFacet, GoalsFacet, MemoryFacet, WorldModelFacet
 from fullerene.goals import (
     Goal,
@@ -722,6 +723,99 @@ class ContextFacetTests(unittest.TestCase):
         self.assertEqual(result.metadata["deduped_goal_count"], 0)
         self.assertEqual(result.metadata["limits"]["max_goals"], 3)
         self.assertNotEqual(result.proposed_decision, DecisionAction.ACT)
+
+    def test_dynamic_context_includes_attention_broadcast_item(self) -> None:
+        facet = ContextFacet(
+            None,
+            config=ContextAssemblyConfig(
+                include_policy_summary=False,
+                include_signal_summaries=False,
+            ),
+        )
+        event = Event(event_type=EventType.USER_MESSAGE, content="What should I do next?")
+        broadcast = AttentionBroadcast(
+            id="attention-broadcast:event-prior",
+            created_at=event.timestamp,
+            item_id="goal:goal-1",
+            source=AttentionSource.GOAL,
+            source_id="goal-1",
+            content="finish Fullerene",
+            score=0.4,
+            mode=AttentionMode.TOP_DOWN,
+            components={"goal_priority": 0.25, "pressure": 0.15},
+            metadata={"normalized_content": "finish fullerene"},
+            recipients=["context"],
+            repeated_count=1,
+            pressure_contribution=0.05,
+        )
+
+        result = facet.process(
+            event,
+            NexusState(
+                facet_state={
+                    "attention": {
+                        "last_attention_broadcast": broadcast.to_dict(),
+                    }
+                }
+            ),
+        )
+
+        attention_items = [
+            item
+            for item in result.metadata["context_window"]["items"]
+            if item["item_type"] == "attention"
+        ]
+        self.assertEqual(len(attention_items), 1)
+        self.assertEqual(attention_items[0]["content"], "finish Fullerene")
+        self.assertEqual(
+            attention_items[0]["metadata"]["attention_mode"],
+            AttentionMode.TOP_DOWN.value,
+        )
+
+    def test_dynamic_context_does_not_duplicate_current_event_broadcast(self) -> None:
+        facet = ContextFacet(
+            None,
+            config=ContextAssemblyConfig(
+                include_policy_summary=False,
+                include_signal_summaries=False,
+            ),
+        )
+        event = Event(
+            event_type=EventType.USER_MESSAGE,
+            content="What should I do next?",
+            event_id="event-current",
+        )
+        broadcast = AttentionBroadcast(
+            id="attention-broadcast:event-current",
+            created_at=event.timestamp,
+            item_id="event:event-current",
+            source=AttentionSource.EVENT,
+            source_id="event-current",
+            content=event.content,
+            score=0.2,
+            mode=AttentionMode.BOTTOM_UP,
+            components={"novelty": 0.15},
+            metadata={"normalized_content": "what should i do next?"},
+            recipients=["context"],
+        )
+
+        result = facet.process(
+            event,
+            NexusState(
+                facet_state={
+                    "attention": {
+                        "last_attention_broadcast": broadcast.to_dict(),
+                    }
+                }
+            ),
+        )
+
+        attention_items = [
+            item
+            for item in result.metadata["context_window"]["items"]
+            if item["item_type"] == "attention"
+        ]
+        self.assertEqual(attention_items, [])
 
 
 class ContextRuntimeIntegrationTests(unittest.TestCase):

@@ -267,6 +267,11 @@ class AttentionFacetTests(unittest.TestCase):
         self.assertEqual(result.proposed_decision, DecisionAction.RECORD)
         self.assertTrue(result.metadata["focus_items"])
         self.assertEqual(result.metadata["focus_items"][0]["source"], "event")
+        self.assertIsNotNone(result.metadata["broadcast"])
+        self.assertEqual(
+            result.metadata["broadcast_item_id"],
+            result.metadata["focus_items"][0]["id"],
+        )
 
     def test_returns_wait_when_no_meaningful_signals_exist(self) -> None:
         facet = AttentionFacet(top_n=3)
@@ -561,7 +566,7 @@ class AttentionIntegrationTests(unittest.TestCase):
         self.assertEqual(memory_store.get_memory("mem-1").salience, 0.5)
         self.assertIn("attention_result", result.metadata)
 
-    def test_attention_does_not_broadcast_in_v0(self) -> None:
+    def test_attention_emits_broadcast_metadata_in_v1(self) -> None:
         facet = AttentionFacet()
 
         result = facet.process(
@@ -569,9 +574,12 @@ class AttentionIntegrationTests(unittest.TestCase):
             NexusState(),
         )
 
-        payload = json.dumps(result.metadata)
-        self.assertNotIn("ignition", payload)
-        self.assertNotIn("refractory", payload)
+        self.assertIsNotNone(result.metadata["broadcast"])
+        self.assertEqual(
+            result.metadata["broadcast_item_id"],
+            result.metadata["focus_items"][0]["id"],
+        )
+        self.assertIn("attention_history_count", result.metadata)
 
 
 class CLIAttentionIntegrationTests(unittest.TestCase):
@@ -601,6 +609,7 @@ class CLIAttentionIntegrationTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 0)
         self.assertIn("attention_result", attention_result["metadata"])
+        self.assertIsNotNone(attention_result["metadata"]["broadcast"])
 
     def test_attention_top_n_controls_focus_item_count(self) -> None:
         stdout = io.StringIO()
