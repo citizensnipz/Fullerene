@@ -18,7 +18,9 @@ from fullerene.memory import (
     MemoryRecord,
     MemoryStore,
     MemoryType,
+    classify_query_intent,
     extract_event_tags,
+    infer_domain,
     tokenize,
 )
 from fullerene.nexus.models import Event, FacetResult, NexusState
@@ -119,6 +121,8 @@ class StaticContextAssembler:
                 "confidence": record.confidence,
                 "tags": list(record.tags),
                 "memory_metadata": dict(record.metadata),
+                "role": record.role,
+                "domain": record.domain,
             },
         )
 
@@ -172,7 +176,9 @@ class DynamicContextAssembler:
         if goal_deduplication.deduped_goal_count > 0:
             reasons.append(f"deduped_goals={goal_deduplication.deduped_goal_count}")
 
-        relevant_memory_items, recent_memory_items = self._memory_items(event)
+        memory_assembly = self._memory_items(event)
+        relevant_memory_items = memory_assembly["relevant_items"]
+        recent_memory_items = memory_assembly["recent_items"]
         items.extend(relevant_memory_items)
         items.extend(recent_memory_items)
         reasons.append(f"included_relevant_memories={len(relevant_memory_items)}")
@@ -196,6 +202,39 @@ class DynamicContextAssembler:
         items.extend(signal_items)
         reasons.append(f"included_signal_summaries={len(signal_items)}")
 
+        memory_items = [*relevant_memory_items, *recent_memory_items]
+        included_memory_roles = sorted(
+            {
+                str(item.metadata.get("role"))
+                for item in memory_items
+                if isinstance(item.metadata, dict) and item.metadata.get("role")
+            }
+        )
+        included_memory_domains = sorted(
+            {
+                str(item.metadata.get("domain"))
+                for item in memory_items
+                if isinstance(item.metadata, dict) and item.metadata.get("domain")
+            }
+        )
+        memory_score_breakdowns = [
+            {
+                "memory_id": item.id,
+                "role": item.metadata.get("role") if isinstance(item.metadata, dict) else None,
+                "domain": item.metadata.get("domain") if isinstance(item.metadata, dict) else None,
+                "context_source": item.metadata.get("context_source")
+                if isinstance(item.metadata, dict)
+                else None,
+                "hybrid_score": item.metadata.get("hybrid_score")
+                if isinstance(item.metadata, dict)
+                else None,
+                "score_breakdown": item.metadata.get("score_breakdown")
+                if isinstance(item.metadata, dict)
+                else None,
+            }
+            for item in memory_items
+        ]
+
         metadata = {
             "source_types": self._source_types(items),
             "item_count": len(items),
@@ -208,9 +247,7 @@ class DynamicContextAssembler:
             "deduped_goal_count": goal_deduplication.deduped_goal_count,
             "deduped_goal_ids": list(goal_deduplication.deduped_goal_ids),
             "normalized_goal_keys": list(goal_deduplication.normalized_goal_keys),
-            "included_memory_ids": [
-                item.id for item in [*relevant_memory_items, *recent_memory_items]
-            ],
+            "included_memory_ids": [item.id for item in memory_items],
             "included_belief_ids": [item.id for item in belief_items],
             "salience_threshold": self.config.salience_threshold,
             "limits": {
@@ -220,6 +257,12 @@ class DynamicContextAssembler:
             },
             "config": self.config.to_dict(),
             "reasons": reasons,
+            "retrieval_strategy": memory_assembly["retrieval_strategy"],
+            "query_intent": memory_assembly["query_intent"],
+            "event_domain": memory_assembly["event_domain"],
+            "included_memory_roles": included_memory_roles,
+            "included_memory_domains": included_memory_domains,
+            "memory_score_breakdowns": memory_score_breakdowns,
         }
         return ContextWindow(
             items=items,
@@ -310,21 +353,52 @@ class DynamicContextAssembler:
             deduped_goals,
         )
 
-    def _memory_items(self, event: Event) -> tuple[list[ContextItem], list[ContextItem]]:
+    def _memory_items(self, event: Event) -> dict[str, Any]:
         if self.memory_store is None or self.config.max_memories == 0:
-            return [], []
+            return {
+                "relevant_items": [],
+                "recent_items": [],
+                "retrieval_strategy": "memory_disabled",
+                "query_intent": classify_query_intent(event.content).value,
+                "event_domain": None,
+            }
 
-        remaining = self.config.max_memories
-        relevant_records = self._filter_memory_records(
-            self.memory_store.retrieve_relevant(event, limit=self.config.max_memories)
-        )
+        intent_value = classify_query_intent(event.content).value
+        event_domain = infer_domain(event.content, extract_event_tags(event))
+        breakdowns_by_id: dict[str, dict[str, Any]] = {}
+        retrieval_strategy = "deterministic_v1_fallback"
+        relevant_records: list[MemoryRecord] = []
+
+        store = self.memory_store
+        if hasattr(store, "hybrid_retrieve_relevant"):
+            try:
+                ranked_pairs = store.hybrid_retrieve_relevant(
+                    event,
+                    limit=self.config.max_memories,
+                    domain_hint=event_domain,
+                )
+            except Exception:  # noqa: BLE001 - hybrid retrieval is opt-in
+                ranked_pairs = []
+            else:
+                retrieval_strategy = "hybrid_v2_deterministic"
+                for record, breakdown in ranked_pairs:
+                    relevant_records.append(record)
+                    breakdowns_by_id[record.id] = breakdown
+
+        if not relevant_records:
+            relevant_records = list(
+                store.retrieve_relevant(event, limit=self.config.max_memories)
+            )
+
+        relevant_records = self._filter_memory_records(relevant_records)
         recent_records = self._filter_memory_records(
-            self.memory_store.list_recent(
+            store.list_recent(
                 limit=self.config.max_memories,
                 memory_type=MemoryType.EPISODIC,
             )
         )
 
+        remaining = self.config.max_memories
         deduped_relevant: list[MemoryRecord] = []
         seen_memory_ids: set[str] = set()
         for record in relevant_records:
@@ -347,16 +421,29 @@ class DynamicContextAssembler:
                 if remaining <= 0:
                     break
 
-        return (
-            [
-                self._memory_to_context_item(record, context_source="relevant")
-                for record in deduped_relevant
-            ],
-            [
-                self._memory_to_context_item(record, context_source="recent")
-                for record in deduped_recent
-            ],
-        )
+        relevant_items = [
+            self._memory_to_context_item(
+                record,
+                context_source="relevant",
+                breakdown=breakdowns_by_id.get(record.id),
+            )
+            for record in deduped_relevant
+        ]
+        recent_items = [
+            self._memory_to_context_item(
+                record,
+                context_source="recent",
+                breakdown=breakdowns_by_id.get(record.id),
+            )
+            for record in deduped_recent
+        ]
+        return {
+            "relevant_items": relevant_items,
+            "recent_items": recent_items,
+            "retrieval_strategy": retrieval_strategy,
+            "query_intent": intent_value,
+            "event_domain": event_domain,
+        }
 
     def _filter_memory_records(
         self,
@@ -723,9 +810,15 @@ class DynamicContextAssembler:
         record: MemoryRecord,
         *,
         context_source: str,
+        breakdown: dict[str, Any] | None = None,
     ) -> ContextItem:
         item = StaticContextAssembler._memory_to_context_item(record)
         item.metadata["context_source"] = context_source
+        item.metadata["role"] = record.role
+        item.metadata["domain"] = record.domain
+        if breakdown is not None:
+            item.metadata["hybrid_score"] = round(float(breakdown.get("total", 0.0)), 4)
+            item.metadata["score_breakdown"] = breakdown
         return item
 
     @staticmethod

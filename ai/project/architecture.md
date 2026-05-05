@@ -62,19 +62,31 @@ Harness note: treat each as an interface-friendly boundary in design discussions
 - **Retrieval** - deterministic only: keyword overlap, tag overlap, salience, and recency. No embeddings, vector DB, summarization, RAG, or model calls.
 - **Inspection** - memory remains readable through SQLite rows and bounded facet metadata instead of opaque compressed blobs.
 
-## Memory v1 (current)
+## Memory v1
 
 - **Deterministic tag extraction** - `fullerene/memory/inference.py` declares a lowercase rule table for `communication`, `authority`, `urgent`, `hard-rule-candidate`, `bug`, `verification`, `memory`, `goals`, `policy`, and `correction`. Matching is case-insensitive with token boundaries, with smart-quote normalization so `don't` behaves the same whether the apostrophe is straight or curly.
 - **Deterministic salience scoring** - base `0.3`, plus `+0.2` for user messages, `+0.2` for `hard-rule-candidate`, `+0.1` for `urgent`, `+0.2` for `correction`, `+0.1` for `authority`, and `+0.05` for `communication`. The total is clamped to `[0.0, 1.0]`. `explain_salience` returns the per-signal breakdown for inspection.
 - **MemoryFacet integration** - on store, the facet infers tags from `event.content`, merges them with any explicit metadata-supplied tags (explicit tags retain priority), computes salience from the merged tag set, and persists `metadata_tags`, `inferred_tags`, and `salience_breakdown` alongside the canonical `MemoryRecord.tags` and `MemoryRecord.salience` fields.
 - **Retrieval explanation** - `score_memory_record` still uses keyword 0.5, tag 0.2, salience 0.2, and recency 0.1, and `explain_score` exposes the per-component breakdown. Query-side tag overlap also uses deterministic content-inferred tags, so retrieval can benefit from tag matches even when the caller did not pass explicit metadata tags.
-- **Out of scope** - no embeddings, no vector DB, no model calls, no RAG, no voice/prosody features.
+- **Out of scope (v1)** - no embeddings, no vector DB, no model calls, no RAG, no voice/prosody features.
+
+## Memory v2 (current)
+
+- **SQLite remains the source of truth** - `memory.sqlite3` still stores canonical episodic memory rows. Memory v2 only *adds*: it does not move authority off SQLite. Embeddings, edges, and hybrid scoring are inspectable indexes over those rows and can be missing or stale without breaking retrieval.
+- **Role-aware classification at write time** - `fullerene/memory/roles.py` adds a small deterministic classifier for `preference`, `fact`, `question`, `task`, `feedback`, `outcome`, and `unknown` roles. Phrases like `I like ...`, `What ...?`, `I need to ...`, `that worked`, and `the deploy succeeded` map to the matching role. Roles are persisted on `MemoryRecord.role` and on a new `role` column in the `memories` table.
+- **Domain inference** - `fullerene/memory/inference.py` adds a deterministic `infer_domain` helper plus tag rules for reading/books, outdoors/water, project/software, and task/work. Each new memory carries a deterministic `domain` (for example, `reading_books`) on a new `domain` column. Domains are coarse buckets, not hardcoded per-topic special cases.
+- **Optional embedding index** - `fullerene/memory/embeddings.py` defines an `EmbeddingProvider` protocol plus two concrete providers: `DeterministicHashEmbeddingProvider` (offline-safe, used by tests and as the default fallback) and `OllamaEmbeddingProvider` (opt-in `POST /api/embeddings` client). Vectors are stored in a separate `memory_embeddings` table keyed by `(memory_id, model)` so SQLite stays the source of truth. Missing or failing providers always degrade to deterministic v1 retrieval.
+- **Hybrid retrieval scoring** - `fullerene/memory/hybrid.py` defines the v2 retrieval score as `0.35 * semantic + 0.20 * tag + 0.15 * salience + 0.10 * recency + 0.10 * domain_match + 0.10 * role_bonus - role_penalty`. Role bonuses prefer preference memories for recommendation queries, task memories for planning queries, and fact memories for factual queries. Role penalties demote prior question memories for recommendation queries and old/duplicate questions in general. `explain_hybrid_score` returns the full per-component breakdown for inspection.
+- **Bounded write-time edges** - `fullerene/memory/edges.py` plus `MemoryFacet` write inspectable edges into a new `memory_edges` table when a memory is stored. Candidate sets are bounded to recent (≤20) + high-salience (≤20) + same-domain (≤20) memories; no full graph traversal happens. Edge types include `same_goal`, `tag_overlap`, `temporal_proximity`, `keyword_similarity`, `semantic_similarity`, `same_domain`, and `role_related`. Memory v2 only writes edges; retrieval does not yet traverse them.
+- **Context integration** - `DynamicContextAssembler` and `ContextFacet` use hybrid retrieval when the store supports it, surface `retrieval_strategy`, `query_intent`, `event_domain`, `included_memory_roles`, `included_memory_domains`, and `memory_score_breakdowns` in context metadata, and attach role/domain to each memory `ContextItem`.
+- **Prompt grounding** - the CLI model prompt builder annotates relevant/recent memories with `role=...` and `domain=...` so model prompts no longer dump JSON or repeat prior questions as primary grounding.
+- **Out of scope (v2)** - no LLM summarization, no graph traversal at retrieval time, no Leiden/community detection, no learned weights, no required external services. The `OllamaEmbeddingProvider` exists but is opt-in only.
 
 ## Memory roadmap
 
-- **v1** - better deterministic scoring, tagging rules, and salience heuristics. **Current.**
-- **v2** - embeddings / vector retrieval as a non-canonical index layered on top of SQLite.
-- **v3** - memory links / graph structure, reflection or compression, and affect-weighted salience.
+- **v1** - deterministic scoring, tagging rules, and salience heuristics.
+- **v2** - role/domain classification, optional embedding index, hybrid retrieval, and bounded write-time edges. **Current.**
+- **v3** - graph traversal at retrieval time, reflection / compression, affect-weighted salience, and richer cluster / community inspection on top of v2 edges.
 
 ## Affect v0 (current)
 

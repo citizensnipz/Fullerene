@@ -1,10 +1,14 @@
-"""Deterministic tag and salience inference for Fullerene Memory v1.
+"""Deterministic tag and salience inference for Fullerene Memory v1/v2.
 
 These rules stay intentionally small and inspectable:
 
 - No model calls, embeddings, vector indices, or external NLP libraries.
 - Matching is lowercase, deterministic, and respects token boundaries.
 - Salience is derived from event kind plus the effective tag set only.
+- Memory v2 adds light-weight domain detection on top of the same rule
+  table; domains are coarse buckets such as ``reading_books`` or
+  ``project_software`` used for role-aware hybrid retrieval. They are *not*
+  hardcoded special cases per topic; new domains follow the same shape.
 
 Future affect / prosody work may influence salience, but is not implemented
 here. See ai/project/architecture.md for the Memory roadmap.
@@ -39,6 +43,98 @@ TAG_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("policy", "policies", "rule", "rules", "permission", "permissions"),
     ),
     ("correction", ("don't", "wrong", "missed", "skipped", "failed")),
+    (
+        "book",
+        (
+            "book",
+            "books",
+            "novel",
+            "novels",
+            "fiction",
+            "non-fiction",
+            "nonfiction",
+            "autobiography",
+            "autobiographies",
+            "biography",
+            "biographies",
+        ),
+    ),
+    ("read", ("read", "reading", "reads", "reader")),
+    (
+        "sci-fi",
+        ("sci-fi", "scifi", "sci fi", "science fiction"),
+    ),
+    (
+        "outdoors",
+        ("outdoor", "outdoors", "outside", "beach", "ocean", "water"),
+    ),
+    ("scuba", ("scuba", "diving", "dive", "snorkel", "snorkeling")),
+    ("surf", ("surf", "surfing", "surfboard")),
+    (
+        "fullerene",
+        ("fullerene",),
+    ),
+    (
+        "code",
+        ("code", "coding", "codebase", "github", "git"),
+    ),
+    (
+        "planner",
+        ("planner", "planning",),
+    ),
+    (
+        "context",
+        ("context", "context window", "contextwindow"),
+    ),
+    (
+        "behavior",
+        ("behavior", "behavioral",),
+    ),
+    (
+        "nexus",
+        ("nexus",),
+    ),
+    (
+        "task",
+        ("task", "tasks", "todo", "to-do",),
+    ),
+    (
+        "work",
+        ("work", "working", "finish", "complete", "next steps"),
+    ),
+)
+
+
+# Domain definitions for Memory v2. A domain is a bucket of related tags;
+# the first tag list whose intersection with inferred tags is non-empty
+# wins. The ordering controls precedence so behavior stays deterministic.
+DOMAIN_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "reading_books",
+        ("book", "read", "sci-fi"),
+    ),
+    (
+        "outdoors_water",
+        ("scuba", "surf", "outdoors"),
+    ),
+    (
+        "project_software",
+        (
+            "fullerene",
+            "code",
+            "planner",
+            "context",
+            "behavior",
+            "nexus",
+            "memory",
+            "policy",
+            "goals",
+        ),
+    ),
+    (
+        "task_work",
+        ("task", "work", "verification"),
+    ),
 )
 
 # Salience constants exposed so tests and docs can refer to them by name.
@@ -97,6 +193,31 @@ def infer_tags(content: str) -> list[str]:
         if _matches_any(text, patterns):
             inferred.append(tag)
     return inferred
+
+
+def infer_domain(content: str, tags: Iterable[str] | None = None) -> str | None:
+    """Return the deterministic domain bucket inferred from ``content``/``tags``.
+
+    Domains group related tags into coarse buckets such as ``reading_books``
+    or ``project_software`` so role-aware hybrid retrieval can compare
+    across phrasings without hardcoding individual topics.
+
+    Returns ``None`` when no domain matches.
+    """
+    tag_set: set[str] = set()
+    if tags is not None:
+        for raw_tag in tags:
+            cleaned = str(raw_tag).strip().lower()
+            if cleaned:
+                tag_set.add(cleaned)
+    for inferred_tag in infer_tags(content):
+        tag_set.add(inferred_tag)
+    if not tag_set:
+        return None
+    for domain, domain_tags in DOMAIN_RULES:
+        if any(domain_tag in tag_set for domain_tag in domain_tags):
+            return domain
+    return None
 
 
 def merge_tags(*tag_groups: Iterable[str] | None) -> list[str]:

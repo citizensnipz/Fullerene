@@ -85,6 +85,16 @@ class ContextFacet:
         included_memory_ids = self._ids_from_metadata(window, key="included_memory_ids")
         included_belief_ids = self._ids_from_metadata(window, key="included_belief_ids")
         normalized_goal_keys = self._ids_from_metadata(window, key="normalized_goal_keys")
+        included_memory_roles = self._ids_from_metadata(
+            window, key="included_memory_roles"
+        )
+        included_memory_domains = self._ids_from_metadata(
+            window, key="included_memory_domains"
+        )
+        retrieval_strategy = window.metadata.get("retrieval_strategy")
+        query_intent = window.metadata.get("query_intent")
+        event_domain = window.metadata.get("event_domain")
+        memory_score_breakdowns = window.metadata.get("memory_score_breakdowns", [])
         proposed_decision = (
             DecisionAction.RECORD
             if self._has_meaningful_items(window)
@@ -107,6 +117,11 @@ class ContextFacet:
                 "last_included_memory_ids": included_memory_ids,
                 "last_included_belief_ids": included_belief_ids,
                 "last_normalized_goal_keys": normalized_goal_keys,
+                "last_included_memory_roles": included_memory_roles,
+                "last_included_memory_domains": included_memory_domains,
+                "last_retrieval_strategy": retrieval_strategy,
+                "last_query_intent": query_intent,
+                "last_event_domain": event_domain,
             },
             metadata={
                 "context_window": window.to_dict(),
@@ -120,6 +135,12 @@ class ContextFacet:
                 "normalized_goal_keys": normalized_goal_keys,
                 "included_memory_ids": included_memory_ids,
                 "included_belief_ids": included_belief_ids,
+                "included_memory_roles": included_memory_roles,
+                "included_memory_domains": included_memory_domains,
+                "retrieval_strategy": retrieval_strategy,
+                "query_intent": query_intent,
+                "event_domain": event_domain,
+                "memory_score_breakdowns": memory_score_breakdowns,
                 "salience_threshold": window.metadata.get("salience_threshold", 0.0),
                 "limits": window.metadata.get("limits", {}),
                 "reasons": window.metadata.get("reasons", []),

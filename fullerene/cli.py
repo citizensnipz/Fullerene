@@ -33,7 +33,13 @@ from fullerene.goals import (
     find_matching_active_goal,
     normalize_goal_description,
 )
-from fullerene.memory import SQLiteMemoryStore, infer_tags, merge_tags, normalize_tags
+from fullerene.memory import (
+    SQLiteMemoryStore,
+    build_embedding_provider,
+    infer_tags,
+    merge_tags,
+    normalize_tags,
+)
 from fullerene.models import ModelAdapter, ModelAdapterError, OllamaAdapter
 from fullerene.nexus import Event, EventType, NexusRuntime
 from fullerene.policy import (
@@ -374,6 +380,24 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--memory-embeddings",
+        action="store_true",
+        help=(
+            "Enable Memory v2 embedding-index storage and hybrid retrieval. "
+            "Defaults to the deterministic in-process provider unless "
+            "--embedding-model overrides it. Embeddings remain optional; "
+            "missing or failing providers fall back to deterministic v1 retrieval."
+        ),
+    )
+    parser.add_argument(
+        "--embedding-model",
+        default=None,
+        help=(
+            "Optional embedding model spec, for example 'deterministic' or "
+            "'ollama:nomic-embed-text'. Implies --memory-embeddings when set."
+        ),
+    )
+    parser.add_argument(
         "--goals-db",
         default=None,
         help=(
@@ -504,7 +528,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
     if args.memory:
-        facets.append(MemoryFacet(memory_store))
+        embedding_provider = None
+        if args.memory_embeddings or args.embedding_model:
+            spec = args.embedding_model or "deterministic"
+            embedding_provider = build_embedding_provider(spec)
+        facets.append(
+            MemoryFacet(memory_store, embedding_provider=embedding_provider)
+        )
     if args.goals:
         facets.append(GoalsFacet(goal_store))
     if args.world:
@@ -851,7 +881,17 @@ def _context_memory_summary(
         content = _coerce_prompt_string(item.get("content"))
         if content is None:
             continue
-        summaries.append(content)
+        annotations: list[str] = []
+        role = metadata.get("role")
+        if isinstance(role, str) and role and role != "unknown":
+            annotations.append(f"role={role}")
+        domain = metadata.get("domain")
+        if isinstance(domain, str) and domain:
+            annotations.append(f"domain={domain}")
+        if annotations:
+            summaries.append(f"{content} ({', '.join(annotations)})")
+        else:
+            summaries.append(content)
         if len(summaries) >= 3:
             break
     if summaries:

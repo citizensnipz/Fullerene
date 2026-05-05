@@ -58,11 +58,18 @@ class MemoryRecord:
     confidence: float = 1.0
     tags: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Memory v2: deterministic role + domain fields. ``role`` defaults to
+    # the string "unknown" so legacy callers and snapshot rows that pre-date
+    # Memory v2 still round-trip cleanly. ``domain`` is optional.
+    role: str = "unknown"
+    domain: str | None = None
 
     def __post_init__(self) -> None:
         self.salience = self._validate_score("salience", self.salience)
         self.confidence = self._validate_score("confidence", self.confidence)
         self.tags = normalize_tags(self.tags)
+        self.role = self._normalize_role(self.role)
+        self.domain = self._normalize_domain(self.domain)
 
     @staticmethod
     def _validate_score(field_name: str, value: float) -> float:
@@ -70,6 +77,20 @@ class MemoryRecord:
         if not 0.0 <= score <= 1.0:
             raise ValueError(f"{field_name} must be between 0.0 and 1.0")
         return score
+
+    @staticmethod
+    def _normalize_role(raw_role: object) -> str:
+        if raw_role is None:
+            return "unknown"
+        cleaned = str(raw_role).strip().lower()
+        return cleaned or "unknown"
+
+    @staticmethod
+    def _normalize_domain(raw_domain: object) -> str | None:
+        if raw_domain is None:
+            return None
+        cleaned = str(raw_domain).strip().lower()
+        return cleaned or None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -82,6 +103,8 @@ class MemoryRecord:
             "confidence": self.confidence,
             "tags": list(self.tags),
             "metadata": _serialize_value(self.metadata),
+            "role": self.role,
+            "domain": self.domain,
         }
 
     @classmethod
@@ -96,4 +119,6 @@ class MemoryRecord:
             confidence=data.get("confidence", 1.0),
             tags=data.get("tags", []),
             metadata=data.get("metadata", {}),
+            role=data.get("role", "unknown") or "unknown",
+            domain=data.get("domain"),
         )

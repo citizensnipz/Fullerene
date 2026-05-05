@@ -9,6 +9,20 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-05 (memory v2)
+
+- Added `fullerene/memory/roles.py` with deterministic `MemoryRole` / `QueryIntent` enums, `classify_memory_role`, and `classify_query_intent`; preference / question / task / feedback / outcome / fact / unknown phrasing maps to the matching role, and recommendation / planning / factual / unknown phrasing maps to the matching intent.
+- Extended `fullerene/memory/inference.py` with new domain-aware tag rules (reading_books, outdoors_water, project_software, task_work) and a deterministic `infer_domain` helper.
+- Added `fullerene/memory/embeddings.py` with an `EmbeddingProvider` protocol, `DeterministicHashEmbeddingProvider` (offline default/fallback), `OllamaEmbeddingProvider` (opt-in), `cosine_similarity`, `build_embedding_provider`, and `safe_embed`; embeddings are an optional index, not the source of truth.
+- Added `fullerene/memory/edges.py` with `MemoryEdgeType` and `MemoryEdge` dataclasses for write-time inspectable edges.
+- Added `fullerene/memory/hybrid.py` with the v2 hybrid score (`0.35 * semantic + 0.20 * tag + 0.15 * salience + 0.10 * recency + 0.10 * domain_match + 0.10 * role_bonus - role_penalty`), role bonus / penalty rules, duplicate-question detection, and `explain_hybrid_score`.
+- Updated `fullerene/memory/models.py` to add `role` and `domain` fields on `MemoryRecord`, with deterministic normalization and round-trip support.
+- Updated `fullerene/memory/store.py` with backward-compatible `role` / `domain` schema migrations, new `memory_embeddings` and `memory_edges` tables, embedding/edge CRUD, bounded retrieval helpers (`list_high_salience`, `list_by_domain`), and `hybrid_retrieve_relevant` for Memory v2 retrieval that gracefully falls back to v1 when embeddings are absent.
+- Updated `fullerene/facets/memory.py` so each store now persists role/domain, optionally writes embeddings via a configured provider, computes bounded write-time edges into `recent + high_salience + same_domain` candidate sets, retrieves through `hybrid_retrieve_relevant` when available, and exposes `retrieval_strategy`, `query_intent`, `event_domain`, `included_memory_roles`, `included_memory_domains`, `stored_embedding_status`, `stored_edges`, and per-memory `hybrid_score` / `score_breakdown`.
+- Updated `fullerene/context/assembler.py` and `fullerene/facets/context.py` so Context v1 dynamic assembly uses Memory v2 hybrid retrieval, attaches role/domain/score breakdowns to each memory `ContextItem`, and surfaces `retrieval_strategy`, `query_intent`, `event_domain`, `included_memory_roles`, `included_memory_domains`, and `memory_score_breakdowns` in window/facet metadata.
+- Updated `fullerene/cli.py` with `--memory-embeddings` and `--embedding-model` flags, embedding-provider wiring through `MemoryFacet`, and prompt grounding that annotates relevant/recent memory lines with `role=...` and `domain=...` without dumping JSON.
+- Added `tests/test_memory_v2.py` covering role/domain/intent classification, hybrid-retrieval grounding (preference outranks prior questions for recommendation queries) plus a negative control, context integration, model prompt content, bounded write-time edge creation, deterministic fallback when embeddings are absent, optional `DeterministicHashEmbeddingProvider` storage, and CLI smoke for `--memory-embeddings`.
+
 ### 2026-05-05 (attention v1)
 
 - Added `AttentionMode`, `AttentionBroadcast`, `AttentionConflict`, and `AttentionHistoryEntry` to `fullerene/attention/`; `AttentionFacet` now classifies bottom-up vs top-down candidates, emits a winner broadcast, records close-score conflicts, stores bounded `attention_history`, and computes repeated-attention `pressure_contribution` without mutating other stores.
