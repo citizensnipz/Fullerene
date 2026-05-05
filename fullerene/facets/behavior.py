@@ -5,7 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from fullerene.memory import compute_salience, infer_tags, merge_tags, normalize_tags
+from fullerene.memory import (
+    compute_salience,
+    infer_domain,
+    infer_tags,
+    merge_tags,
+    normalize_tags,
+    tokenize,
+)
 from fullerene.nexus.models import (
     DecisionAction,
     Event,
@@ -45,17 +52,34 @@ STATUS_RESPONSE_PHRASES = (
     "what is happening",
     "what do you know",
 )
+MEMORY_SUMMARY_RESPONSE_PHRASES = (
+    "what do you know about me",
+    "what do you remember about me",
+)
+FACTUAL_RESPONSE_PHRASES = (
+    "what is",
+    "what are",
+    "who is",
+    "who are",
+    "what do you know",
+    "tell me about",
+    "explain",
+    "define",
+    "describe",
+)
 RECOMMENDATION_RESPONSE_PHRASES = (
     "what should i",
     "what book should i",
     "what should we",
     "recommend",
     "suggest",
+    "this weekend",
 )
 PLANNING_RESPONSE_PHRASES = (
     "what next",
     "next steps",
-    "how do i",
+    "how should i",
+    "how should we",
     "plan",
 )
 NEXT_STEPS_RESPONSE_PHRASES = (
@@ -86,6 +110,13 @@ DECISION_PRIORITY = {
 LOW_RETRIEVAL_THRESHOLD = 0.2
 HIGH_GOAL_RELEVANCE_THRESHOLD = 0.7
 CONTEXT_SUFFICIENCY_THRESHOLD = 1.0
+LOW_AMBIGUITY_THRESHOLD = 0.35
+HIGH_AMBIGUITY_THRESHOLD = 0.65
+RELEVANT_MEMORY_STRENGTH_THRESHOLD = 0.35
+GOAL_RELEVANCE_THRESHOLD = 0.35
+QUERY_INTENTS_REQUIRING_RESPONSE = frozenset(
+    {"recommendation", "planning", "factual", "memory_summary"}
+)
 
 
 @dataclass(slots=True)
@@ -102,6 +133,17 @@ class _BehaviorSignals:
     response_template: str | None
     deterministic_response_available: bool
     query_intent: str | None
+    ambiguity_score: float
+    has_relevant_memory: bool
+    has_preference_memory: bool
+    relevant_memory_strength: float
+    has_goal: bool
+    top_goal_priority: float
+    goal_signal_strength: float
+    domain_match: bool
+    event_domain: str | None
+    included_memory_roles: list[str]
+    included_memory_domains: list[str]
     active_goal_count: int
     relevant_goal_count: int
     relevant_memory_count: int
@@ -141,10 +183,10 @@ class BehaviorFacet:
         )
         confidence_breakdown = self._score_confidence(
             selected_decision,
-            salience=signals.salience,
             pressure=signals.pressure,
-            goal_relevance=signals.goal_relevance,
-            retrieval_strength=signals.retrieval_strength,
+            memory_signal_strength=signals.relevant_memory_strength,
+            goal_signal_strength=signals.goal_signal_strength,
+            ambiguity_score=signals.ambiguity_score,
             goal_alignment_score=signals.goal_alignment_score,
             goal_alignment_priority=signals.goal_alignment_priority,
             world_alignment_score=signals.world_alignment_score,
@@ -185,6 +227,11 @@ class BehaviorFacet:
                 "last_pressure": signals.pressure,
                 "last_goal_relevance": signals.goal_relevance,
                 "last_retrieval_strength": signals.retrieval_strength,
+                "last_ambiguity_score": signals.ambiguity_score,
+                "last_has_relevant_memory": signals.has_relevant_memory,
+                "last_has_goal": signals.has_goal,
+                "last_memory_signal_strength": signals.relevant_memory_strength,
+                "last_goal_signal_strength": signals.goal_signal_strength,
                 "last_tags_considered": list(signals.tags),
                 "last_reasons": list(reasons),
                 "last_decision_scores": dict(decision_scores),
@@ -205,6 +252,7 @@ class BehaviorFacet:
                 "selected_decision": selected_decision.value,
                 "confidence": confidence,
                 "confidence_breakdown": confidence_breakdown,
+                "confidence_components": confidence_breakdown,
                 "decision_scores": dict(decision_scores),
                 "salience": signals.salience,
                 "salience_source": signals.salience_source,
@@ -213,6 +261,16 @@ class BehaviorFacet:
                 "retrieval_strength": signals.retrieval_strength,
                 "tags_considered": list(signals.tags),
                 "reasons": list(reasons),
+                "decision": selected_decision.value,
+                "ambiguity_score": signals.ambiguity_score,
+                "has_relevant_memory": signals.has_relevant_memory,
+                "has_preference_memory": signals.has_preference_memory,
+                "has_goal": signals.has_goal,
+                "memory_signal_strength": signals.relevant_memory_strength,
+                "goal_signal_strength": signals.goal_signal_strength,
+                "top_goal_priority": signals.top_goal_priority,
+                "domain_match": signals.domain_match,
+                "event_domain": signals.event_domain,
                 "high_priority": signals.high_priority,
                 "priority_level": priority_level,
                 **response_metadata,
@@ -225,6 +283,8 @@ class BehaviorFacet:
                 "planner_available": signals.planner_available,
                 "context_sufficiency": signals.context_sufficiency,
                 "missing_context": list(signals.missing_context),
+                "included_memory_roles": list(signals.included_memory_roles),
+                "included_memory_domains": list(signals.included_memory_domains),
                 "attention_confidence_bias": attention_confidence_bias,
                 "memory_signal_available": signals.memory_signal_available,
                 "goal_signal_available": signals.goal_signal_available,
@@ -270,13 +330,40 @@ class BehaviorFacet:
             aligned_beliefs
         )
         planner_context = self._extract_planner_context(state)
-        query_intent = self._detect_query_intent(event.content)
+        context_signal = self._extract_context_signal(metadata, state)
+        query_intent = self._resolve_query_intent(
+            event.content,
+            metadata=metadata,
+            context_signal=context_signal,
+            memory_context=memory_context,
+        )
         active_goal_count = self._active_goal_count(goal_context)
         relevant_goal_count = len(aligned_goals)
-        relevant_memory_count = self._relevant_memory_count(memory_context)
+        active_goal_count = max(
+            active_goal_count,
+            self._context_item_type_count(context_signal, "goal"),
+        )
+        relevant_memory_count = max(
+            self._relevant_memory_count(memory_context),
+            self._context_relevant_memory_count(context_signal),
+        )
         relevant_belief_count = len(aligned_beliefs)
         context_item_count = self._context_item_count(state)
         planner_available = self._planner_available(planner_context)
+        included_memory_roles = self._included_memory_roles(
+            context_signal=context_signal,
+            memory_context=memory_context,
+        )
+        included_memory_domains = self._included_memory_domains(
+            context_signal=context_signal,
+            memory_context=memory_context,
+        )
+        event_domain = self._resolve_event_domain(
+            event,
+            context_signal=context_signal,
+            memory_context=memory_context,
+        )
+        has_preference_memory = "preference" in included_memory_roles
         context_sufficiency = self._context_sufficiency(
             query_intent=query_intent,
             active_goal_count=active_goal_count,
@@ -299,17 +386,63 @@ class BehaviorFacet:
             state=state,
             memory_context=memory_context,
         )
-        direct_response_needed = query_intent is not None or self._contains_response_phrase(
-            event.content
+        relevant_memory_strength = self._resolve_relevant_memory_strength(
+            retrieval_strength=retrieval_strength,
+            context_signal=context_signal,
+            memory_context=memory_context,
+            relevant_memory_count=relevant_memory_count,
+            has_explicit_strength="retrieval_strength" in metadata,
+            has_preference_memory=has_preference_memory,
+            query_intent=query_intent,
+        )
+        has_relevant_memory = (
+            relevant_memory_count > 0
+            or relevant_belief_count > 0
+            or relevant_memory_strength >= RELEVANT_MEMORY_STRENGTH_THRESHOLD
+        )
+        top_goal_priority = self._resolve_top_goal_priority(
+            goal_context=goal_context,
+            context_signal=context_signal,
+            aligned_goals=aligned_goals,
+        )
+        goal_signal_strength = self._resolve_goal_signal_strength(
+            query_intent=query_intent,
+            active_goal_count=active_goal_count,
+            relevant_goal_count=relevant_goal_count,
+            top_goal_priority=top_goal_priority,
+            goal_alignment_score=goal_alignment_score,
+            context_signal=context_signal,
+        )
+        has_goal = active_goal_count > 0 or top_goal_priority > 0.0
+        goal_relevance = max(goal_relevance, goal_signal_strength)
+        domain_match = self._has_domain_match(
+            event_domain=event_domain,
+            included_memory_domains=included_memory_domains,
+            context_signal=context_signal,
+        )
+        ambiguity_score = self._compute_ambiguity_score(
+            event.content,
+            query_intent=query_intent,
+            has_relevant_memory=has_relevant_memory,
+            relevant_memory_strength=relevant_memory_strength,
+            has_preference_memory=has_preference_memory,
+            has_goal=has_goal,
+            goal_signal_strength=goal_signal_strength,
+            relevant_belief_count=relevant_belief_count,
+            domain_match=domain_match,
+            event_domain=event_domain,
+        )
+        direct_response_needed = (
+            query_intent in QUERY_INTENTS_REQUIRING_RESPONSE
+            or self._contains_response_phrase(event.content)
         )
         requires_response = self._metadata_flag(metadata, "requires_response")
         response_needed = direct_response_needed or requires_response
         if (
             response_needed
-            and query_intent is None
+            and query_intent == "unknown"
             and context_sufficiency < self._sufficiency_threshold(query_intent)
         ):
-            query_intent = "clarification_needed"
             missing_context = self._missing_context(
                 query_intent=query_intent,
                 active_goal_count=active_goal_count,
@@ -356,6 +489,17 @@ class BehaviorFacet:
             response_template=response_template,
             deterministic_response_available=deterministic_response_available,
             query_intent=query_intent,
+            ambiguity_score=ambiguity_score,
+            has_relevant_memory=has_relevant_memory,
+            has_preference_memory=has_preference_memory,
+            relevant_memory_strength=relevant_memory_strength,
+            has_goal=has_goal,
+            top_goal_priority=top_goal_priority,
+            goal_signal_strength=goal_signal_strength,
+            domain_match=domain_match,
+            event_domain=event_domain,
+            included_memory_roles=included_memory_roles,
+            included_memory_domains=included_memory_domains,
             active_goal_count=active_goal_count,
             relevant_goal_count=relevant_goal_count,
             relevant_memory_count=relevant_memory_count,
@@ -442,6 +586,191 @@ class BehaviorFacet:
         return state_planner if isinstance(state_planner, dict) else None
 
     @staticmethod
+    def _extract_context_signal(
+        metadata: dict[str, Any],
+        state: NexusState,
+    ) -> dict[str, Any]:
+        candidate = metadata.get("context")
+        if isinstance(candidate, dict):
+            return candidate
+        candidate = metadata.get("context_window")
+        if isinstance(candidate, dict):
+            return {"last_context_window": candidate}
+        state_context = state.facet_state.get("context")
+        return dict(state_context) if isinstance(state_context, dict) else {}
+
+    @staticmethod
+    def _context_window_from_signal(
+        context_signal: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        for key in ("context_window", "last_context_window"):
+            candidate = context_signal.get(key)
+            if isinstance(candidate, dict):
+                return candidate
+        return None
+
+    @staticmethod
+    def _context_window_items(context_signal: dict[str, Any]) -> list[dict[str, Any]]:
+        context_window = BehaviorFacet._context_window_from_signal(context_signal)
+        if context_window is None:
+            return []
+        raw_items = context_window.get("items")
+        if not isinstance(raw_items, list):
+            return []
+        return [item for item in raw_items if isinstance(item, dict)]
+
+    @staticmethod
+    def _context_item_type_count(
+        context_signal: dict[str, Any],
+        item_type: str,
+    ) -> int:
+        return sum(
+            1
+            for item in BehaviorFacet._context_window_items(context_signal)
+            if item.get("item_type") == item_type
+        )
+
+    @staticmethod
+    def _context_relevant_memory_count(context_signal: dict[str, Any]) -> int:
+        count = 0
+        for item in BehaviorFacet._context_window_items(context_signal):
+            if item.get("item_type") != "memory":
+                continue
+            metadata = item.get("metadata")
+            if isinstance(metadata, dict) and metadata.get("context_source") == "relevant":
+                count += 1
+        return count
+
+    @staticmethod
+    def _resolve_query_intent(
+        content: str,
+        *,
+        metadata: dict[str, Any],
+        context_signal: dict[str, Any],
+        memory_context: dict[str, Any] | None,
+    ) -> str:
+        detected_intent = BehaviorFacet._detect_query_intent(content)
+        if detected_intent != "unknown":
+            return detected_intent
+        for candidate in (
+            metadata.get("query_intent"),
+            context_signal.get("query_intent"),
+            context_signal.get("last_query_intent"),
+            memory_context.get("query_intent") if memory_context else None,
+            memory_context.get("last_query_intent") if memory_context else None,
+        ):
+            coerced = BehaviorFacet._coerce_query_intent(candidate)
+            if coerced != "unknown":
+                return coerced
+        return "unknown"
+
+    @staticmethod
+    def _coerce_query_intent(raw_intent: Any) -> str:
+        if not isinstance(raw_intent, str):
+            return "unknown"
+        cleaned = raw_intent.strip().lower()
+        aliases = {
+            "recommendation_request": "recommendation",
+            "recommendation": "recommendation",
+            "advice": "recommendation",
+            "planning_request": "planning",
+            "planning": "planning",
+            "factual_request": "factual",
+            "factual": "factual",
+            "status_request": "factual",
+            "memory_summary": "memory_summary",
+            "unknown": "unknown",
+            "clarification_needed": "unknown",
+        }
+        return aliases.get(cleaned, "unknown")
+
+    @staticmethod
+    def _included_memory_roles(
+        *,
+        context_signal: dict[str, Any],
+        memory_context: dict[str, Any] | None,
+    ) -> list[str]:
+        roles: set[str] = set()
+        for key in ("included_memory_roles", "last_included_memory_roles"):
+            raw_roles = context_signal.get(key)
+            if isinstance(raw_roles, list):
+                roles.update(_clean_strings(raw_roles))
+        if memory_context is not None:
+            for key in ("included_memory_roles", "last_included_memory_roles"):
+                raw_roles = memory_context.get(key)
+                if isinstance(raw_roles, list):
+                    roles.update(_clean_strings(raw_roles))
+            for key in ("relevant_memories",):
+                raw_memories = memory_context.get(key)
+                if isinstance(raw_memories, list):
+                    roles.update(
+                        _clean_strings(
+                            memory.get("role")
+                            for memory in raw_memories
+                            if isinstance(memory, dict)
+                        )
+                    )
+        for item in BehaviorFacet._context_window_items(context_signal):
+            if item.get("item_type") != "memory":
+                continue
+            metadata = item.get("metadata")
+            if isinstance(metadata, dict):
+                roles.update(_clean_strings([metadata.get("role")]))
+        roles.discard("unknown")
+        return sorted(roles)
+
+    @staticmethod
+    def _included_memory_domains(
+        *,
+        context_signal: dict[str, Any],
+        memory_context: dict[str, Any] | None,
+    ) -> list[str]:
+        domains: set[str] = set()
+        for key in ("included_memory_domains", "last_included_memory_domains"):
+            raw_domains = context_signal.get(key)
+            if isinstance(raw_domains, list):
+                domains.update(_clean_strings(raw_domains))
+        if memory_context is not None:
+            for key in ("included_memory_domains", "last_included_memory_domains"):
+                raw_domains = memory_context.get(key)
+                if isinstance(raw_domains, list):
+                    domains.update(_clean_strings(raw_domains))
+            for key in ("relevant_memories",):
+                raw_memories = memory_context.get(key)
+                if isinstance(raw_memories, list):
+                    domains.update(
+                        _clean_strings(
+                            memory.get("domain")
+                            for memory in raw_memories
+                            if isinstance(memory, dict)
+                        )
+                    )
+        for item in BehaviorFacet._context_window_items(context_signal):
+            if item.get("item_type") != "memory":
+                continue
+            metadata = item.get("metadata")
+            if isinstance(metadata, dict):
+                domains.update(_clean_strings([metadata.get("domain")]))
+        return sorted(domains)
+
+    @staticmethod
+    def _resolve_event_domain(
+        event: Event,
+        *,
+        context_signal: dict[str, Any],
+        memory_context: dict[str, Any] | None,
+    ) -> str | None:
+        for candidate in (
+            context_signal.get("event_domain"),
+            context_signal.get("last_event_domain"),
+            memory_context.get("event_domain") if memory_context else None,
+            memory_context.get("last_event_domain") if memory_context else None,
+        ):
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip().lower()
+        return infer_domain(event.content, infer_tags(event.content))
+
+    @staticmethod
     def _extract_relevant_goals(
         goal_context: dict[str, Any] | None,
     ) -> list[dict[str, Any]]:
@@ -520,18 +849,18 @@ class BehaviorFacet:
     def _detect_query_intent(content: str) -> str | None:
         normalized = _normalize_content(content)
         if not normalized:
-            return None
-        if any(phrase in normalized for phrase in STATUS_RESPONSE_PHRASES):
-            return "status_request"
+            return "unknown"
+        if any(phrase in normalized for phrase in MEMORY_SUMMARY_RESPONSE_PHRASES):
+            return "memory_summary"
         if any(phrase in normalized for phrase in RECOMMENDATION_RESPONSE_PHRASES):
-            return "recommendation_request"
+            return "recommendation"
         if any(phrase in normalized for phrase in PLANNING_RESPONSE_PHRASES):
-            return "planning_request"
-        if any(phrase in normalized for phrase in VAGUE_RESPONSE_PHRASES):
-            return "clarification_needed"
-        if content.strip().endswith("?"):
-            return "clarification_needed"
-        return None
+            return "planning"
+        if any(phrase in normalized for phrase in FACTUAL_RESPONSE_PHRASES):
+            return "factual"
+        if any(phrase in normalized for phrase in STATUS_RESPONSE_PHRASES):
+            return "factual"
+        return "unknown"
 
     @staticmethod
     def _context_sufficiency(
@@ -547,7 +876,7 @@ class BehaviorFacet:
         if (
             relevant_goal_signal == 0.0
             and active_goal_count > 0
-            and query_intent in {"planning_request", "recommendation_request"}
+            and query_intent in {"planning", "recommendation"}
         ):
             relevant_goal_signal = 1.0
         relevant_memory_signal = 1.0 if relevant_memory_count > 0 else 0.0
@@ -563,7 +892,7 @@ class BehaviorFacet:
 
     @staticmethod
     def _sufficiency_threshold(query_intent: str | None) -> float:
-        if query_intent == "status_request":
+        if query_intent == "factual":
             return 0.0
         return CONTEXT_SUFFICIENCY_THRESHOLD
 
@@ -578,7 +907,7 @@ class BehaviorFacet:
         planner_available: bool,
     ) -> list[str]:
         missing: list[str] = []
-        if query_intent == "recommendation_request":
+        if query_intent == "recommendation":
             if (
                 active_goal_count == 0
                 and relevant_goal_count == 0
@@ -587,13 +916,13 @@ class BehaviorFacet:
             ):
                 missing.extend(["preferences", "purpose"])
             return missing
-        if query_intent == "planning_request":
+        if query_intent == "planning":
             if active_goal_count == 0 and relevant_goal_count == 0:
                 missing.append("active_goals")
             if not planner_available:
                 missing.append("planner_summary")
             return missing
-        if query_intent == "clarification_needed":
+        if query_intent == "unknown":
             return ["specific_request", "relevant_context"]
         return missing
 
@@ -697,6 +1026,221 @@ class BehaviorFacet:
             )
 
         return round(max(candidates, default=0.0), 3)
+
+    @staticmethod
+    def _resolve_relevant_memory_strength(
+        *,
+        retrieval_strength: float,
+        context_signal: dict[str, Any],
+        memory_context: dict[str, Any] | None,
+        relevant_memory_count: int,
+        has_explicit_strength: bool,
+        has_preference_memory: bool,
+        query_intent: str | None,
+    ) -> float:
+        candidates = [retrieval_strength] if has_explicit_strength or relevant_memory_count > 0 else []
+        candidates.extend(
+            BehaviorFacet._memory_scores_from_context_signal(context_signal)
+        )
+        if memory_context is not None:
+            candidates.extend(BehaviorFacet._memory_scores_from_memory_context(memory_context))
+        if has_preference_memory and query_intent in {"recommendation", "planning"}:
+            candidates.append(0.75)
+        return round(_clamp_unit(max(candidates, default=0.0)), 3)
+
+    @staticmethod
+    def _memory_scores_from_context_signal(
+        context_signal: dict[str, Any],
+    ) -> list[float]:
+        scores: list[float] = []
+        raw_breakdowns = context_signal.get("memory_score_breakdowns")
+        if not isinstance(raw_breakdowns, list):
+            context_window = BehaviorFacet._context_window_from_signal(context_signal)
+            if isinstance(context_window, dict):
+                metadata = context_window.get("metadata")
+                raw_breakdowns = (
+                    metadata.get("memory_score_breakdowns")
+                    if isinstance(metadata, dict)
+                    else None
+                )
+        if isinstance(raw_breakdowns, list):
+            for item in raw_breakdowns:
+                if not isinstance(item, dict):
+                    continue
+                scores.append(BehaviorFacet._score_from_memory_breakdown(item))
+
+        for item in BehaviorFacet._context_window_items(context_signal):
+            if item.get("item_type") != "memory":
+                continue
+            metadata = item.get("metadata")
+            if not isinstance(metadata, dict):
+                continue
+            if metadata.get("context_source") == "relevant":
+                scores.append(0.5)
+            scores.append(_coerce_unit(metadata.get("hybrid_score")))
+            scores.append(_coerce_unit(metadata.get("salience")) * 0.8)
+        return scores
+
+    @staticmethod
+    def _memory_scores_from_memory_context(memory_context: dict[str, Any]) -> list[float]:
+        scores: list[float] = []
+        for key in ("relevant_memories",):
+            raw_memories = memory_context.get(key)
+            if not isinstance(raw_memories, list):
+                continue
+            for memory in raw_memories:
+                if not isinstance(memory, dict):
+                    continue
+                scores.append(_coerce_unit(memory.get("hybrid_score")))
+                scores.append(_coerce_unit(memory.get("salience")) * 0.8)
+                score_breakdown = memory.get("score_breakdown")
+                if isinstance(score_breakdown, dict):
+                    scores.append(_coerce_unit(score_breakdown.get("total")))
+        return scores
+
+    @staticmethod
+    def _score_from_memory_breakdown(breakdown: dict[str, Any]) -> float:
+        candidates: list[float] = []
+        hybrid_score = _coerce_unit(breakdown.get("hybrid_score"))
+        if hybrid_score > 0.0:
+            candidates.append(hybrid_score)
+        score_breakdown = breakdown.get("score_breakdown")
+        if isinstance(score_breakdown, dict):
+            candidates.append(_coerce_unit(score_breakdown.get("total")))
+            candidates.append(_coerce_unit(score_breakdown.get("salience")) * 0.8)
+            if score_breakdown.get("domain_match") == 1.0:
+                candidates.append(0.55)
+            if score_breakdown.get("role_bonus_raw"):
+                candidates.append(0.45)
+        if breakdown.get("context_source") == "relevant":
+            candidates.append(0.5)
+        return max(candidates, default=0.0)
+
+    @staticmethod
+    def _resolve_top_goal_priority(
+        *,
+        goal_context: dict[str, Any] | None,
+        context_signal: dict[str, Any],
+        aligned_goals: list[dict[str, Any]],
+    ) -> float:
+        priorities: list[float] = []
+        for goal in aligned_goals:
+            priorities.append(_coerce_unit(goal.get("priority")))
+        if goal_context is not None:
+            for key in ("last_active_goals", "active_goals", "goals", "last_relevant_goals", "relevant_goals"):
+                raw_goals = goal_context.get(key)
+                if isinstance(raw_goals, list):
+                    priorities.extend(
+                        _coerce_unit(goal.get("priority"))
+                        for goal in raw_goals
+                        if isinstance(goal, dict)
+                    )
+        for item in BehaviorFacet._context_window_items(context_signal):
+            if item.get("item_type") != "goal":
+                continue
+            metadata = item.get("metadata")
+            if isinstance(metadata, dict):
+                priorities.append(_coerce_unit(metadata.get("priority")))
+        return round(max(priorities, default=0.0), 3)
+
+    @staticmethod
+    def _resolve_goal_signal_strength(
+        *,
+        query_intent: str | None,
+        active_goal_count: int,
+        relevant_goal_count: int,
+        top_goal_priority: float,
+        goal_alignment_score: float,
+        context_signal: dict[str, Any],
+    ) -> float:
+        if relevant_goal_count > 0 or goal_alignment_score > 0.0:
+            return round(max(top_goal_priority, _clamp_unit(goal_alignment_score / 2.0)), 3)
+        has_context_goal = any(
+            item.get("item_type") == "goal"
+            for item in BehaviorFacet._context_window_items(context_signal)
+        )
+        if query_intent in {"planning", "recommendation"} and (
+            active_goal_count > 0 or has_context_goal
+        ):
+            return round(max(top_goal_priority, 0.5), 3)
+        return 0.0
+
+    @staticmethod
+    def _has_domain_match(
+        *,
+        event_domain: str | None,
+        included_memory_domains: list[str],
+        context_signal: dict[str, Any],
+    ) -> bool:
+        if event_domain and event_domain in included_memory_domains:
+            return True
+        raw_breakdowns = context_signal.get("memory_score_breakdowns")
+        if isinstance(raw_breakdowns, list):
+            for item in raw_breakdowns:
+                if not isinstance(item, dict):
+                    continue
+                score_breakdown = item.get("score_breakdown")
+                if isinstance(score_breakdown, dict) and score_breakdown.get("domain_match") == 1.0:
+                    return True
+        return False
+
+    @staticmethod
+    def _compute_ambiguity_score(
+        content: str,
+        *,
+        query_intent: str | None,
+        has_relevant_memory: bool,
+        relevant_memory_strength: float,
+        has_preference_memory: bool,
+        has_goal: bool,
+        goal_signal_strength: float,
+        relevant_belief_count: int,
+        domain_match: bool,
+        event_domain: str | None,
+    ) -> float:
+        normalized = _normalize_content(content)
+        tokens = tokenize(normalized)
+        if any(phrase in normalized for phrase in STATUS_RESPONSE_PHRASES):
+            return 0.1
+        score = 0.15
+
+        if query_intent == "recommendation" and not (has_relevant_memory or has_goal):
+            score = max(score, 0.85)
+        if query_intent == "planning" and not (has_relevant_memory or has_goal):
+            score = max(score, 0.75)
+        if query_intent == "factual" and not (has_relevant_memory or relevant_belief_count > 0):
+            score = max(score, 0.75)
+        if query_intent == "memory_summary" and not has_relevant_memory:
+            score = max(score, 0.75)
+        if query_intent == "unknown" and content.strip().endswith("?"):
+            score = max(score, 0.8)
+        if BehaviorFacet._is_very_short_or_vague(normalized, tokens):
+            score = max(score, 0.8)
+        if query_intent in {"recommendation", "planning"} and event_domain and not domain_match:
+            score += 0.15
+
+        if relevant_memory_strength >= RELEVANT_MEMORY_STRENGTH_THRESHOLD:
+            score -= 0.55
+        if has_preference_memory and query_intent in {"recommendation", "planning"}:
+            score -= 0.25
+        if goal_signal_strength >= GOAL_RELEVANCE_THRESHOLD:
+            score -= 0.45
+        if domain_match:
+            score -= 0.2
+        return round(_clamp_unit(score), 3)
+
+    @staticmethod
+    def _is_very_short_or_vague(normalized: str, tokens: set[str]) -> bool:
+        vague_queries = {
+            "what should i do",
+            "what should we do",
+            "what now",
+            "what next",
+            "help me",
+            "can you help",
+        }
+        stripped = normalized.rstrip(" ?!.")
+        return stripped in vague_queries or (stripped.endswith("?") and len(tokens) <= 3)
 
     @staticmethod
     def _attention_memory_strength(attention_state: dict[str, Any]) -> float:
@@ -813,20 +1357,28 @@ class BehaviorFacet:
         missing_context: list[str],
     ) -> str | None:
         normalized = _normalize_content(content)
-        if query_intent == "status_request":
+        if query_intent == "factual" and any(
+            phrase in normalized for phrase in STATUS_RESPONSE_PHRASES
+        ):
             return "status_report"
-        if query_intent == "recommendation_request" and missing_context:
+        if query_intent == "recommendation" and missing_context:
             return "clarify_recommendation_preferences"
         if (
             any(phrase in normalized for phrase in NEXT_STEPS_RESPONSE_PHRASES)
             and context_sufficiency >= CONTEXT_SUFFICIENCY_THRESHOLD
         ):
             return "next_steps_available"
-        if query_intent == "planning_request" and context_sufficiency >= CONTEXT_SUFFICIENCY_THRESHOLD:
+        if query_intent == "planning" and context_sufficiency >= CONTEXT_SUFFICIENCY_THRESHOLD:
             return "next_steps_available"
-        if query_intent in {"recommendation_request", "planning_request"}:
+        if query_intent == "memory_summary":
+            return (
+                "grounded_response_available"
+                if context_sufficiency >= CONTEXT_SUFFICIENCY_THRESHOLD
+                else "clarification_needed"
+            )
+        if query_intent in {"recommendation", "planning", "factual"}:
             return "grounded_response_available" if context_sufficiency >= CONTEXT_SUFFICIENCY_THRESHOLD else "clarification_needed"
-        if query_intent == "clarification_needed":
+        if query_intent == "unknown":
             return "clarification_needed"
         return None
 
@@ -919,81 +1471,134 @@ class BehaviorFacet:
                 score_breakdown[action].get(reason, 0.0) + value
             )
 
-        if signals.high_priority:
-            reasons.append("high_priority_tags")
-            add(DecisionAction.RECORD, "high_priority_record_bias", 0.15)
-            add(DecisionAction.ASK, "high_priority_ask_bias", 0.05)
+        if event.event_type in {EventType.SYSTEM_TICK, EventType.INTERNAL}:
+            reasons.append("internal_system_event_wait")
+            add(DecisionAction.WAIT, "internal_system_event_wait", 0.8)
+            BehaviorFacet._apply_pressure_biases(score_breakdown, reasons, signals)
+            return BehaviorFacet._finalize_selected_decision(
+                DecisionAction.WAIT,
+                reasons,
+                score_breakdown,
+            )
 
         if not signals.meaningful_content and not signals.has_metadata_signal:
             reasons.append("empty_content_wait")
-            add(DecisionAction.WAIT, "empty_content_wait", 0.55)
+            add(DecisionAction.WAIT, "empty_content_wait", 0.8)
+            return BehaviorFacet._finalize_selected_decision(
+                DecisionAction.WAIT,
+                reasons,
+                score_breakdown,
+            )
 
         if signals.explicit_action:
-            if signals.low_risk:
+            if signals.low_risk and signals.ambiguity_score < HIGH_AMBIGUITY_THRESHOLD:
                 reasons.append("explicit_action_low_risk")
-                add(DecisionAction.ACT, "explicit_action_low_risk", 0.45)
+                add(DecisionAction.ACT, "explicit_action_low_risk", 0.75)
+                selected = DecisionAction.ACT
             else:
                 reasons.append("explicit_action_without_low_risk")
-                add(DecisionAction.ASK, "explicit_action_without_low_risk", 0.45)
+                add(DecisionAction.ASK, "explicit_action_without_low_risk", 0.75)
+                selected = DecisionAction.ASK
+            BehaviorFacet._apply_pressure_biases(score_breakdown, reasons, signals)
+            BehaviorFacet._apply_goal_biases(score_breakdown, reasons, signals)
+            BehaviorFacet._apply_memory_biases(score_breakdown, reasons, signals)
+            return BehaviorFacet._finalize_selected_decision(
+                selected,
+                reasons,
+                score_breakdown,
+            )
+
+        if not signals.response_needed:
+            if signals.meaningful_content:
+                if event.event_type == EventType.USER_MESSAGE:
+                    reasons.append("user_message_default_record")
+                if signals.high_priority:
+                    reasons.append("high_priority_tags")
+                reasons.append("non_question_statement_record")
+                add(DecisionAction.RECORD, "non_question_statement_record", 0.75)
+                selected = DecisionAction.RECORD
+            else:
+                reasons.append("no_response_needed_wait")
+                add(DecisionAction.WAIT, "no_response_needed_wait", 0.55)
+                selected = DecisionAction.WAIT
+            BehaviorFacet._apply_pressure_biases(score_breakdown, reasons, signals)
+            BehaviorFacet._apply_goal_biases(score_breakdown, reasons, signals)
+            BehaviorFacet._apply_memory_biases(score_breakdown, reasons, signals)
+            BehaviorFacet._apply_low_signal_bias(score_breakdown, reasons, signals)
+            return BehaviorFacet._finalize_selected_decision(
+                selected,
+                reasons,
+                score_breakdown,
+            )
+
+        grounded = (
+            signals.has_relevant_memory
+            or signals.has_goal
+            or signals.deterministic_response_available
+            or signals.context_sufficiency >= CONTEXT_SUFFICIENCY_THRESHOLD
+        )
+        low_ambiguity = signals.ambiguity_score <= LOW_AMBIGUITY_THRESHOLD
+        high_ambiguity = signals.ambiguity_score >= HIGH_AMBIGUITY_THRESHOLD
+
+        if (
+            signals.query_intent in {"recommendation", "planning"}
+            and signals.has_preference_memory
+        ):
+            reasons.append("preference_memory_signal")
+            add(DecisionAction.ACT, "preference_memory_signal", 0.8)
+            grounded = True
+            low_ambiguity = True
+
+        if signals.has_goal and signals.goal_signal_strength >= GOAL_RELEVANCE_THRESHOLD:
+            reasons.append("goal_signal")
+            add(DecisionAction.ACT, "goal_signal", 0.65)
+            grounded = True
+
+        if signals.has_relevant_memory:
+            reasons.append("relevant_memory_signal")
+            add(DecisionAction.ACT, "relevant_memory_signal", 0.55)
 
         if signals.requires_response:
             reasons.append("requires_response_metadata")
-            add(DecisionAction.ASK, "requires_response_metadata", 0.4)
+            add(DecisionAction.ASK, "requires_response_metadata", 0.25)
 
-        if signals.response_needed:
-            if signals.deterministic_response_available:
-                reasons.append("deterministic_text_response_available")
-                add(DecisionAction.ACT, "deterministic_text_response_available", 0.65)
-            else:
-                reasons.append("response_needed_low_context")
-                add(DecisionAction.ASK, "response_needed_low_context", 0.25)
-
-        if signals.uncertainty:
-            reasons.append("uncertainty_metadata")
-            add(DecisionAction.ASK, "uncertainty_metadata", 0.35)
-
-        if signals.question_like:
-            reasons.append("question_phrase_response_needed")
-            add(DecisionAction.ASK, "question_phrase_response_needed", 0.3)
-
-        if event.event_type == EventType.USER_MESSAGE:
-            reasons.append("user_message_default_record")
-            add(DecisionAction.RECORD, "user_message_default_record", 0.15)
-
-        if signals.high_priority:
-            reasons.append("high_priority_record")
-            add(DecisionAction.RECORD, "high_priority_record", 0.05)
-
-        if signals.meaningful_content and event.event_type == EventType.SYSTEM_NOTE:
-            reasons.append("system_note_default_record")
-            add(DecisionAction.RECORD, "system_note_default_record", 0.15)
-
-        if event.event_type == EventType.SYSTEM_TICK:
-            reasons.append("system_tick_or_idle_wait")
-            add(DecisionAction.WAIT, "system_tick_or_idle_wait", 0.3)
+        if grounded and low_ambiguity and signals.query_intent in QUERY_INTENTS_REQUIRING_RESPONSE:
+            reasons.append("grounded_low_ambiguity_act")
+            add(DecisionAction.ACT, "grounded_low_ambiguity_act", 0.75)
+            selected = DecisionAction.ACT
+        elif high_ambiguity:
+            reasons.append("high_ambiguity_insufficient_context")
+            add(DecisionAction.ASK, "high_ambiguity_insufficient_context", 0.45)
+            selected = DecisionAction.ASK
+        elif grounded and signals.query_intent in QUERY_INTENTS_REQUIRING_RESPONSE:
+            reasons.append("grounded_response_context_act")
+            add(DecisionAction.ACT, "grounded_response_context_act", 0.45)
+            selected = DecisionAction.ACT
+        else:
+            reasons.append("response_needed_but_unclear_ask")
+            add(DecisionAction.ASK, "response_needed_but_unclear_ask", 0.55)
+            selected = DecisionAction.ASK
 
         BehaviorFacet._apply_pressure_biases(score_breakdown, reasons, signals)
         BehaviorFacet._apply_goal_biases(score_breakdown, reasons, signals)
         BehaviorFacet._apply_memory_biases(score_breakdown, reasons, signals)
-        BehaviorFacet._apply_low_signal_bias(score_breakdown, reasons, signals)
+        return BehaviorFacet._finalize_selected_decision(
+            selected,
+            reasons,
+            score_breakdown,
+        )
 
+    @staticmethod
+    def _finalize_selected_decision(
+        selected_decision: DecisionAction,
+        reasons: list[str],
+        score_breakdown: dict[DecisionAction, dict[str, float]],
+    ) -> tuple[DecisionAction, list[str], dict[str, float]]:
         decision_scores = {
             action: round(_clamp_unit(sum(breakdown.values())), 3)
             for action, breakdown in score_breakdown.items()
         }
-        selected_decision = max(
-            DECISION_BASE_SCORES,
-            key=lambda action: (decision_scores[action], DECISION_PRIORITY[action]),
-        )
-        if signals.response_needed:
-            threshold = BehaviorFacet._sufficiency_threshold(signals.query_intent)
-            if signals.context_sufficiency >= threshold:
-                selected_decision = DecisionAction.ACT
-                reasons.append("context_sufficient_for_response")
-            else:
-                selected_decision = DecisionAction.ASK
-                reasons.append("context_insufficient_for_response")
-        reasons.append(f"selected_highest_weighted_score:{selected_decision.value}")
+        reasons.append(f"selected_policy_rule:{selected_decision.value}")
         return (
             selected_decision,
             reasons,
@@ -1134,10 +1739,10 @@ class BehaviorFacet:
     def _score_confidence(
         action: DecisionAction,
         *,
-        salience: float,
         pressure: float,
-        goal_relevance: float,
-        retrieval_strength: float,
+        memory_signal_strength: float,
+        goal_signal_strength: float,
+        ambiguity_score: float,
         goal_alignment_score: float,
         goal_alignment_priority: float,
         world_alignment_score: float,
@@ -1147,14 +1752,14 @@ class BehaviorFacet:
             "base": DECISION_BASE_SCORES[action],
             "pressure_contribution": round(_clamp_unit(pressure) * 0.25, 3),
             "goal_relevance_contribution": round(
-                _clamp_unit(goal_relevance) * 0.30,
+                _clamp_unit(goal_signal_strength) * 0.30,
                 3,
             ),
             "memory_retrieval_contribution": round(
-                _clamp_unit(retrieval_strength) * 0.20,
+                _clamp_unit(memory_signal_strength) * 0.30,
                 3,
             ),
-            "salience_contribution": round(_clamp_unit(salience) * 0.25, 3),
+            "ambiguity_penalty": round(_clamp_unit(ambiguity_score) * -0.35, 3),
         }
         if goal_alignment_score > 0.0 and goal_alignment_priority > 0.0:
             breakdown["goal_alignment_signal"] = breakdown[
@@ -1172,7 +1777,7 @@ class BehaviorFacet:
             "pressure_contribution",
             "goal_relevance_contribution",
             "memory_retrieval_contribution",
-            "salience_contribution",
+            "ambiguity_penalty",
             "world_alignment_signal",
         )
         breakdown["total"] = round(
@@ -1196,8 +1801,12 @@ class BehaviorFacet:
                 f"{confidence_breakdown['goal_relevance_contribution']:.3f}"
             ),
             (
-                f"memory contribution: {signals.retrieval_strength:.3f} -> "
+                f"memory contribution: {signals.relevant_memory_strength:.3f} -> "
                 f"{confidence_breakdown['memory_retrieval_contribution']:.3f}"
+            ),
+            (
+                f"ambiguity contribution: {signals.ambiguity_score:.3f} -> "
+                f"{confidence_breakdown['ambiguity_penalty']:.3f}"
             ),
             (
                 "final confidence breakdown: "
@@ -1205,7 +1814,7 @@ class BehaviorFacet:
                 f"pressure={confidence_breakdown['pressure_contribution']:.3f}, "
                 f"goal={confidence_breakdown['goal_relevance_contribution']:.3f}, "
                 f"memory={confidence_breakdown['memory_retrieval_contribution']:.3f}, "
-                f"salience={confidence_breakdown['salience_contribution']:.3f}, "
+                f"ambiguity={confidence_breakdown['ambiguity_penalty']:.3f}, "
                 f"total={confidence_breakdown['total']:.3f}"
             ),
         ]
@@ -1235,6 +1844,25 @@ def _normalized_count(raw_value: Any, denominator: int) -> float:
     if isinstance(raw_value, (int, float)):
         return _clamp_unit(float(raw_value) / max(float(denominator), 1.0))
     return 0.0
+
+
+def _coerce_unit(raw_value: Any) -> float:
+    if isinstance(raw_value, bool):
+        return 0.0
+    if not isinstance(raw_value, (int, float)):
+        return 0.0
+    return _clamp_unit(float(raw_value))
+
+
+def _clean_strings(raw_values: Any) -> list[str]:
+    cleaned: list[str] = []
+    for raw_value in raw_values or ():
+        if not isinstance(raw_value, str):
+            continue
+        value = raw_value.strip().lower()
+        if value:
+            cleaned.append(value)
+    return cleaned
 
 
 def _world_confidence_boost(

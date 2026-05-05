@@ -9,6 +9,12 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-05 (behavior signal policy)
+
+- Updated `fullerene/facets/behavior.py` so Behavior now extracts query intent, ambiguity, pressure, memory role/domain/relevance, goal priority/relevance, and attention/context signals before choosing `WAIT` / `RECORD` / `ASK` / `ACT`; metadata now includes `confidence_components`, `ambiguity_score`, memory/goal signal strengths, and inspectable decision reasons.
+- Updated `fullerene/cli.py` to persist `I need to ...` as an active goal intent so next-step queries can ground against it.
+- Expanded `tests/test_behavior.py` for preference-grounded recommendations, no-context recommendations, goal grounding, memory summaries, vague ambiguity, non-question recording, and no model calls in Behavior decision policy.
+
 ### 2026-05-05 (memory v2)
 
 - Added `fullerene/memory/roles.py` with deterministic `MemoryRole` / `QueryIntent` enums, `classify_memory_role`, and `classify_query_intent`; preference / question / task / feedback / outcome / fact / unknown phrasing maps to the matching role, and recommendation / planning / factual / unknown phrasing maps to the matching intent.

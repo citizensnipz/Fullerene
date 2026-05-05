@@ -88,6 +88,13 @@ TEXT_RESPONSE_TEMPLATES = {
 GOAL_INTENT_PATTERNS: tuple[tuple[re.Pattern[str], float], ...] = (
     (
         re.compile(
+            r"^\s*i\s+need\s+to\s+(?P<description>.+?)[.!?\s]*$",
+            re.IGNORECASE,
+        ),
+        0.8,
+    ),
+    (
+        re.compile(
             r"^\s*i\s+should\s+remember\s+to\s+(?P<description>.+?)[.!?\s]*$",
             re.IGNORECASE,
         ),

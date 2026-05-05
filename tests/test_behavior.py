@@ -6,10 +6,12 @@ import shutil
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
 from fullerene.cli import main as cli_main
 from fullerene.facets import BehaviorFacet, EchoFacet, MemoryFacet
+from fullerene.facets.behavior import HIGH_AMBIGUITY_THRESHOLD, LOW_AMBIGUITY_THRESHOLD
 from fullerene.workspace_state import workspace_state_root
 from fullerene.memory import SQLiteMemoryStore
 from fullerene.nexus import DecisionAction, Event, EventType, NexusRuntime, NexusState
@@ -80,7 +82,7 @@ class BehaviorFacetRuleTests(unittest.TestCase):
 
         self.assertEqual(result.proposed_decision, DecisionAction.ACT)
         self.assertTrue(result.metadata["response_needed"])
-        self.assertEqual(result.metadata["query_intent"], "recommendation_request")
+        self.assertEqual(result.metadata["query_intent"], "recommendation")
         self.assertEqual(result.metadata["active_goal_count"], 1)
         self.assertEqual(result.metadata["context_sufficiency"], 1.0)
         self.assertEqual(
@@ -98,7 +100,7 @@ class BehaviorFacetRuleTests(unittest.TestCase):
         )
 
         self.assertEqual(result.proposed_decision, DecisionAction.ASK)
-        self.assertEqual(result.metadata["query_intent"], "recommendation_request")
+        self.assertEqual(result.metadata["query_intent"], "recommendation")
         self.assertEqual(
             result.metadata["response_template"],
             "clarify_recommendation_preferences",
@@ -129,7 +131,7 @@ class BehaviorFacetRuleTests(unittest.TestCase):
         )
 
         self.assertEqual(result.proposed_decision, DecisionAction.ACT)
-        self.assertEqual(result.metadata["query_intent"], "recommendation_request")
+        self.assertEqual(result.metadata["query_intent"], "recommendation")
         self.assertEqual(result.metadata["relevant_memory_count"], 1)
         self.assertEqual(result.metadata["context_sufficiency"], 1.0)
         self.assertEqual(result.metadata["missing_context"], [])
@@ -149,7 +151,7 @@ class BehaviorFacetRuleTests(unittest.TestCase):
         self.assertEqual(result.metadata["tool"], "text")
         self.assertEqual(result.metadata["response_template"], "status_report")
         self.assertTrue(result.metadata["response_needed"])
-        self.assertEqual(result.metadata["query_intent"], "status_request")
+        self.assertEqual(result.metadata["query_intent"], "factual")
 
     def test_ambiguous_help_request_uses_text_response_metadata(self) -> None:
         result = self.facet.process(
@@ -329,13 +331,9 @@ class BehaviorFacetRuleTests(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(result.proposed_decision, DecisionAction.ASK)
+        self.assertEqual(result.proposed_decision, DecisionAction.RECORD)
         self.assertEqual(result.metadata["retrieval_strength"], 0.0)
-        self.assertIn(
-            "goal relevant but insufficient context",
-            result.metadata["reasons"],
-        )
-        self.assertIn("low retrieval caused ASK preference", result.metadata["reasons"])
+        self.assertIn("non_question_statement_record", result.metadata["reasons"])
 
     def test_no_signals_defaults_to_record_or_wait(self) -> None:
         record_result = self.facet.process(
@@ -409,6 +407,146 @@ class BehaviorFacetRuleTests(unittest.TestCase):
 
         self.assertIn(result.proposed_decision, set(DecisionAction))
         self.assertGreaterEqual(result.metadata["confidence"], 0.0)
+
+
+class BehaviorV1SignalIntegrationTests(unittest.TestCase):
+    def _run_cli_json(self, args: list[str]) -> dict:
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            exit_code = cli_main(args)
+        self.assertEqual(exit_code, 0)
+        return json.loads(stdout.getvalue())
+
+    @staticmethod
+    def _behavior_metadata(payload: dict) -> dict:
+        return next(
+            result["metadata"]
+            for result in payload["facet_results"]
+            if result["facet_name"] == "behavior"
+        )
+
+    def test_preference_memory_grounds_weekend_recommendation(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+
+        self._run_cli_json(
+            ["--full", "--json", "--content", "I like scuba diving", "--state-dir", str(root)]
+        )
+        payload = self._run_cli_json(
+            [
+                "--full",
+                "--json",
+                "--content",
+                "What should I do this weekend?",
+                "--state-dir",
+                str(root),
+            ]
+        )
+        behavior = self._behavior_metadata(payload)
+
+        self.assertEqual(payload["decision"]["action"], "act")
+        self.assertEqual(behavior["decision"], "act")
+        self.assertEqual(behavior["query_intent"], "recommendation")
+        self.assertTrue(behavior["has_preference_memory"])
+        self.assertLessEqual(behavior["ambiguity_score"], LOW_AMBIGUITY_THRESHOLD)
+        self.assertIn("preference_memory_signal", behavior["reasons"])
+
+    def test_no_context_recommendation_asks(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+
+        payload = self._run_cli_json(
+            [
+                "--full",
+                "--json",
+                "--content",
+                "What should I do this weekend?",
+                "--state-dir",
+                str(root),
+            ]
+        )
+        behavior = self._behavior_metadata(payload)
+
+        self.assertEqual(payload["decision"]["action"], "ask")
+        self.assertGreaterEqual(behavior["ambiguity_score"], HIGH_AMBIGUITY_THRESHOLD)
+
+    def test_goal_signal_grounds_next_step_request(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+
+        self._run_cli_json(
+            [
+                "--full",
+                "--json",
+                "--content",
+                "I need to finish Fullerene",
+                "--state-dir",
+                str(root),
+            ]
+        )
+        payload = self._run_cli_json(
+            [
+                "--full",
+                "--json",
+                "--content",
+                "What should I do next?",
+                "--state-dir",
+                str(root),
+            ]
+        )
+        behavior = self._behavior_metadata(payload)
+
+        self.assertEqual(payload["decision"]["action"], "act")
+        self.assertTrue(behavior["has_goal"])
+        self.assertIn("goal_signal", behavior["reasons"])
+
+    def test_memory_summary_acts_with_stored_memories(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+
+        self._run_cli_json(
+            ["--full", "--json", "--content", "I like art museums", "--state-dir", str(root)]
+        )
+        payload = self._run_cli_json(
+            [
+                "--full",
+                "--json",
+                "--content",
+                "What do you know about me?",
+                "--state-dir",
+                str(root),
+            ]
+        )
+        behavior = self._behavior_metadata(payload)
+
+        self.assertEqual(payload["decision"]["action"], "act")
+        self.assertEqual(behavior["query_intent"], "memory_summary")
+        self.assertNotEqual(payload["decision"]["action"], "ask")
+
+    def test_vague_recommendation_asks(self) -> None:
+        result = BehaviorFacet().process(
+            Event(event_type=EventType.USER_MESSAGE, content="What should I do?"),
+            NexusState(),
+        )
+
+        self.assertEqual(result.proposed_decision, DecisionAction.ASK)
+        self.assertGreaterEqual(
+            result.metadata["ambiguity_score"],
+            HIGH_AMBIGUITY_THRESHOLD,
+        )
+
+    def test_behavior_policy_does_not_call_model(self) -> None:
+        with patch(
+            "fullerene.models.ollama.OllamaAdapter.generate",
+            return_value="not decision logic",
+        ) as generate:
+            result = BehaviorFacet().process(
+                Event(event_type=EventType.USER_MESSAGE, content="What should I do?"),
+                NexusState(),
+            )
+
+        self.assertEqual(result.proposed_decision, DecisionAction.ASK)
+        generate.assert_not_called()
 
 
 class BehaviorRuntimeIntegrationTests(unittest.TestCase):

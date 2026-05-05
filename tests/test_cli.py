@@ -148,7 +148,7 @@ class CLIUsabilityTests(unittest.TestCase):
         self.assertIn("- active goals: none", prompt)
         self.assertIn("- recent memories: none", prompt)
         self.assertIn("- active beliefs: none", prompt)
-        self.assertIn("- query intent: status_request", prompt)
+        self.assertIn("- query intent: factual", prompt)
         self.assertIn("- missing context: none", prompt)
 
     def test_model_offline_falls_back_to_template(self) -> None:
