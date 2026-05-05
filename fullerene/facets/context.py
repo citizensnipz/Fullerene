@@ -95,6 +95,15 @@ class ContextFacet:
         query_intent = window.metadata.get("query_intent")
         event_domain = window.metadata.get("event_domain")
         memory_score_breakdowns = window.metadata.get("memory_score_breakdowns", [])
+        item_count = len(window.items)
+        max_items = window.max_items
+        load_ratio = round(item_count / max(float(max_items), 1.0), 3)
+        context_load = {
+            "item_count": item_count,
+            "max_items": max_items,
+            "load_ratio": load_ratio,
+            "overloaded": load_ratio >= 0.85,
+        }
         proposed_decision = (
             DecisionAction.RECORD
             if self._has_meaningful_items(window)
@@ -109,7 +118,10 @@ class ContextFacet:
                 "last_context_window": window.to_dict(),
                 "last_context_window_id": window.id,
                 "last_context_item_ids": [item.id for item in window.items],
-                "last_context_item_count": len(window.items),
+                "last_context_item_count": item_count,
+                "last_context_max_items": max_items,
+                "last_context_load_ratio": load_ratio,
+                "last_context_overloaded": context_load["overloaded"],
                 "last_context_strategy": window.strategy,
                 "last_context_source_types": source_types,
                 "last_included_goal_ids": included_goal_ids,
@@ -125,9 +137,10 @@ class ContextFacet:
             },
             metadata={
                 "context_window": window.to_dict(),
-                "item_count": len(window.items),
+                "item_count": item_count,
                 "strategy": window.strategy,
-                "max_items": window.max_items,
+                "max_items": max_items,
+                "context_load": context_load,
                 "source_types": source_types,
                 "included_goal_ids": included_goal_ids,
                 "deduped_goal_count": window.metadata.get("deduped_goal_count", 0),

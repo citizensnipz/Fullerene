@@ -596,6 +596,139 @@ class BehaviorRuntimeIntegrationTests(unittest.TestCase):
         self.assertTrue((root / "memory.sqlite3").exists())
 
 
+class BehaviorV2Tests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.facet = BehaviorFacet()
+
+    def test_high_pressure_high_goal_relevance_can_produce_act(self) -> None:
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="continue and finish this now",
+                metadata={"pressure": 0.9, "explicit_action": True, "low_risk": True},
+            ),
+            NexusState(
+                facet_state={
+                    "goals": {
+                        "last_relevant_goals": [{"id": "g1", "priority": 0.9, "score": 1.0}],
+                    }
+                }
+            ),
+        )
+        self.assertEqual(result.proposed_decision, DecisionAction.ACT)
+
+    def test_policy_block_downgrades_act(self) -> None:
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="ship it now",
+                metadata={"explicit_action": True, "low_risk": True, "policy": {"policy_status": "denied"}},
+            ),
+            NexusState(),
+        )
+        self.assertIn(result.proposed_decision, {DecisionAction.ASK, DecisionAction.RECORD, DecisionAction.WAIT})
+        self.assertNotEqual(result.proposed_decision, DecisionAction.ACT)
+        self.assertIn("policy_result:denied", result.metadata["reasons"])
+
+    def test_low_belief_confidence_suppresses_act(self) -> None:
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="execute this action",
+                metadata={"explicit_action": True, "low_risk": True},
+            ),
+            NexusState(
+                facet_state={
+                    "world_model": {
+                        "last_relevant_beliefs": [{"id": "b1", "confidence": 0.2, "status": "active"}],
+                    }
+                }
+            ),
+        )
+        self.assertNotEqual(result.proposed_decision, DecisionAction.ACT)
+
+    def test_contradiction_biases_toward_ask(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="should I proceed?"),
+            NexusState(
+                facet_state={
+                    "world_model": {
+                        "last_relevant_beliefs": [{"id": "b1", "confidence": 0.9, "status": "contradicted"}],
+                    }
+                }
+            ),
+        )
+        self.assertEqual(result.proposed_decision, DecisionAction.ASK)
+        self.assertTrue(result.metadata["belief_contradiction"])
+
+    def test_context_overload_reduces_act_confidence(self) -> None:
+        low = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="archive the note",
+                metadata={"explicit_action": True, "low_risk": True},
+            ),
+            NexusState(),
+        )
+        high = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="archive the note",
+                metadata={"explicit_action": True, "low_risk": True},
+            ),
+            NexusState(
+                facet_state={"context": {"last_context_item_count": 10, "last_context_max_items": 10}}
+            ),
+        )
+        self.assertLessEqual(high.metadata["confidence"], low.metadata["confidence"])
+
+    def test_latent_pressure_contributes_to_interrupt_and_scoring(self) -> None:
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="what should I do next?",
+                metadata={"latent_pressure": 0.8},
+            ),
+            NexusState(),
+        )
+        self.assertTrue(result.metadata["interrupt_recommended"])
+        self.assertEqual(result.metadata["interrupt_reason"], "latent_pressure_high")
+        self.assertGreater(result.metadata["decision_scores"]["ask"], 0.0)
+
+    def test_decision_trace_contains_required_fields(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="help me decide"),
+            NexusState(),
+        )
+        trace = result.metadata["decision_trace"]
+        for key in (
+            "event",
+            "pressure_score",
+            "latent_pressure",
+            "memory_relevance_score",
+            "goal_relevance_score",
+            "world_model_belief_confidence",
+            "contradiction_flag",
+            "policy_result",
+            "context_load_ratio",
+            "raw_candidate_scores",
+            "adjusted_candidate_scores",
+            "final_decision",
+            "confidence",
+            "reasons",
+            "interrupt_recommended",
+            "timestamp",
+        ):
+            self.assertIn(key, trace)
+
+    def test_neutral_adapters_preserve_v1_record_default(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="hello there"),
+            NexusState(),
+        )
+        self.assertEqual(result.proposed_decision, DecisionAction.RECORD)
+
+
 class CLIBehaviorIntegrationTests(unittest.TestCase):
     def test_cli_with_behavior_flag_uses_behavior_facet(self) -> None:
         root = make_tempdir_path()

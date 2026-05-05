@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from fullerene.memory import (
@@ -117,6 +118,9 @@ GOAL_RELEVANCE_THRESHOLD = 0.35
 QUERY_INTENTS_REQUIRING_RESPONSE = frozenset(
     {"recommendation", "planning", "factual", "memory_summary"}
 )
+LOW_BELIEF_CONFIDENCE_THRESHOLD = 0.4
+CONTRADICTION_ACT_PENALTY = 0.35
+CONTEXT_OVERLOAD_RATIO_THRESHOLD = 0.85
 
 
 @dataclass(slots=True)
@@ -168,6 +172,18 @@ class _BehaviorSignals:
     world_alignment_score: float
     world_alignment_confidence: float
     aligned_belief_ids: list[str]
+    belief_confidence: float
+    belief_contradiction: bool
+    belief_reason: str | None
+    policy_result: str
+    policy_requires_approval: bool
+    policy_blocks_act: bool
+    policy_reason: str | None
+    context_item_count_signal: int
+    context_max_items_signal: int
+    context_load_ratio: float
+    context_overloaded: bool
+    latent_pressure: float
 
 
 class BehaviorFacet:
@@ -181,6 +197,22 @@ class BehaviorFacet:
             event,
             signals,
         )
+        raw_candidate_scores = dict(decision_scores)
+        decision_scores = self._apply_v2_candidate_adjustments(decision_scores, signals, reasons)
+        selected_decision = self._select_highest_scored_decision(decision_scores)
+        if (
+            selected_decision == DecisionAction.ACT
+            and signals.belief_confidence > 0.0
+            and signals.belief_confidence < LOW_BELIEF_CONFIDENCE_THRESHOLD
+        ):
+            selected_decision = DecisionAction.ASK
+            reasons.append("belief_guardrail:act_to_ask_low_confidence")
+        selected_decision, downgrade_reasons = self._apply_policy_downgrade(
+            selected_decision,
+            decision_scores,
+            signals,
+        )
+        reasons.extend(downgrade_reasons)
         confidence_breakdown = self._score_confidence(
             selected_decision,
             pressure=signals.pressure,
@@ -205,12 +237,29 @@ class BehaviorFacet:
                 3,
             )
         confidence = confidence_breakdown["total"]
+        if signals.context_overloaded and selected_decision == DecisionAction.ACT:
+            confidence = round(_clamp_unit(confidence - 0.1), 3)
+            confidence_breakdown["context_overload_penalty"] = -0.1
+            confidence_breakdown["total"] = confidence
+            reasons.append("context_overload lowered ACT confidence")
         reasons.extend(self._contribution_reasons(signals, confidence_breakdown))
         if attention_confidence_bias > 0.0:
             reasons.append("top_down_attention_broadcast increased response confidence")
         priority_level = "high" if signals.high_priority else "normal"
+        interrupt_recommended, interrupt_reason = self._interrupt_recommendation(signals)
 
         response_metadata = self._response_metadata(selected_decision, signals)
+        trace = self._build_decision_trace(
+            event=event,
+            signals=signals,
+            raw_candidate_scores=raw_candidate_scores,
+            adjusted_candidate_scores=decision_scores,
+            selected_decision=selected_decision,
+            confidence=confidence,
+            reasons=reasons,
+            interrupt_recommended=interrupt_recommended,
+            interrupt_reason=interrupt_reason,
+        )
 
         return FacetResult(
             facet_name=self.name,
@@ -247,6 +296,14 @@ class BehaviorFacet:
                 "last_context_sufficiency": signals.context_sufficiency,
                 "last_missing_context": list(signals.missing_context),
                 "last_attention_confidence_bias": attention_confidence_bias,
+                "last_policy_result": signals.policy_result,
+                "last_belief_confidence": signals.belief_confidence,
+                "last_belief_contradiction": signals.belief_contradiction,
+                "last_context_load_ratio": signals.context_load_ratio,
+                "last_latent_pressure": signals.latent_pressure,
+                "last_interrupt_recommended": interrupt_recommended,
+                "last_interrupt_reason": interrupt_reason,
+                "last_decision_trace": trace,
             },
             metadata={
                 "selected_decision": selected_decision.value,
@@ -295,6 +352,27 @@ class BehaviorFacet:
                 "world_alignment_score": signals.world_alignment_score,
                 "world_alignment_confidence": signals.world_alignment_confidence,
                 "aligned_belief_ids": list(signals.aligned_belief_ids),
+                "belief_confidence": signals.belief_confidence,
+                "belief_contradiction": signals.belief_contradiction,
+                "belief_reason": signals.belief_reason,
+                "policy_result": signals.policy_result,
+                "policy_requires_approval": signals.policy_requires_approval,
+                "policy_blocks_act": signals.policy_blocks_act,
+                "policy_reason": signals.policy_reason,
+                "context_load": {
+                    "item_count": signals.context_item_count_signal,
+                    "max_items": signals.context_max_items_signal,
+                    "load_ratio": signals.context_load_ratio,
+                    "overloaded": signals.context_overloaded,
+                },
+                "latent_pressure": signals.latent_pressure,
+                "interrupt_recommended": interrupt_recommended,
+                "interrupt_reason": interrupt_reason,
+                "decision_trace": trace,
+                "learning_event": {
+                    "event_type": "behavior_decision_trace_v2",
+                    "trace": trace,
+                },
             },
         )
 
@@ -329,8 +407,20 @@ class BehaviorFacet:
         world_alignment_confidence = self._resolve_world_alignment_confidence(
             aligned_beliefs
         )
+        belief_confidence, belief_contradiction, belief_reason = (
+            self._resolve_belief_signal(aligned_beliefs)
+        )
+        policy_result, policy_requires_approval, policy_blocks_act, policy_reason = (
+            self._extract_policy_signal(metadata, state)
+        )
         planner_context = self._extract_planner_context(state)
         context_signal = self._extract_context_signal(metadata, state)
+        (
+            context_item_count_signal,
+            context_max_items_signal,
+            context_load_ratio,
+            context_overloaded,
+        ) = self._extract_context_load_signal(context_signal, state)
         query_intent = self._resolve_query_intent(
             event.content,
             metadata=metadata,
@@ -381,6 +471,7 @@ class BehaviorFacet:
             planner_available=planner_available,
         )
         pressure = self._numeric_unit_value(metadata.get("pressure")) or 0.0
+        latent_pressure = self._extract_latent_pressure(metadata, state)
         retrieval_strength = self._resolve_retrieval_strength(
             metadata=metadata,
             state=state,
@@ -533,6 +624,18 @@ class BehaviorFacet:
                 for belief in aligned_beliefs
                 if isinstance(belief.get("id"), str)
             ],
+            belief_confidence=belief_confidence,
+            belief_contradiction=belief_contradiction,
+            belief_reason=belief_reason,
+            policy_result=policy_result,
+            policy_requires_approval=policy_requires_approval,
+            policy_blocks_act=policy_blocks_act,
+            policy_reason=policy_reason,
+            context_item_count_signal=context_item_count_signal,
+            context_max_items_signal=context_max_items_signal,
+            context_load_ratio=context_load_ratio,
+            context_overloaded=context_overloaded,
+            latent_pressure=latent_pressure,
         )
 
     @staticmethod
@@ -598,6 +701,82 @@ class BehaviorFacet:
             return {"last_context_window": candidate}
         state_context = state.facet_state.get("context")
         return dict(state_context) if isinstance(state_context, dict) else {}
+
+    @staticmethod
+    def _extract_policy_signal(
+        metadata: dict[str, Any],
+        state: NexusState,
+    ) -> tuple[str, bool, bool, str | None]:
+        policy_payload = metadata.get("policy")
+        if not isinstance(policy_payload, dict):
+            policy_payload = state.facet_state.get("policy")
+        if not isinstance(policy_payload, dict):
+            return ("allow", False, False, None)
+
+        raw_status = policy_payload.get("policy_status") or policy_payload.get(
+            "last_policy_status"
+        )
+        status = str(raw_status).strip().lower() if isinstance(raw_status, str) else ""
+        if status not in {"allowed", "denied", "approval_required", "no_match"}:
+            status = "allow"
+        requires_approval = status == "approval_required"
+        blocks_act = status in {"denied", "approval_required"}
+        reason = None
+        raw_reasons = policy_payload.get("reasons")
+        if isinstance(raw_reasons, list):
+            reason = "; ".join(str(item) for item in raw_reasons if isinstance(item, str))
+        if not reason:
+            raw_effective = policy_payload.get("effective_policy")
+            if isinstance(raw_effective, dict):
+                policy_name = raw_effective.get("name")
+                if isinstance(policy_name, str) and policy_name.strip():
+                    reason = policy_name.strip()
+        return (status, requires_approval, blocks_act, reason)
+
+    @staticmethod
+    def _extract_context_load_signal(
+        context_signal: dict[str, Any],
+        state: NexusState,
+    ) -> tuple[int, int, float, bool]:
+        load = context_signal.get("context_load")
+        if not isinstance(load, dict):
+            window = BehaviorFacet._context_window_from_signal(context_signal)
+            metadata = window.get("metadata") if isinstance(window, dict) else {}
+            load = metadata.get("context_load") if isinstance(metadata, dict) else None
+        if isinstance(load, dict):
+            item_count = int(load.get("item_count", 0) or 0)
+            max_items = int(load.get("max_items", 0) or 0)
+            raw_ratio = load.get("load_ratio")
+            if isinstance(raw_ratio, (int, float)):
+                ratio = _clamp_unit(float(raw_ratio))
+            else:
+                ratio = _clamp_unit(item_count / max(float(max_items), 1.0))
+            overloaded = bool(load.get("overloaded", False))
+            if not overloaded and max_items > 0:
+                overloaded = ratio >= CONTEXT_OVERLOAD_RATIO_THRESHOLD
+            return item_count, max_items, round(ratio, 3), overloaded
+
+        item_count = BehaviorFacet._context_item_count(state)
+        max_items = 0
+        context_state = state.facet_state.get("context")
+        if isinstance(context_state, dict):
+            max_items = int(context_state.get("last_context_max_items", 0) or 0)
+        ratio = _clamp_unit(item_count / max(float(max_items), 1.0)) if max_items > 0 else 0.0
+        return item_count, max_items, round(ratio, 3), ratio >= CONTEXT_OVERLOAD_RATIO_THRESHOLD
+
+    @staticmethod
+    def _extract_latent_pressure(metadata: dict[str, Any], state: NexusState) -> float:
+        explicit = BehaviorFacet._numeric_unit_value(metadata.get("latent_pressure"))
+        if explicit is not None:
+            return explicit
+        attention_state = state.facet_state.get("attention")
+        if isinstance(attention_state, dict):
+            contribution = BehaviorFacet._numeric_unit_value(
+                attention_state.get("last_attention_pressure_contribution")
+            )
+            if contribution is not None:
+                return contribution
+        return 0.0
 
     @staticmethod
     def _context_window_from_signal(
@@ -1293,6 +1472,23 @@ class BehaviorFacet:
         return best_confidence
 
     @staticmethod
+    def _resolve_belief_signal(
+        aligned_beliefs: list[dict[str, Any]],
+    ) -> tuple[float, bool, str | None]:
+        confidence = BehaviorFacet._resolve_world_alignment_confidence(aligned_beliefs)
+        contradicted = False
+        for belief in aligned_beliefs:
+            status = belief.get("status")
+            if isinstance(status, str) and status.strip().lower() == "contradicted":
+                contradicted = True
+                break
+        if contradicted:
+            return confidence, True, "world_model_contradiction"
+        if confidence > 0.0 and confidence < LOW_BELIEF_CONFIDENCE_THRESHOLD:
+            return confidence, False, "low_belief_confidence"
+        return confidence, False, None
+
+    @staticmethod
     def _resolve_salience(
         event: Event,
         metadata: dict[str, Any],
@@ -1604,6 +1800,126 @@ class BehaviorFacet:
             reasons,
             {action.value: decision_scores[action] for action in DECISION_BASE_SCORES},
         )
+
+    @staticmethod
+    def _apply_v2_candidate_adjustments(
+        decision_scores: dict[str, float],
+        signals: _BehaviorSignals,
+        reasons: list[str],
+    ) -> dict[str, float]:
+        adjusted = {key: _clamp_unit(value) for key, value in decision_scores.items()}
+        if signals.latent_pressure > 0.0:
+            adjusted["ask"] = _clamp_unit(
+                adjusted["ask"] + (signals.latent_pressure * (0.2 + (0.1 * signals.goal_relevance)))
+            )
+            adjusted["act"] = _clamp_unit(
+                adjusted["act"] + (signals.latent_pressure * (0.1 + (0.15 * signals.goal_relevance)))
+            )
+            adjusted["record"] = _clamp_unit(
+                adjusted["record"] + (signals.latent_pressure * (0.12 * (1.0 - signals.goal_relevance)))
+            )
+            reasons.append("latent_pressure influenced ask/act/record scoring")
+
+        if signals.belief_confidence > 0.0 and signals.belief_confidence < LOW_BELIEF_CONFIDENCE_THRESHOLD:
+            adjusted["act"] = _clamp_unit(adjusted["act"] - 0.35)
+            adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.2)
+            reasons.append("low belief confidence suppressed ACT and boosted ASK")
+        if signals.belief_contradiction:
+            adjusted["act"] = _clamp_unit(adjusted["act"] - CONTRADICTION_ACT_PENALTY)
+            adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.25)
+            reasons.append("belief contradiction biased decision toward ASK")
+        if signals.context_overloaded:
+            adjusted["act"] = _clamp_unit(
+                adjusted["act"] - (0.25 * (1.0 - (signals.pressure * signals.goal_relevance)))
+            )
+            adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.15)
+            adjusted["record"] = _clamp_unit(adjusted["record"] + 0.1)
+            reasons.append("context_overload biased away from ACT")
+        return {key: round(value, 3) for key, value in adjusted.items()}
+
+    @staticmethod
+    def _select_highest_scored_decision(decision_scores: dict[str, float]) -> DecisionAction:
+        ordering = {
+            "wait": DecisionAction.WAIT,
+            "record": DecisionAction.RECORD,
+            "ask": DecisionAction.ASK,
+            "act": DecisionAction.ACT,
+        }
+        selected_key = max(
+            ordering,
+            key=lambda key: (decision_scores.get(key, 0.0), DECISION_PRIORITY[ordering[key]]),
+        )
+        return ordering[selected_key]
+
+    @staticmethod
+    def _apply_policy_downgrade(
+        selected_decision: DecisionAction,
+        decision_scores: dict[str, float],
+        signals: _BehaviorSignals,
+    ) -> tuple[DecisionAction, list[str]]:
+        reasons: list[str] = []
+        if selected_decision != DecisionAction.ACT or not signals.policy_blocks_act:
+            return selected_decision, reasons
+        reasons.append(f"policy_result:{signals.policy_result}")
+        if signals.policy_requires_approval:
+            reasons.append("policy_downgrade:act_to_ask_requires_approval")
+            return DecisionAction.ASK, reasons
+        if decision_scores.get("ask", 0.0) >= decision_scores.get("record", 0.0):
+            reasons.append("policy_downgrade:act_to_ask_clarification_path")
+            return DecisionAction.ASK, reasons
+        if signals.meaningful_content:
+            reasons.append("policy_downgrade:act_to_record_useful_not_actionable")
+            return DecisionAction.RECORD, reasons
+        reasons.append("policy_downgrade:act_to_wait_no_safe_path")
+        return DecisionAction.WAIT, reasons
+
+    @staticmethod
+    def _interrupt_recommendation(signals: _BehaviorSignals) -> tuple[bool, str | None]:
+        if signals.pressure >= 0.85:
+            return True, "pressure_spike"
+        if signals.goal_relevance >= 0.85 and signals.pressure >= 0.6:
+            return True, "high_goal_relevance_under_pressure"
+        if signals.latent_pressure >= 0.75:
+            return True, "latent_pressure_high"
+        return False, None
+
+    @staticmethod
+    def _build_decision_trace(
+        *,
+        event: Event,
+        signals: _BehaviorSignals,
+        raw_candidate_scores: dict[str, float],
+        adjusted_candidate_scores: dict[str, float],
+        selected_decision: DecisionAction,
+        confidence: float,
+        reasons: list[str],
+        interrupt_recommended: bool,
+        interrupt_reason: str | None,
+    ) -> dict[str, Any]:
+        event_summary = " ".join(event.content.split())[:120]
+        return {
+            "event": {
+                "id": event.event_id,
+                "type": event.event_type.value,
+                "content_summary": event_summary,
+            },
+            "pressure_score": signals.pressure,
+            "latent_pressure": signals.latent_pressure,
+            "memory_relevance_score": signals.relevant_memory_strength,
+            "goal_relevance_score": signals.goal_relevance,
+            "world_model_belief_confidence": signals.belief_confidence,
+            "contradiction_flag": signals.belief_contradiction,
+            "policy_result": signals.policy_result,
+            "context_load_ratio": signals.context_load_ratio,
+            "raw_candidate_scores": raw_candidate_scores,
+            "adjusted_candidate_scores": adjusted_candidate_scores,
+            "final_decision": selected_decision.value,
+            "confidence": confidence,
+            "reasons": list(reasons),
+            "interrupt_recommended": interrupt_recommended,
+            "interrupt_reason": interrupt_reason,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
 
     @staticmethod
     def _apply_pressure_biases(

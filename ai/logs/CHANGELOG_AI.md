@@ -9,6 +9,13 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-05 (behavior v2)
+
+- Upgraded `fullerene/facets/behavior.py` to Behavior v2 with deterministic candidate-score post-adjustments for policy constraints, world-model belief confidence/contradiction guardrails, context-load biasing, latent-pressure contribution, interrupt recommendation metadata, and structured `decision_trace` + `learning_event` emission while preserving existing decision enums/interfaces.
+- Added neutral adapter extraction in Behavior for `policy`, `world_model`, `context_load`, and `latent_pressure` signals so v2 remains deterministic when upstream facets are missing or still v0.
+- Updated `fullerene/facets/context.py` and `fullerene/context/assembler.py` to emit explicit deterministic context-load metadata (`item_count`, `max_items`, `load_ratio`, `overloaded`) for Behavior v2 consumption.
+- Expanded `tests/test_behavior.py` with Behavior v2 coverage for policy downgrade, low-belief ACT suppression, contradiction ASK bias, context-overload confidence bias, latent-pressure interrupt signaling, decision-trace required fields, neutral-adapter compatibility, and high-pressure/high-goal ACT behavior.
+
 ### 2026-05-05 (behavior signal policy)
 
 - Updated `fullerene/facets/behavior.py` so Behavior now extracts query intent, ambiguity, pressure, memory role/domain/relevance, goal priority/relevance, and attention/context signals before choosing `WAIT` / `RECORD` / `ASK` / `ACT`; metadata now includes `confidence_components`, `ambiguity_score`, memory/goal signal strengths, and inspectable decision reasons.

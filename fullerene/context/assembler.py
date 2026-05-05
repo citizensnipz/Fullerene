@@ -263,6 +263,18 @@ class DynamicContextAssembler:
             "included_memory_roles": included_memory_roles,
             "included_memory_domains": included_memory_domains,
             "memory_score_breakdowns": memory_score_breakdowns,
+            "context_load": {
+                "item_count": len(items),
+                "max_items": self.config.max_items,
+                "load_ratio": round(
+                    len(items) / max(float(self.config.max_items), 1.0),
+                    3,
+                ),
+                "overloaded": (
+                    len(items) / max(float(self.config.max_items), 1.0)
+                )
+                >= 0.85,
+            },
         }
         return ContextWindow(
             items=items,
