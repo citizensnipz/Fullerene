@@ -22,8 +22,10 @@ from fullerene.nexus.interrupts import (
     extract_interrupt_candidates,
     update_cooldown_entry,
 )
+from fullerene.expression import ExpressionBudgetState, evaluate_expression_gate
 from fullerene.signals.latent_pressure import update_latent_pressure
 from fullerene.state.store import InMemoryStateStore, StateStore
+from fullerene.verifier.artifacts import validate_expression_gate_v0
 
 # Higher score wins when multiple facets explicitly propose a decision.
 # ACT > ASK > RECORD > WAIT.
@@ -418,6 +420,57 @@ class Nexus:
             top = max(cand_objs, key=lambda c: c.priority)
             signal_map.interrupt_reason = signal_map.interrupt_reason or top.reason
 
+        expression_recommendation: dict[str, Any] | None = None
+        expression_budget_state: dict[str, Any] | None = None
+        expression_budget_summary: dict[str, Any] | None = None
+        expression_score_components: dict[str, Any] | None = None
+        prior_eg_raw = nb.get("expression_gate")
+        prior_budget = ExpressionBudgetState.from_dict(
+            prior_eg_raw.get("budget_state") if isinstance(prior_eg_raw, dict) else None,
+        )
+        cycle_seq_expr = int(getattr(working_state, "event_count", 0) or 0) + 1
+        reco, expr_budget = evaluate_expression_gate(
+            event=event,
+            decision=decision,
+            facet_results=list(facet_results),
+            signal_map=signal_map.to_dict(),
+            latent_pressure_total=float(lpb_result.latent_pressure_total),
+            lpb_ignition_recommended=bool(lpb_result.ignition_recommended),
+            interrupt_candidates=list(interrupt_candidates_out),
+            allowed_interrupt_candidate=allowed_interrupt_candidate,
+            suppression_decisions=list(suppression_decisions_out),
+            budget=prior_budget,
+            cycle_wall_time=event.timestamp,
+            cycle_seq=cycle_seq_expr,
+        )
+        expression_recommendation = reco.to_dict()
+        expression_budget_state = expr_budget.to_dict()
+        expression_budget_summary = expr_budget.compact_summary()
+        meta_expr = reco.metadata if isinstance(reco.metadata, dict) else {}
+        expression_score_components = meta_expr.get("score_components")
+        eg_store: dict[str, Any] = {
+            "last_recommendation": expression_recommendation,
+            "budget_state": expression_budget_state,
+            "expression_history": list(expr_budget.history),
+        }
+        nb["expression_gate"] = eg_store
+
+        gate_rows = validate_expression_gate_v0(expression_recommendation)
+        for fr in reversed(facet_results):
+            if fr.facet_name != "verifier" or not isinstance(fr.metadata, dict):
+                continue
+            merged_checks = list(fr.metadata.get("artifact_checks") or [])
+            merged_checks.extend(gate_rows)
+            fr.metadata["artifact_checks"] = merged_checks
+            sm = fr.metadata.get("summary_metadata")
+            if isinstance(sm, dict):
+                sm2 = dict(sm)
+                sm_ac = list(sm2.get("artifact_checks") or [])
+                sm_ac.extend(gate_rows)
+                sm2["artifact_checks"] = sm_ac
+                fr.metadata["summary_metadata"] = sm2
+            break
+
         system_pressure = signal_map.system_pressure
         pressure_components = dict(signal_map.pressure_components)
         working_state.system_pressure = system_pressure
@@ -454,19 +507,51 @@ class Nexus:
             "interrupt_queue_size": int(nb.get("interrupt_queue_size") or 0),
             "interrupt_processed": interrupt_processed_blob,
             "suppression_summary": suppress_summary_text,
+            "expression_recommendation": expression_recommendation,
+            "expression_score": (
+                expression_recommendation.get("expression_score")
+                if expression_recommendation
+                else None
+            ),
+            "expression_mode": (
+                expression_recommendation.get("mode")
+                if expression_recommendation
+                else None
+            ),
+            "expression_suppressed": (
+                expression_recommendation.get("suppressed")
+                if expression_recommendation
+                else None
+            ),
+            "expression_suppression_reason": (
+                expression_recommendation.get("suppression_reason")
+                if expression_recommendation
+                else None
+            ),
+            "expression_budget_summary": expression_budget_summary,
+            "expression_score_components": expression_score_components,
+        }
+        nexus_state_updates = {
+            "last_cycle_signal_map": signal_map.to_dict(),
+            "last_cycle_trace": cycle_trace,
+            "last_latent_pressure_result": lpb_result.to_dict(),
+            "last_system_pressure": round(system_pressure, 3),
+            "last_pressure_components": dict(pressure_components),
+            "last_learning_events": list(cycle_learning_events),
+            "last_internal_events_queued": list(internal_events_queued),
+            "last_internal_events_processed": [],
+            "interrupt_cooldowns": dict(cooldown_store),
+            "interrupt_queue_size": int(nb.get("interrupt_queue_size") or 0),
+            "last_expression_recommendation": expression_recommendation,
+            "expression_budget_state": expression_budget_state,
+            "expression_history": (
+                eg_store.get("expression_history") if expression_recommendation else None
+            ),
         }
         self.state.facet_state.setdefault("nexus", {}).update(
             {
-                "last_cycle_signal_map": signal_map.to_dict(),
-                "last_cycle_trace": cycle_trace,
-                "last_latent_pressure_result": lpb_result.to_dict(),
-                "last_system_pressure": round(system_pressure, 3),
-                "last_pressure_components": dict(pressure_components),
-                "last_learning_events": list(cycle_learning_events),
-                "last_internal_events_queued": list(internal_events_queued),
-                "last_internal_events_processed": [],
-                "interrupt_cooldowns": dict(cooldown_store),
-                "interrupt_queue_size": int(nb.get("interrupt_queue_size") or 0),
+                **nexus_state_updates,
+                "expression_gate": eg_store,
             }
         )
 
@@ -497,6 +582,29 @@ class Nexus:
                 "interrupt_queue_size": int(nb.get("interrupt_queue_size") or 0),
                 "interrupt_processed": interrupt_processed_blob,
                 "suppression_summary": suppress_summary_text,
+                "expression_recommendation": expression_recommendation,
+                "expression_score": (
+                    expression_recommendation.get("expression_score")
+                    if expression_recommendation
+                    else None
+                ),
+                "expression_mode": (
+                    expression_recommendation.get("mode")
+                    if expression_recommendation
+                    else None
+                ),
+                "expression_suppressed": (
+                    expression_recommendation.get("suppressed")
+                    if expression_recommendation
+                    else None
+                ),
+                "expression_suppression_reason": (
+                    expression_recommendation.get("suppression_reason")
+                    if expression_recommendation
+                    else None
+                ),
+                "expression_budget_summary": expression_budget_summary,
+                "expression_score_components": expression_score_components,
             },
         )
         if not collect_internal_events and internal_events:

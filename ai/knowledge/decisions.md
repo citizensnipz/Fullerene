@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-05-06 - Expression Gate v0 (recommend outbound expression only)
+
+- **Status:** accepted
+- **Context:** Nexus v2 can queue bounded internal interrupts and LPB can signal ignition without user-facing autonomy. The product needs a deterministic boundary between internal pressure and actionable outward messaging without turning Nexus into always-on orchestration or a prose generator.
+- **Decision:** Implement **Expression Gate v0** under `fullerene/expression/` (not under `facets/`): deterministic scoring from signal map / LPB / interrupts / Behavior / Verifier / Policy / Context overload / Attention / Learning / event metadata; modes `silent` → `log_only` → `status_only` → `short_utterance` → `ask_user` with conservative defaults; persists `ExpressionBudgetState` (+ bounded history) in `facet_state["nexus"]["expression_gate"]`; merges `expression_*` facets into each cycle record + cycle trace metadata; Nexus appends Verifier **`validate_expression_gate_v0`** rows to the verifier facet’s `artifact_checks` post hoc. No LLM, no network threads, no final natural language, no tool execution from the gate.
+- **Consequences:** User-facing autonomy remains off by default unless a downstream layer consumes recommendation metadata. Manual tick runners / watch TUIs remain future hooks; Nexus v2 `allowed_user_expression` stays permanently false because interrupt suppression is orthogonal to Gate recommendations.
+
 ## 2026-05-06 - Nexus v2 bounded interrupt arbitration and suppression (single-cycle)
 
 - **Status:** accepted

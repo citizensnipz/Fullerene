@@ -174,6 +174,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--expression-gate",
+        action="store_true",
+        help=(
+            "Append compact Expression Gate v0 recommendation line to concise CLI "
+            "output (--json/--debug already include full NexusRecord metadata)."
+        ),
+    )
+    parser.add_argument(
         "--memory",
         action="store_true",
         help="Enable the SQLite-backed MemoryFacet for this run.",
@@ -609,6 +617,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 record,
                 model_adapter=model_adapter,
                 debug=args.debug,
+                expression_gate=args.expression_gate,
             )
         )
     return 0
@@ -624,6 +633,7 @@ def format_record_output(
     *,
     model_adapter: ModelAdapter | None = None,
     debug: bool = False,
+    expression_gate: bool = False,
 ) -> str:
     """Return deterministic, concise CLI output for a processed record."""
     decision = record.decision
@@ -641,6 +651,20 @@ def format_record_output(
     if output.get("recorded") is not None:
         lines.append(f"recorded: {str(output['recorded']).lower()}")
     lines.append(f"reason: {decision.reason}")
+    if expression_gate:
+        er = (
+            record.metadata.get("expression_recommendation")
+            if isinstance(record.metadata, dict)
+            else None
+        )
+        if isinstance(er, dict):
+            lines.append(
+                "expression: "
+                f"mode={er.get('mode')} "
+                f"score={round(float(er.get('expression_score') or 0), 4)} "
+                f"suppressed={str(bool(er.get('suppressed'))).lower()} "
+                f"intent={er.get('suggested_intent')}"
+            )
     return "\n".join(lines)
 
 

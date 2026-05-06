@@ -17,9 +17,10 @@ python -m fullerene --memory --content "hello memory"
 python -m fullerene --memory --behavior --content "don't ever skip my boss emails"
 python -m fullerene --behavior --content "what should I do next?"
 python -m fullerene --full --latent-pressure --json --content "what should I do next?"
+python -m fullerene --expression-gate --verify --json --content "inspect expression recommendation"
 ```
 
-`--json` / `--debug` emit the full `NexusRecord`, including Nexus v2 `interrupt_candidates`, `suppression_decisions`, and related `cycle_trace` fields when present.
+`--json` / `--debug` emit the full `NexusRecord`, including Nexus v2 `interrupt_candidates`, `suppression_decisions`, Expression Gate recommendation fields (`expression_recommendation`, `expression_score`, `expression_mode`, etc.), and related `cycle_trace` fields when present.
 
 ## Tests
 

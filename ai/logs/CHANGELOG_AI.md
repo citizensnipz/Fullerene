@@ -9,6 +9,13 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-06 (Expression Gate v0)
+
+- Added `fullerene/expression/` (`models.py`, `scoring.py`, `gate.py`, `__init__.py`): deterministic outbound-expression recommendations only (`ExpressionMode`, `ExpressionRecommendation`, `ExpressionBudgetState`); consumes Nexus/LPB/interrupt/policy/verifier/behavior/context/attention/learning signals; merges Verifier **`validate_expression_gate_v0`** rows after evaluation; persists under `facet_state["nexus"]["expression_gate"]` + `NexusRecord` / `cycle_trace` expression metadata (`expression_recommendation`, `expression_score`, `expression_mode`, suppressed flags, compact budget summaries, inspectable score components).
+- Wired `fullerene/nexus/runtime.py` (post-verifier/interrupt signal map + LPB) and **`fullerene/verifier/artifacts.py`** for schema checks (`expression_gate_v0` artifact kind); CLI `--expression-gate` emits one concise line (JSON/debug unchanged contract except additional keys).
+- Added `tests/test_expression_gate.py`; full suite stays green (`python -m unittest discover -s tests -p "test_*.py"`).
+- Harness: `architecture.md`, `glossary.md`, `decisions.md`, `commands.md`, `SESSION_LOG`.
+
 ### 2026-05-06 (Nexus v2 bounded interrupts + suppression)
 
 - Added `fullerene/nexus/interrupts.py` with deterministic `InterruptCandidate` / `SuppressionDecision`, candidate extraction across Behavior/LPB/Verifier/Policy/Learning/Planner/Attention/Nexus signals, Nexus v2 priority scoring with inspectable components, suppression (cooldown, duplicate, low-priority, context overload for non-critical candidates, denied-ACT-path policy suppression, bounded queue=5, max one internal winner, `allowed_user_expression` permanently false).

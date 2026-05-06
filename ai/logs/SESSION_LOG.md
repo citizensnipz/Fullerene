@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-05-06 - Expression Gate v0 (recommendation-only)
+
+- **Context:** Separate internal interruption (Nexus v2 + LPB) from possible outward expression without prose generation or LLMs.
+- **Done:** Implemented `fullerene/expression/`, Nexus runtime hooks + persisted `facet_state["nexus"]["expression_gate"]`, Verifier **`validate_expression_gate_v0`** rows, CLI `--expression-gate`, harness updates, `tests/test_expression_gate.py`.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -q`; `python -m fullerene --event-type user_message --content "hello nexus" --state-dir state/.fullerene-state`; `python -m fullerene --expression-gate --verify --content "gate line"`.
+- **Next:** Optional consumer layer for recommendations; manual tick/watch UIs consume metadata only — no autonomous loop landed.
+- **Blockers:** None.
+
 ### 2026-05-06 - Nexus v2 bounded interrupts + suppression
 
 - **Context:** Need a unified deterministic gate for Behavior/LPB/Verifier/Policy/Learning/Planner/Attention interrupt-like signals without widening always-on or autonomous speech scope.

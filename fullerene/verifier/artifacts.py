@@ -1226,6 +1226,193 @@ def validate_context_load_metadata(
     return out
 
 
+ExpressionGateForbiddenPayloadKeys = frozenset(
+    {
+        "text",
+        "message",
+        "utterance",
+        "speech",
+        "prose",
+        "natural_language",
+        "nlp",
+        "response_text",
+        "final_text",
+    }
+)
+_EXPRESSION_GATE_VALID_MODES = frozenset(
+    {
+        "silent",
+        "log_only",
+        "status_only",
+        "short_utterance",
+        "ask_user",
+    },
+)
+
+
+def validate_expression_gate_v0(
+    recommendation: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Structural checks for Nexus Expression Gate recommendations (support infrastructure)."""
+    out: list[dict[str, Any]] = []
+    kind = "expression_gate_v0"
+    if recommendation is None or not isinstance(recommendation, Mapping):
+        out.append(
+            artifact_result(
+                validator="expression_gate_schema",
+                artifact_kind=kind,
+                status="failed",
+                severity="error",
+                code="missing_recommendation",
+                path="nexus.expression_gate.last_recommendation",
+                message="Expression recommendation mapping is required when present.",
+            )
+        )
+        return out
+
+    mode = str(recommendation.get("mode") or "").strip().lower()
+    if mode not in _EXPRESSION_GATE_VALID_MODES:
+        out.append(
+            artifact_result(
+                validator="expression_gate_schema",
+                artifact_kind=kind,
+                status="failed",
+                severity="error",
+                code="invalid_mode",
+                path="expression.mode",
+                message=f"Expression mode '{mode}' is not a valid ExpressionMode.",
+            )
+        )
+
+    raw_score = recommendation.get("expression_score")
+    if isinstance(raw_score, bool) or not _is_unit_number(raw_score):
+        out.append(
+            artifact_result(
+                validator="expression_gate_schema",
+                artifact_kind=kind,
+                status="failed",
+                severity="error",
+                code="expression_score_oob",
+                path="expression.expression_score",
+                message="expression_score must be numeric in [0,1].",
+            )
+        )
+
+    max_words_raw = recommendation.get("max_words", 0)
+    try:
+        max_words_val = int(max_words_raw)
+    except (TypeError, ValueError):
+        max_words_val = -1
+    if max_words_val < 0 or max_words_val > 4096:
+        out.append(
+            artifact_result(
+                validator="expression_gate_schema",
+                artifact_kind=kind,
+                status="failed",
+                severity="error",
+                code="max_words_oob",
+                path="expression.max_words",
+                message="max_words must be bounded and non-negative.",
+            )
+        )
+
+    suppressed = recommendation.get("suppressed") is True
+    allowed_uf = recommendation.get("allowed_user_facing") is True
+    if suppressed and allowed_uf:
+        out.append(
+            artifact_result(
+                validator="expression_gate_schema",
+                artifact_kind=kind,
+                status="failed",
+                severity="critical",
+                code="suppressed_user_facing_conflict",
+                path="expression.allowed_user_facing",
+                message="User-facing expression must not be allowed when suppressed is true.",
+                escalation_recommended=True,
+            )
+        )
+
+    payload = recommendation.get("payload")
+    if not isinstance(payload, Mapping):
+        out.append(
+            artifact_result(
+                validator="expression_gate_schema",
+                artifact_kind=kind,
+                status="warning",
+                severity="warning",
+                code="payload_not_mapping",
+                path="expression.payload",
+                message="payload should be an object.",
+            )
+        )
+    elif isinstance(payload, Mapping):
+        pl_keys = {str(k).strip().lower() for k in payload.keys()}
+        blocked = ExpressionGateForbiddenPayloadKeys & pl_keys
+        if blocked:
+            out.append(
+                artifact_result(
+                    validator="expression_gate_schema",
+                    artifact_kind=kind,
+                    status="failed",
+                    severity="error",
+                    code="candidate_prose_keys",
+                    path="expression.payload",
+                    message=f"Expression payload forbids prose-like keys: {sorted(blocked)}",
+                )
+            )
+
+    sint = str(recommendation.get("suggested_intent") or "").strip().lower()
+    userish_modes = {"short_utterance", "ask_user"}
+    if (
+        mode in userish_modes
+        and sint in {"", "none"}
+        and not suppressed
+        and recommendation.get("max_words", 0) > 0
+    ):
+        out.append(
+            artifact_result(
+                validator="expression_gate_schema",
+                artifact_kind=kind,
+                status="failed",
+                severity="warning",
+                code="userish_mode_requires_intent",
+                path="expression.suggested_intent",
+                message="short_utterance / ask_user should declare a suggested_intent.",
+                retry_recommended=True,
+            )
+        )
+
+    if not is_json_serializable(recommendation):
+        out.append(
+            artifact_result(
+                validator="expression_gate_schema",
+                artifact_kind=kind,
+                status="failed",
+                severity="error",
+                code="not_json_serializable",
+                path="expression",
+                message="Expression recommendation must be JSON-serializable.",
+            )
+        )
+
+    if not any(
+        isinstance(it, Mapping) and str(it.get("status") or "").lower() == "failed"
+        for it in out
+    ):
+        out.append(
+            artifact_result(
+                validator="expression_gate_schema",
+                artifact_kind=kind,
+                status="passed",
+                severity="info",
+                code="ok",
+                path="expression_gate",
+                message="Expression Gate v0 recommendation shape checked.",
+            )
+        )
+    return out
+
+
 def validate_nexus_interrupt_v2_audit(
     prior_cycle_trace: Mapping[str, Any] | None,
 ) -> list[dict[str, Any]]:
