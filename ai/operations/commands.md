@@ -81,6 +81,7 @@ python -m fullerene --full --interactive --interactive-max-ticks 50
 python -m fullerene --full --interactive --interactive-show-ticks
 python -m fullerene --full --interactive --interactive-status-every 5
 python -m fullerene --full --interactive --session-id demo-session --working-memory-context-turns 8 --working-memory-turns 20
+python -m fullerene --full --interactive --interactive-allow-model --model ollama:gemma3:4b --context-strategy pressure_relevance_v2
 python -m fullerene --full --interactive --interactive-allow-model --model ollama:gemma3:4b
 cmd /c "echo quit| python -m fullerene --full --interactive --interactive-max-ticks 20 --interactive-interval 0.5 --interactive-no-clear"
 ```
@@ -96,6 +97,8 @@ cmd /c "echo quit| python -m fullerene --full --interactive --interactive-max-ti
 - `--session-id` sets the interactive working-memory session id (auto-generated when omitted).
 - `--working-memory-context-turns N` controls how many recent dialogue turns Context includes.
 - `--working-memory-turns N` controls per-session working-memory retention after pruning.
+- `--context-strategy pressure_relevance_v2` enables Context v2 pressure/relevance filtering.
+- `--context-max-items N`, `--context-min-relevance FLOAT`, and `--context-min-pressure FLOAT` tune Context v2 bounded selection and cutoffs.
 - `--interactive-clear` enables experimental clear-screen behavior; transcript mode remains default.
 - `--json` is not supported with `--interactive` in v0.
 

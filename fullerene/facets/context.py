@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fullerene.context import (
     DYNAMIC_ACTIVE_FACETS_V1,
+    PRESSURE_RELEVANCE_V2,
     STATIC_RECENT_EPISODIC_V0,
     ContextAssemblyConfig,
     ContextWindow,
@@ -21,6 +22,8 @@ from fullerene.world_model import WorldModelStore
 CONTEXT_STRATEGIES = {
     "dynamic": DYNAMIC_ACTIVE_FACETS_V1,
     DYNAMIC_ACTIVE_FACETS_V1: DYNAMIC_ACTIVE_FACETS_V1,
+    "pressure_relevance_v2": PRESSURE_RELEVANCE_V2,
+    PRESSURE_RELEVANCE_V2: PRESSURE_RELEVANCE_V2,
     "static": STATIC_RECENT_EPISODIC_V0,
     STATIC_RECENT_EPISODIC_V0: STATIC_RECENT_EPISODIC_V0,
 }

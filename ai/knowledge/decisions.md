@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-05-06 - Context v2 uses pressure/relevance deterministic assembly (no Memory v3 scope)
+
+- **Status:** accepted
+- **Context:** Context v1/v1.5 provided dynamic bounded packets plus working-memory inclusion, but selection still leaned on broad bounded slices. We needed more deterministic relevance/pressure-based selection while preserving immediate dialogue continuity and avoiding Memory v3/graph/LLM scope.
+- **Decision:** Add `pressure_relevance_v2` as a third context strategy in existing Context/Memory wiring (no new facet). Context v2 protects current event + bounded same-session working-memory turns, scores remaining candidates with deterministic weighted components (`relevance`, `pressure`, `salience`, `recency`, `confidence`, `priority`), applies bounded budget selection and cutoffs, integrates compact LPB and attention signals, keeps long-term retrieval on Memory v2 hybrid retrieval, and emits richer inclusion/exclusion/stale trace metadata. CLI adds explicit context strategy/budget/cutoff flags.
+- **Consequences:** Context packets become more inspectable and decision-oriented without changing Memory authority boundaries or introducing graph/community/summarization behavior. `dynamic_active_facets_v1` remains the conservative default; operators opt into v2 strategy explicitly.
+
 ## 2026-05-06 - Memory v2.5 working memory remains inside Memory/Context
 
 - **Status:** accepted

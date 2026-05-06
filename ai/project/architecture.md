@@ -203,12 +203,12 @@ score = (
 - **Script** = Goals
 - **Improvisation** = bottom-up salience and novelty
 
-## Context v1 (current)
+## Context v1/v2 (current)
 
 - **Deterministic working packet** - `ContextFacet` now assembles a bounded inspectable `ContextWindow` from active runtime state at the start of the Nexus cycle, rather than exposing only a static recent-memory slice.
 - **Current sources** - the current event is always included directly, followed by an optional attention-broadcast context item, bounded active goals, relevant memories, recent episodic memories, active beliefs, a compact policy summary, and optional compact planner / executor / attention / affect / learning summaries when those signals are available.
 - **Deterministic scoping** - bounds come from `ContextAssemblyConfig` (`max_goals`, `max_memories`, `max_beliefs`, `salience_threshold`, `include_policy_summary`, `include_signal_summaries`). Context v1 deduplicates repeated memories, deduplicates active goals by deterministic normalized description before exposure, preserves `source_id`, and does not load whole stores without limits.
-- **Strategy support** - `ContextFacet` supports both `static_recent_episodic_v0` and `dynamic_active_facets_v1`; the dynamic strategy is the default when context is enabled through the current CLI/runtime wiring.
+- **Strategy support** - `ContextFacet` supports `static_recent_episodic_v0`, `dynamic_active_facets_v1`, and `pressure_relevance_v2`; the dynamic strategy remains the conservative default when context is enabled through current CLI/runtime wiring.
 - **Goal hygiene** - goal-intent creation now normalizes descriptions (case, punctuation, spacing, and common intent prefixes) and merges exact normalized duplicates into an existing active goal instead of creating a second row. Context also shields reused state directories by deduplicating already-persisted active goals before prompt grounding.
 - **Prompt grounding** - the CLI model prompt builder now renders a concise "Current working context" section from the assembled window so active goals, memories, beliefs, policy constraints, and the current event are visible to later response generation without dumping raw JSON.
 - **Read-only role** - Context v1 still does not plan, summarize with an LLM, mutate stores, use embeddings, use RAG, perform graph traversal, or compress context. It is a deterministic assembly layer only.
@@ -219,11 +219,20 @@ score = (
 - **Session isolation** - only turns for the current session id are included.
 - **Inspectable metadata** - context metadata now surfaces `working_memory_session_id`, `working_memory_turn_count`, and `included_working_memory_turns`.
 
+## Context v2 (pressure/relevance-filtered deterministic assembly)
+
+- **Deterministic selection and bounded budget** - Context v2 adds deterministic candidate scoring (`relevance`, `pressure`, `salience`, `recency`, `confidence`, `priority`) plus bounded budget selection with protected inclusions. It is not LLM summarization, not graph traversal, and not a Nexus rewrite.
+- **Protected continuity first** - current event and same-session recent working-memory turns are protected inclusions before scored candidates so immediate conversational continuity is preserved.
+- **LPB/attention aware** - Context v2 can pull compact high-pressure unresolved LPB entries and the current attention broadcast/winner into context when relevant, without dumping raw subsystem state.
+- **Hybrid long-term memory only** - long-term memory candidates use Memory v2 hybrid retrieval with score breakdowns; working-layer rows remain excluded from long-term retrieval paths.
+- **Traceability and decay metadata** - Context v2 surfaces included/excluded item IDs, score breakdowns, budget usage, stale/evicted counts, and compact exclusion reasons for inspectability.
+- **Out of scope (still)** - not Memory v3, not Leiden/community clustering, not retrieval-time graph traversal, not automatic memory promotion, not a new facet.
+
 ## Context roadmap
 
 - **v0** - static working memory window from recent episodic records only. **Implemented for explicit compatibility.**
 - **v1** - dynamically assembled bounded working packet from current event, active goals, recent/relevant memories, active beliefs, policy summary, and compact signal summaries under deterministic scoping rules. **Current.**
-- **v2** - richer relevance-filtered and pressure-aware deterministic assembly beyond simple bounded ranking, still without LLM summarization. **Future.**
+- **v2** - pressure/relevance-filtered deterministic assembly with protected working-memory continuity and LPB/attention-aware inclusion. **Current.**
 - **v3** - self-editing context, semantic consolidation, predictive loading, and pressure signaling when the context window overloads. **Future.**
 
 ## Behavior v0 (current)

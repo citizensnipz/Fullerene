@@ -396,9 +396,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--context-strategy",
-        choices=("static", "dynamic"),
+        choices=("static", "dynamic", "pressure_relevance_v2"),
         default="dynamic",
         help="Context strategy used when --context is enabled.",
+    )
+    parser.add_argument(
+        "--context-max-items",
+        type=int,
+        default=16,
+        help="Maximum total context items for pressure_relevance_v2.",
     )
     parser.add_argument(
         "--context-max-goals",
@@ -429,6 +435,18 @@ def build_parser() -> argparse.ArgumentParser:
             "Minimum salience required for memories included by dynamic context "
             "assembly."
         ),
+    )
+    parser.add_argument(
+        "--context-min-relevance",
+        type=float,
+        default=0.15,
+        help="Minimum relevance/final score for pressure_relevance_v2 inclusion.",
+    )
+    parser.add_argument(
+        "--context-min-pressure",
+        type=float,
+        default=0.20,
+        help="Minimum pressure score for LPB pressure-based inclusion.",
     )
     parser.add_argument(
         "--affect",
@@ -701,10 +719,23 @@ def _cli_build_nexus_runtime(
         )
         context_config = ContextAssemblyConfig(
             max_goals=args.context_max_goals,
+            max_items_total=max(1, int(args.context_max_items)),
+            max_long_term_memories=context_max_memories,
             max_memories=context_max_memories,
             max_beliefs=args.context_max_beliefs,
+            min_relevance_score=_clamp_unit(args.context_min_relevance),
+            min_pressure_score=_clamp_unit(args.context_min_pressure),
+            include_working_memory=True,
+            include_lpb=True,
+            include_attention=True,
+            include_policy=True,
+            include_world_model=True,
+            include_goals=True,
+            include_recent_signals=True,
             max_working_turns=max(0, int(args.working_memory_context_turns)),
+            max_working_memory_turns=max(0, int(args.working_memory_context_turns)),
             salience_threshold=_clamp_unit(args.context_salience_threshold),
+            strategy=args.context_strategy,
         )
         facets.append(
             ContextFacet(
@@ -925,6 +956,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--context-max-beliefs must be at least 0.")
     if args.context_max_memories is not None and args.context_max_memories < 0:
         parser.error("--context-max-memories must be at least 0.")
+    if args.context_max_items < 1:
+        parser.error("--context-max-items must be at least 1.")
     if args.context_window_size < 1:
         parser.error("--context-window-size must be at least 1.")
     if args.interactive_status_every < 0:
@@ -1312,17 +1345,18 @@ def _working_context_prompt_lines(record) -> list[str]:
         _prompt_line(record.event.content) if record.event.content.strip() else "none",
     )
     lines.append(f"- current event: {current_event}")
+    lines.append(f"- active unresolved signals: {_context_signal_summary(items) or 'none'}")
     lines.append(f"- attention broadcast: {_context_attention_summary(items) or 'none'}")
     lines.append(f"- active goals: {_context_goal_summary(items) or 'none'}")
+    lines.append(f"- active beliefs: {_context_belief_summary(items) or 'none'}")
     lines.append(
         f"- relevant memories: {_context_memory_summary(items, context_source='relevant') or 'none'}"
     )
     lines.append(
         f"- recent memories: {_context_memory_summary(items, context_source='recent') or 'none'}"
     )
-    lines.append(f"- active beliefs: {_context_belief_summary(items) or 'none'}")
     lines.append(f"- policy: {_context_policy_summary(items) or 'none'}")
-    lines.append(f"- signals: {_context_signal_summary(items) or 'none'}")
+    lines.append(f"- system status signals: {_context_signal_summary(items) or 'none'}")
     return lines
 
 

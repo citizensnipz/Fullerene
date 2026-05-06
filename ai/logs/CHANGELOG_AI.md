@@ -9,6 +9,15 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-06 (Context v2 pressure/relevance-filtered assembly)
+
+- Updated `fullerene/context/models.py`: added `PRESSURE_RELEVANCE_V2` strategy constant and expanded `ContextAssemblyConfig` with v2 budget/cutoff/source toggles while keeping backward-compatible v1 fields.
+- Updated `fullerene/context/assembler.py`: added `pressure_relevance_v2` assembly path with deterministic candidate scoring, protected current-event + working-memory inclusion, LPB/attention/goal/belief/memory/policy/signal candidate handling, bounded budget selection, and exclusion/staleness trace metadata.
+- Updated `fullerene/facets/context.py`: strategy resolver now supports `pressure_relevance_v2`.
+- Updated `fullerene/cli.py`: added `--context-strategy pressure_relevance_v2`, `--context-max-items`, `--context-min-relevance`, `--context-min-pressure`; prompt grounding now prioritizes active unresolved signals in working-context rendering.
+- Expanded tests: `tests/test_context.py` (Context v2 config/event/budget checks) and `tests/test_cli.py` (CLI v2 strategy flag coverage), while preserving existing Context v1 behavior/tests.
+- Updated harness docs: `ai/project/architecture.md`, `ai/knowledge/glossary.md`, `ai/knowledge/decisions.md`, `ai/operations/commands.md`, and session log.
+
 ### 2026-05-06 (Memory v2.5 working memory / conversation continuity)
 
 - Updated `fullerene/memory/models.py` + `fullerene/memory/store.py`: added `memory_layer` (`working`/`long_term`) with additive migration defaulting legacy rows to `long_term`; added bounded working-turn helpers (`add_working_turn`, `list_working_turns`, `prune_working_memory`); long-term retrieval/hybrid paths now exclude working-layer rows by default.

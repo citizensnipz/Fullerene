@@ -13,6 +13,7 @@ from uuid import uuid4
 from fullerene.cli import _build_model_prompt, main as cli_main
 from fullerene.context import (
     DYNAMIC_ACTIVE_FACETS_V1,
+    PRESSURE_RELEVANCE_V2,
     STATIC_RECENT_EPISODIC_V0,
     ContextAssemblyConfig,
     ContextItem,
@@ -41,7 +42,7 @@ from fullerene.policy import (
     SQLitePolicyStore,
 )
 from fullerene.state import FileStateStore
-from fullerene.world_model import Belief, BeliefSource, SQLiteWorldModelStore
+from fullerene.world_model import Belief, BeliefSource, BeliefStatus, SQLiteWorldModelStore
 from fullerene.workspace_state import workspace_state_root
 
 
@@ -150,6 +151,28 @@ class TrackingPolicyStore:
         return len([policy for policy in self.policies if policy.enabled])
 
 
+class HybridTrackingMemoryStore(TrackingMemoryStore):
+    def __init__(
+        self,
+        records: list[MemoryRecord] | None = None,
+        *,
+        hybrid_pairs: list[tuple[MemoryRecord, dict[str, float]]] | None = None,
+    ) -> None:
+        super().__init__(records=records or [])
+        self.hybrid_pairs = list(hybrid_pairs or [])
+        self.hybrid_calls: list[tuple[str, int, str | None]] = []
+
+    def hybrid_retrieve_relevant(
+        self,
+        event: Event,
+        *,
+        limit: int,
+        domain_hint: str | None = None,
+    ) -> list[tuple[MemoryRecord, dict[str, float]]]:
+        self.hybrid_calls.append((event.event_id, limit, domain_hint))
+        return self.hybrid_pairs[:limit]
+
+
 class ContextModelTests(unittest.TestCase):
     def test_context_assembly_config_defaults_are_correct(self) -> None:
         config = ContextAssemblyConfig()
@@ -162,6 +185,14 @@ class ContextModelTests(unittest.TestCase):
         self.assertTrue(config.include_signal_summaries)
         self.assertEqual(config.strategy, DYNAMIC_ACTIVE_FACETS_V1)
         self.assertEqual(config.max_items, 20)
+
+    def test_context_v2_defaults_and_clamping(self) -> None:
+        config = ContextAssemblyConfig(strategy=PRESSURE_RELEVANCE_V2, max_items_total=-1)
+        self.assertEqual(config.strategy, PRESSURE_RELEVANCE_V2)
+        self.assertEqual(config.max_items_total, 1)
+        self.assertEqual(config.max_items, 1)
+        self.assertEqual(config.min_relevance_score, 0.15)
+        self.assertEqual(config.min_pressure_score, 0.20)
 
     def test_context_item_round_trips_through_dict(self) -> None:
         created_at = utcnow() - timedelta(minutes=30)
@@ -673,6 +704,320 @@ class DynamicContextAssemblerTests(unittest.TestCase):
             ["Do you know your name?", "I don't have a name."],
         )
         self.assertEqual(window.metadata["working_memory_session_id"], "session-a")
+
+    def test_pressure_relevance_v2_always_includes_current_event(self) -> None:
+        assembler = DynamicContextAssembler(
+            config=ContextAssemblyConfig(
+                strategy=PRESSURE_RELEVANCE_V2,
+                max_items_total=2,
+                include_policy_summary=False,
+                include_signal_summaries=False,
+            )
+        )
+        window = assembler.assemble(
+            event=Event(event_type=EventType.USER_MESSAGE, content="event text"),
+            state=NexusState(),
+        )
+        self.assertEqual(window.strategy, PRESSURE_RELEVANCE_V2)
+        self.assertGreaterEqual(len(window.items), 1)
+        self.assertEqual(window.items[0].item_type, ContextItemType.EVENT)
+        self.assertEqual(window.metadata["context_strategy"], PRESSURE_RELEVANCE_V2)
+
+    def test_pressure_relevance_v2_reports_budget_evictions(self) -> None:
+        event = self.make_event("What should I do next about Fullerene?")
+        goal_store = TrackingGoalStore(
+            [
+                Goal(
+                    id=f"goal-{index}",
+                    description=f"goal {index}",
+                    priority=0.9 - (index * 0.1),
+                    status=GoalStatus.ACTIVE,
+                    source=GoalSource.USER,
+                )
+                for index in range(6)
+            ]
+        )
+        assembler = DynamicContextAssembler(
+            goal_store=goal_store,
+            config=ContextAssemblyConfig(
+                strategy=PRESSURE_RELEVANCE_V2,
+                max_items_total=2,
+                include_policy_summary=False,
+                include_signal_summaries=False,
+            ),
+        )
+        window = assembler.assemble(event=event, state=NexusState())
+        self.assertEqual(window.metadata["context_budget"], 2)
+        self.assertEqual(window.metadata["budget_used"], 2)
+        excluded = window.metadata["excluded_context_items"]
+        self.assertTrue(any(item.get("reason") == "budget_evicted" for item in excluded))
+
+    def test_pressure_relevance_v2_includes_high_intensity_lpb_entry(self) -> None:
+        assembler = DynamicContextAssembler(
+            config=ContextAssemblyConfig(strategy=PRESSURE_RELEVANCE_V2, include_policy_summary=False),
+        )
+        state = NexusState(
+            facet_state={
+                "signals": {
+                    "latent_pressure": {
+                        "last_result": {
+                            "top_entries": [
+                                {
+                                    "id": "lpb-1",
+                                    "entry_type": "verifier_failure",
+                                    "description": "Verification failed repeatedly",
+                                    "intensity": 0.91,
+                                    "retrigger_count": 2,
+                                    "status": "active",
+                                    "source": "verifier",
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        )
+        window = assembler.assemble(event=self.make_event(), state=state)
+        self.assertIn("lpb:lpb-1", window.metadata["included_lpb_entry_ids"])
+
+    def test_pressure_relevance_v2_excludes_low_pressure_lpb_entry(self) -> None:
+        assembler = DynamicContextAssembler(
+            config=ContextAssemblyConfig(strategy=PRESSURE_RELEVANCE_V2, include_policy_summary=False),
+        )
+        state = NexusState(
+            facet_state={
+                "signals": {
+                    "latent_pressure": {
+                        "last_result": {
+                            "top_entries": [
+                                {
+                                    "id": "lpb-low",
+                                    "entry_type": "unresolved_query",
+                                    "description": "Minor unresolved query",
+                                    "intensity": 0.05,
+                                    "retrigger_count": 0,
+                                    "status": "active",
+                                    "source": "nexus",
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        )
+        window = assembler.assemble(event=self.make_event(), state=state)
+        self.assertNotIn("lpb:lpb-low", window.metadata["included_lpb_entry_ids"])
+        self.assertTrue(
+            any(
+                row.get("id") == "lpb:lpb-low" and row.get("reason") == "low_pressure"
+                for row in window.metadata["excluded_context_items"]
+            )
+        )
+
+    def test_pressure_relevance_v2_lpb_pressure_bypasses_relevance_cutoff(self) -> None:
+        assembler = DynamicContextAssembler(
+            config=ContextAssemblyConfig(
+                strategy=PRESSURE_RELEVANCE_V2,
+                min_relevance_score=0.95,
+                min_pressure_score=0.20,
+                include_policy_summary=False,
+            ),
+        )
+        state = NexusState(
+            facet_state={
+                "signals": {
+                    "latent_pressure": {
+                        "last_result": {
+                            "top_entries": [
+                                {
+                                    "id": "lpb-bypass",
+                                    "entry_type": "policy_block",
+                                    "description": "Action blocked by policy",
+                                    "intensity": 0.85,
+                                    "retrigger_count": 1,
+                                    "status": "active",
+                                    "source": "policy",
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        )
+        window = assembler.assemble(event=self.make_event(), state=state)
+        self.assertIn("lpb:lpb-bypass", window.metadata["included_lpb_entry_ids"])
+
+    def test_pressure_relevance_v2_includes_attention_broadcast_without_duplication(self) -> None:
+        event = Event(event_type=EventType.USER_MESSAGE, content="What should I do next?")
+        broadcast = AttentionBroadcast(
+            id="attention-broadcast:goal-focus",
+            created_at=event.timestamp,
+            item_id="goal:goal-1",
+            source=AttentionSource.GOAL,
+            source_id="goal-1",
+            content="finish Fullerene",
+            score=0.6,
+            mode=AttentionMode.TOP_DOWN,
+            components={"goal_priority": 0.4},
+            recipients=["context"],
+            repeated_count=2,
+            pressure_contribution=0.2,
+        )
+        assembler = DynamicContextAssembler(
+            config=ContextAssemblyConfig(strategy=PRESSURE_RELEVANCE_V2, include_policy_summary=False)
+        )
+        window = assembler.assemble(
+            event=event,
+            state=NexusState(
+                facet_state={"attention": {"last_attention_broadcast": broadcast.to_dict()}}
+            ),
+        )
+        attention_ids = window.metadata["included_attention_ids"]
+        self.assertEqual(len(attention_ids), 1)
+        self.assertTrue(attention_ids[0].startswith("attention:attention-broadcast:goal-focus"))
+
+    def test_pressure_relevance_v2_memory_retrieval_excludes_working_layer_records(self) -> None:
+        working_record = MemoryRecord(
+            id="memory-working",
+            memory_type=MemoryType.WORKING,
+            content="working-layer turn should not appear as long-term memory",
+        )
+        episodic_record = MemoryRecord(
+            id="memory-episodic",
+            memory_type=MemoryType.EPISODIC,
+            content="episodic long-term candidate",
+            salience=0.8,
+        )
+        memory_store = HybridTrackingMemoryStore(
+            records=[episodic_record, working_record],
+            hybrid_pairs=[
+                (working_record, {"total": 0.99}),
+                (episodic_record, {"total": 0.75}),
+            ],
+        )
+        assembler = DynamicContextAssembler(
+            memory_store=memory_store,
+            config=ContextAssemblyConfig(strategy=PRESSURE_RELEVANCE_V2, include_policy_summary=False),
+        )
+        window = assembler.assemble(event=self.make_event(), state=NexusState())
+        self.assertIn("memory-episodic", window.metadata["included_memory_ids"])
+        self.assertNotIn("memory-working", window.metadata["included_memory_ids"])
+
+    def test_pressure_relevance_v2_includes_high_score_memory(self) -> None:
+        episodic_record = MemoryRecord(
+            id="memory-high",
+            memory_type=MemoryType.EPISODIC,
+            content="high-score relevant episodic memory",
+            salience=0.9,
+            confidence=0.9,
+        )
+        memory_store = HybridTrackingMemoryStore(
+            records=[episodic_record],
+            hybrid_pairs=[(episodic_record, {"total": 0.95})],
+        )
+        assembler = DynamicContextAssembler(
+            memory_store=memory_store,
+            config=ContextAssemblyConfig(
+                strategy=PRESSURE_RELEVANCE_V2,
+                min_relevance_score=0.20,
+                include_policy_summary=False,
+            ),
+        )
+        window = assembler.assemble(event=self.make_event(), state=NexusState())
+        self.assertIn("memory-high", window.metadata["included_memory_ids"])
+
+    def test_pressure_relevance_v2_excludes_low_score_memory_under_cutoff(self) -> None:
+        low_record = MemoryRecord(
+            id="memory-low",
+            memory_type=MemoryType.EPISODIC,
+            content="low-score memory",
+            salience=0.0,
+            confidence=0.0,
+        )
+        memory_store = HybridTrackingMemoryStore(
+            records=[low_record],
+            hybrid_pairs=[(low_record, {"total": 0.01})],
+        )
+        assembler = DynamicContextAssembler(
+            memory_store=memory_store,
+            config=ContextAssemblyConfig(
+                strategy=PRESSURE_RELEVANCE_V2,
+                min_relevance_score=0.40,
+                include_policy_summary=False,
+            ),
+        )
+        window = assembler.assemble(event=self.make_event(), state=NexusState())
+        self.assertNotIn("memory-low", window.metadata["included_memory_ids"])
+        self.assertTrue(
+            any(
+                row.get("id") == "memory-low"
+                and row.get("reason") == "below_relevance_cutoff"
+                for row in window.metadata["excluded_context_items"]
+            )
+        )
+
+    def test_pressure_relevance_v2_includes_active_high_priority_goal(self) -> None:
+        goal_store = TrackingGoalStore(
+            [
+                Goal(
+                    id="goal-high",
+                    description="Ship Context v2",
+                    priority=0.95,
+                    status=GoalStatus.ACTIVE,
+                    source=GoalSource.USER,
+                )
+            ]
+        )
+        assembler = DynamicContextAssembler(
+            goal_store=goal_store,
+            config=ContextAssemblyConfig(strategy=PRESSURE_RELEVANCE_V2, include_policy_summary=False),
+        )
+        window = assembler.assemble(event=self.make_event(), state=NexusState())
+        self.assertIn("goal-high", window.metadata["included_goal_ids"])
+
+    def test_pressure_relevance_v2_includes_relevant_contradicted_belief(self) -> None:
+        world_store = TrackingWorldModelStore(
+            [
+                Belief(
+                    id="belief-risk",
+                    claim="Do not execute without approval",
+                    confidence=0.2,
+                    status=BeliefStatus.CONTRADICTED,
+                    tags=["approval", "execute"],
+                    source=BeliefSource.SYSTEM,
+                )
+            ]
+        )
+        assembler = DynamicContextAssembler(
+            world_model_store=world_store,
+            config=ContextAssemblyConfig(strategy=PRESSURE_RELEVANCE_V2, include_policy_summary=False),
+        )
+        window = assembler.assemble(
+            event=self.make_event("Should we execute this action now?"),
+            state=NexusState(),
+        )
+        self.assertIn("belief-risk", window.metadata["included_belief_ids"])
+
+    def test_pressure_relevance_v2_includes_policy_summary_for_approval_required(self) -> None:
+        policy_store = TrackingPolicyStore(
+            [
+                PolicyRule(
+                    id="policy-approval",
+                    name="Approval required for shell",
+                    rule_type=PolicyRuleType.REQUIRE_APPROVAL,
+                    target_type=PolicyTargetType.SHELL,
+                    target="*",
+                    source=PolicySource.SYSTEM,
+                )
+            ]
+        )
+        assembler = DynamicContextAssembler(
+            policy_store=policy_store,
+            config=ContextAssemblyConfig(strategy=PRESSURE_RELEVANCE_V2),
+        )
+        state = NexusState(facet_state={"nexus": {"policy_requires_approval": True}})
+        window = assembler.assemble(event=self.make_event("Run command"), state=state)
+        self.assertIn("policy-summary", window.metadata["included_policy_ids"])
 
 
 class ContextFacetTests(unittest.TestCase):

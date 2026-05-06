@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-05-06 - Context v2 pressure/relevance deterministic selection
+
+- **Context:** Context v1 already assembled dynamic bounded packets and included working memory, but selection still leaned on broad bounded slices. Needed deterministic pressure/relevance-aware selection without introducing Memory v3/graph/LLM scope.
+- **Done:** Added `pressure_relevance_v2` strategy wiring in Context models/facet/assembler, including candidate score breakdowns, protected inclusion (current event + same-session working turns), LPB/attention-aware candidate inclusion, score/cutoff/budget selection, and exclusion/staleness trace metadata (`excluded_context_items`, stale/eviction counts, cutoff settings, budget usage). Added CLI flags `--context-strategy pressure_relevance_v2`, `--context-max-items`, `--context-min-relevance`, `--context-min-pressure`. Prompt grounding now surfaces active unresolved signals earlier while keeping recent-conversation continuity.
+- **Verified:** `python -m unittest tests.test_context tests.test_cli -v`; `python -m unittest tests.test_memory_v2 tests.test_interactive_loop tests.test_latent_pressure tests.test_attention_v1 -v`; `python -m unittest discover -s tests -p "test_*.py" -q`.
+- **Next:** Optional follow-up to deepen Context v2 test matrix (more LPB/attention merge edge-cases and policy/act-path scenarios) without widening into Memory v3 graph/community work.
+- **Blockers:** None.
+
 ### 2026-05-06 - Memory v2.5 working memory continuity
 
 - **Context:** Memory v2 long-term retrieval was strong, but immediate turn-to-turn references in interactive dialogue needed deterministic recent-turn continuity without introducing a new Dialogue subsystem or Memory v3 behavior.

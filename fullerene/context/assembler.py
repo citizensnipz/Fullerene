@@ -6,6 +6,7 @@ from typing import Any, Sequence
 
 from fullerene.attention import AttentionBroadcast
 from fullerene.context.models import (
+    PRESSURE_RELEVANCE_V2,
     STATIC_RECENT_EPISODIC_V0,
     ContextAssemblyConfig,
     ContextItem,
@@ -41,6 +42,16 @@ EXTERNAL_POLICY_TARGETS = (
     PolicyTargetType.GIT,
     PolicyTargetType.TOOL,
 )
+
+LPB_INCLUDE_TYPES = {
+    "contradiction",
+    "policy_block",
+    "verifier_failure",
+    "unresolved_query",
+    "goal_block",
+    "context_overload",
+    "planner_conflict",
+}
 
 
 class StaticContextAssembler:
@@ -152,6 +163,12 @@ class DynamicContextAssembler:
         state: NexusState | None = None,
         facet_results: Sequence[FacetResult] | None = None,
     ) -> ContextWindow:
+        if self.config.strategy == PRESSURE_RELEVANCE_V2:
+            return self._assemble_pressure_relevance_v2(
+                event=event,
+                state=state,
+                facet_results=facet_results,
+            )
         working_state = state or NexusState()
         items: list[ContextItem] = []
         reasons: list[str] = ["included_current_event"]
@@ -290,6 +307,369 @@ class DynamicContextAssembler:
             strategy=self.config.strategy,
             metadata=metadata,
         )
+
+    def _assemble_pressure_relevance_v2(
+        self,
+        *,
+        event: Event,
+        state: NexusState | None = None,
+        facet_results: Sequence[FacetResult] | None = None,
+    ) -> ContextWindow:
+        working_state = state or NexusState()
+        included: list[ContextItem] = []
+        included_ids: set[str] = set()
+        protected_ids: set[str] = set()
+        reasons: list[str] = []
+        score_breakdowns: list[dict[str, Any]] = []
+        excluded: list[dict[str, Any]] = []
+
+        event_item = self._event_item(event)
+        event_item.metadata["include_reason"] = "current_event_always_included"
+        event_item.metadata["protected_inclusion"] = True
+        event_item.metadata["final_score"] = 1.0
+        included.append(event_item)
+        included_ids.add(event_item.id)
+        protected_ids.add(event_item.id)
+        reasons.append("included_current_event")
+
+        if self.config.include_working_memory:
+            wm_items, wm_meta = self._working_memory_items(event)
+            for item in wm_items[: self.config.max_working_memory_turns]:
+                item.metadata["working_memory_protected"] = True
+                item.metadata["include_reason"] = "recent_working_memory_protected"
+                item.metadata["protected_inclusion"] = True
+                item.metadata["final_score"] = 1.0
+                if item.id in included_ids:
+                    continue
+                included.append(item)
+                included_ids.add(item.id)
+                protected_ids.add(item.id)
+            reasons.append(f"included_working_memory_turns={len(wm_items)}")
+        else:
+            wm_meta = {"session_id": None}
+
+        candidates: list[dict[str, Any]] = []
+        candidates.extend(self._build_lpb_candidates(working_state, facet_results))
+        candidates.extend(self._build_attention_candidates(working_state, facet_results, included))
+        candidates.extend(self._build_goal_candidates(event))
+        candidates.extend(self._build_belief_candidates(event))
+        candidates.extend(self._build_memory_candidates_v2(event))
+        candidates.extend(self._build_policy_candidates(working_state, facet_results))
+        if self.config.include_recent_signals:
+            candidates.extend(self._build_signal_candidates(working_state, facet_results))
+
+        by_id: dict[str, dict[str, Any]] = {}
+        for candidate in candidates:
+            candidate_id = str(candidate["item"].id)
+            if candidate_id in by_id:
+                excluded.append({"id": candidate_id, "reason": "duplicate"})
+                continue
+            by_id[candidate_id] = candidate
+
+        ranked = sorted(
+            by_id.values(),
+            key=lambda row: (
+                float(row["score"]["final_score"]),
+                float(row["score"]["priority_score"]),
+                float(row["score"]["recency_score"]),
+                row["source_rank"],
+            ),
+            reverse=True,
+        )
+        budget = max(self.config.max_items_total, 1)
+        for row in ranked:
+            item = row["item"]
+            if item.id in included_ids:
+                excluded.append({"id": item.id, "reason": "duplicate"})
+                continue
+            if len(included) >= budget:
+                excluded.append({"id": item.id, "reason": "budget_evicted"})
+                continue
+            score = row["score"]
+            pressure_bypass = score["pressure_score"] >= self.config.min_pressure_score and row["source_type"] in {"lpb", "policy", "signal"}
+            if not pressure_bypass and score["final_score"] < self.config.min_relevance_score:
+                excluded.append({"id": item.id, "reason": "below_relevance_cutoff"})
+                continue
+            if row["source_type"] == "lpb" and score["pressure_score"] < self.config.min_pressure_score:
+                excluded.append({"id": item.id, "reason": "low_pressure"})
+                continue
+            item.metadata["final_score"] = score["final_score"]
+            item.metadata["score_breakdown"] = score
+            item.metadata["include_reason"] = row["include_reason"]
+            item.metadata["protected_inclusion"] = False
+            included.append(item)
+            included_ids.add(item.id)
+            score_breakdowns.append(
+                {
+                    "item_id": item.id,
+                    "source_type": row["source_type"],
+                    "score": score,
+                }
+            )
+
+        prior_ids = self._prior_context_item_ids(working_state)
+        stale_ids = [item_id for item_id in prior_ids if item_id not in included_ids]
+        for stale_id in stale_ids:
+            excluded.append({"id": stale_id, "reason": "stale"})
+
+        metadata = {
+            "context_strategy": PRESSURE_RELEVANCE_V2,
+            "source_types": self._source_types(included),
+            "included_context_types": self._source_types(included),
+            "included_item_ids": [item.id for item in included],
+            "included_working_memory_turns": [item.id for item in included if item.item_type == ContextItemType.WORKING_MEMORY],
+            "working_memory_session_id": wm_meta.get("session_id"),
+            "working_memory_turn_count": len([item for item in included if item.item_type == ContextItemType.WORKING_MEMORY]),
+            "included_lpb_entry_ids": [item.id for item in included if item.item_type == ContextItemType.SIGNAL and str(item.id).startswith("lpb:")],
+            "included_attention_ids": [item.id for item in included if item.item_type == ContextItemType.ATTENTION],
+            "included_memory_ids": [item.id for item in included if item.item_type == ContextItemType.MEMORY],
+            "included_goal_ids": [item.id for item in included if item.item_type == ContextItemType.GOAL],
+            "included_belief_ids": [item.id for item in included if item.item_type == ContextItemType.BELIEF],
+            "included_policy_ids": [item.id for item in included if item.item_type == ContextItemType.POLICY],
+            "excluded_context_items": excluded[:64],
+            "item_score_breakdowns": score_breakdowns,
+            "context_budget": budget,
+            "budget_used": len(included),
+            "cutoff_settings": {
+                "min_relevance_score": self.config.min_relevance_score,
+                "min_pressure_score": self.config.min_pressure_score,
+            },
+            "stale_context_item_count": len(stale_ids),
+            "evicted_context_item_count": len([row for row in excluded if row.get("reason") == "budget_evicted"]),
+            "reasons": reasons,
+            "context_load": {
+                "item_count": len(included),
+                "max_items": budget,
+                "load_ratio": round(len(included) / max(float(budget), 1.0), 3),
+                "overloaded": len(included) / max(float(budget), 1.0) >= 0.85,
+            },
+            "config": self.config.to_dict(),
+        }
+        return ContextWindow(
+            items=included,
+            max_items=budget,
+            strategy=PRESSURE_RELEVANCE_V2,
+            metadata=metadata,
+        )
+
+    def _prior_context_item_ids(self, state: NexusState) -> list[str]:
+        context_state = state.facet_state.get("context")
+        if not isinstance(context_state, dict):
+            return []
+        raw_ids = context_state.get("last_context_item_ids")
+        if not isinstance(raw_ids, list):
+            return []
+        return [str(item_id) for item_id in raw_ids]
+
+    def _score_candidate(
+        self,
+        *,
+        relevance_score: float,
+        pressure_score: float = 0.0,
+        salience_score: float = 0.0,
+        recency_score: float = 0.0,
+        confidence_score: float = 0.0,
+        priority_score: float = 0.0,
+    ) -> dict[str, float]:
+        def c01(value: Any) -> float:
+            try:
+                return max(0.0, min(float(value), 1.0))
+            except (TypeError, ValueError):
+                return 0.0
+
+        rel = c01(relevance_score)
+        prs = c01(pressure_score)
+        sal = c01(salience_score)
+        rec = c01(recency_score)
+        con = c01(confidence_score)
+        pri = c01(priority_score)
+        final = c01((rel * 0.35) + (prs * 0.25) + (sal * 0.15) + (rec * 0.10) + (con * 0.05) + (pri * 0.10))
+        return {
+            "relevance_score": rel,
+            "pressure_score": prs,
+            "salience_score": sal,
+            "recency_score": rec,
+            "confidence_score": con,
+            "priority_score": pri,
+            "final_score": final,
+        }
+
+    def _build_lpb_candidates(
+        self,
+        state: NexusState,
+        facet_results: Sequence[FacetResult] | None,
+    ) -> list[dict[str, Any]]:
+        if not self.config.include_lpb:
+            return []
+        signals = state.facet_state.get("signals")
+        latent = signals.get("latent_pressure") if isinstance(signals, dict) else None
+        result = latent.get("last_result") if isinstance(latent, dict) else None
+        top_entries = result.get("top_entries", []) if isinstance(result, dict) else []
+        rows: list[dict[str, Any]] = []
+        for entry in top_entries[: self.config.max_lpb_items]:
+            if not isinstance(entry, dict):
+                continue
+            entry_type = str(entry.get("entry_type") or "")
+            intensity = float(entry.get("intensity") or 0.0)
+            if entry_type not in LPB_INCLUDE_TYPES:
+                continue
+            score = self._score_candidate(
+                relevance_score=0.4,
+                pressure_score=intensity,
+                salience_score=min(float(entry.get("retrigger_count") or 0) * 0.2, 1.0),
+                recency_score=1.0,
+                confidence_score=0.8,
+                priority_score=0.9,
+            )
+            item = ContextItem(
+                id=f"lpb:{entry.get('id')}",
+                item_type=ContextItemType.SIGNAL,
+                content=str(entry.get("description") or entry_type),
+                source_id=str(entry.get("id") or ""),
+                metadata={
+                    "entry_type": entry_type,
+                    "intensity": intensity,
+                    "retrigger_count": entry.get("retrigger_count", 0),
+                    "status": entry.get("status"),
+                    "source": entry.get("source"),
+                    "reason": "high_latent_pressure" if intensity >= self.config.min_pressure_score else "low_pressure",
+                },
+            )
+            rows.append(
+                {
+                    "item": item,
+                    "score": score,
+                    "source_rank": 7,
+                    "source_type": "lpb",
+                    "include_reason": "high_latent_pressure" if intensity >= self.config.min_pressure_score else "lpb_ignition",
+                }
+            )
+        return rows
+
+    def _build_attention_candidates(
+        self,
+        state: NexusState,
+        facet_results: Sequence[FacetResult] | None,
+        existing_items: Sequence[ContextItem],
+    ) -> list[dict[str, Any]]:
+        if not self.config.include_attention:
+            return []
+        attention_item = self._attention_context_item(
+            state=state,
+            facet_results=facet_results,
+            existing_items=existing_items,
+        )
+        if attention_item is None:
+            return []
+        score = self._score_candidate(
+            relevance_score=0.65,
+            pressure_score=float(attention_item.metadata.get("attention_pressure_contribution", 0.0)),
+            salience_score=float(attention_item.metadata.get("attention_score", 0.0)),
+            recency_score=1.0,
+            confidence_score=0.8,
+            priority_score=0.75,
+        )
+        return [
+            {
+                "item": attention_item,
+                "score": score,
+                "source_rank": 6,
+                "source_type": "attention",
+                "include_reason": "attention_broadcast",
+            }
+        ]
+
+    def _build_goal_candidates(self, event: Event) -> list[dict[str, Any]]:
+        if not self.config.include_goals:
+            return []
+        items, _dedupe = self._goal_items()
+        out: list[dict[str, Any]] = []
+        for item in items[: self.config.max_goals]:
+            priority = float(item.metadata.get("priority", 0.0))
+            score = self._score_candidate(
+                relevance_score=priority,
+                salience_score=priority,
+                recency_score=0.7,
+                confidence_score=0.9,
+                priority_score=priority,
+            )
+            out.append({"item": item, "score": score, "source_rank": 5, "source_type": "goal", "include_reason": "active_goal"})
+        return out
+
+    def _build_belief_candidates(self, event: Event) -> list[dict[str, Any]]:
+        if not self.config.include_world_model:
+            return []
+        out: list[dict[str, Any]] = []
+        for item in self._belief_items(event)[: self.config.max_beliefs]:
+            conf = float(item.metadata.get("confidence", 0.0))
+            status = str(item.metadata.get("status") or "")
+            score = self._score_candidate(
+                relevance_score=conf if status != "contradicted" else 0.7,
+                pressure_score=0.5 if status == "contradicted" else 0.0,
+                salience_score=0.6 if status == "contradicted" else conf,
+                recency_score=0.7,
+                confidence_score=conf,
+                priority_score=0.55,
+            )
+            out.append({"item": item, "score": score, "source_rank": 4, "source_type": "belief", "include_reason": "relevant_belief"})
+        return out
+
+    def _build_memory_candidates_v2(self, event: Event) -> list[dict[str, Any]]:
+        assembly = self._memory_items(event)
+        out: list[dict[str, Any]] = []
+        for item in [*assembly["relevant_items"], *assembly["recent_items"]][: self.config.max_long_term_memories]:
+            breakdown = item.metadata.get("score_breakdown") if isinstance(item.metadata, dict) else {}
+            relevance = float((breakdown or {}).get("total", item.metadata.get("hybrid_score", 0.0) if isinstance(item.metadata, dict) else 0.0))
+            score = self._score_candidate(
+                relevance_score=relevance,
+                salience_score=float(item.metadata.get("salience", 0.0) if isinstance(item.metadata, dict) else 0.0),
+                recency_score=0.6 if item.metadata.get("context_source") == "recent" else 0.4,
+                confidence_score=float(item.metadata.get("confidence", 0.0) if isinstance(item.metadata, dict) else 0.0),
+                priority_score=0.45,
+            )
+            item.metadata["cluster_id"] = None
+            item.metadata["cluster_activation_score"] = 0.0
+            out.append({"item": item, "score": score, "source_rank": 3, "source_type": "memory", "include_reason": "relevant_long_term_memory"})
+        return out
+
+    def _build_policy_candidates(
+        self,
+        state: NexusState,
+        facet_results: Sequence[FacetResult] | None,
+    ) -> list[dict[str, Any]]:
+        if not self.config.include_policy:
+            return []
+        policy_item = self._policy_item()
+        if policy_item is None:
+            return []
+        signal_map = self._facet_bucket("nexus", state, facet_results) or {}
+        policy_pressure = 1.0 if bool(signal_map.get("policy_blocks_act") or signal_map.get("policy_requires_approval")) else 0.0
+        score = self._score_candidate(
+            relevance_score=0.7,
+            pressure_score=policy_pressure,
+            salience_score=0.7,
+            recency_score=0.9,
+            confidence_score=0.95,
+            priority_score=0.85,
+        )
+        return [{"item": policy_item, "score": score, "source_rank": 8, "source_type": "policy", "include_reason": "policy_constraint"}]
+
+    def _build_signal_candidates(
+        self,
+        state: NexusState,
+        facet_results: Sequence[FacetResult] | None,
+    ) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for item in self._signal_items(state=state, facet_results=facet_results):
+            score = self._score_candidate(
+                relevance_score=0.3,
+                salience_score=0.4,
+                recency_score=0.8,
+                confidence_score=0.7,
+                priority_score=0.2,
+            )
+            out.append({"item": item, "score": score, "source_rank": 2, "source_type": "signal", "include_reason": "recent_system_signal"})
+        return out
 
     def _working_memory_items(self, event: Event) -> tuple[list[ContextItem], dict[str, Any]]:
         if self.memory_store is None or self.config.max_working_turns == 0:

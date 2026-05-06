@@ -331,6 +331,36 @@ class CLIUsabilityTests(unittest.TestCase):
             },
         )
 
+    def test_cli_accepts_pressure_relevance_context_strategy(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            exit_code = cli_main(
+                [
+                    "--context",
+                    "--context-strategy",
+                    "pressure_relevance_v2",
+                    "--context-max-items",
+                    "6",
+                    "--context-min-relevance",
+                    "0.1",
+                    "--context-min-pressure",
+                    "0.2",
+                    "--json",
+                    "--content",
+                    "test v2 context",
+                    "--state-dir",
+                    str(root),
+                ]
+            )
+        payload = json.loads(stdout.getvalue())
+        context_result = next(
+            result for result in payload["facet_results"] if result["facet_name"] == "context"
+        )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(context_result["metadata"]["strategy"], "pressure_relevance_v2")
+
 
 if __name__ == "__main__":
     unittest.main()
