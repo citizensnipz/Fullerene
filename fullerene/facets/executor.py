@@ -1,4 +1,4 @@
-"""Deterministic execution facet for Fullerene Executor v0."""
+"""Deterministic execution facet for Fullerene Executor v1."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from fullerene.planner import Plan
 
 
 class ExecutorFacet:
-    """Execute approved internal plans only when explicitly requested."""
+    """Execute manifest-registered plan steps with strict safety boundaries."""
 
     name = "executor"
 
@@ -22,12 +22,14 @@ class ExecutorFacet:
         world_model_store=None,
         memory_store=None,
         state_dir: Path | str | None = None,
+        sandbox_dir: Path | str | None = None,
     ) -> None:
         self.executor = InternalActionExecutor(
             goal_store=goal_store,
             world_model_store=world_model_store,
             memory_store=memory_store,
             state_dir=state_dir,
+            sandbox_dir=sandbox_dir,
         )
 
     def process(self, event: Event, state: NexusState) -> FacetResult:
@@ -71,8 +73,33 @@ class ExecutorFacet:
             if self._is_dry_run(event.metadata)
             else ExecutionMode.LIVE
         )
+        for step in plan.steps:
+            step.metadata.setdefault("cycle_id", state.event_count + 1)
+            if isinstance(event.metadata.get("approval"), dict):
+                step.metadata.setdefault("approval", event.metadata.get("approval"))
         execution_result = self.executor.execute(plan, mode=mode)
         execution_payload = execution_result.to_dict()
+        failed_step_ids = [
+            record.plan_step_id
+            for record in execution_result.records
+            if record.status.value == "failed"
+        ]
+        step_feedback = []
+        for record in execution_result.records:
+            step_feedback.append(
+                {
+                    "plan_step_id": record.plan_step_id,
+                    "status": record.status.value,
+                    "reason": record.metadata.get("reason"),
+                    "skill_name": record.skill_name,
+                    "dry_run": record.dry_run,
+                    "retryable": record.retryable,
+                    "requires_replan": record.requires_replan,
+                }
+            )
+        requires_plan_reevaluation = bool(
+            any(item["requires_replan"] for item in step_feedback)
+        )
         return FacetResult(
             facet_name=self.name,
             summary=(
@@ -87,6 +114,11 @@ class ExecutorFacet:
                 "last_execution_status": execution_result.overall_status.value,
                 "last_execution_halted": execution_result.halted,
                 "last_execution_dry_run": execution_result.dry_run,
+                "last_step_results": step_feedback,
+                "failed_step_ids": failed_step_ids,
+                "requires_plan_reevaluation": requires_plan_reevaluation,
+                "pending_approvals": dict(self.executor.pending_approvals),
+                "file_operation_log": list(self.executor.file_operation_log),
             },
             metadata={
                 "execution_requested": True,
@@ -95,6 +127,11 @@ class ExecutorFacet:
                 "halted": execution_result.halted,
                 "dry_run": execution_result.dry_run,
                 "reasons": list(execution_result.reasons),
+                "last_step_results": step_feedback,
+                "failed_step_ids": failed_step_ids,
+                "requires_plan_reevaluation": requires_plan_reevaluation,
+                "pending_approvals": dict(self.executor.pending_approvals),
+                "file_operation_log": list(self.executor.file_operation_log),
             },
         )
 

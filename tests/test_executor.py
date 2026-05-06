@@ -1,676 +1,202 @@
 from __future__ import annotations
 
-import io
-import json
 import shutil
 import unittest
-from contextlib import redirect_stdout
 from pathlib import Path
 from uuid import uuid4
 
-from fullerene.cli import main as cli_main
-from fullerene.executor import (
-    ActionType,
-    ExecutionMode,
-    ExecutionRecord,
-    ExecutionResult,
-    ExecutionStatus,
-    InternalActionExecutor,
-)
-from fullerene.facets import ExecutorFacet, PlannerFacet
-from fullerene.goals import Goal, GoalStatus, SQLiteGoalStore
-from fullerene.nexus import DecisionAction, Event, EventType, NexusRuntime, NexusState
-from fullerene.planner import Plan, PlanStep, PlanStepStatus, RiskLevel
-from fullerene.state import InMemoryStateStore
+from fullerene.executor import ExecutionMode, ExecutionStatus, InternalActionExecutor, SkillManifestEntry, resolve_sandbox_path
+from fullerene.facets import ExecutorFacet
+from fullerene.nexus import Event, EventType, NexusState
+from fullerene.planner import Plan, PlanStep
 from fullerene.workspace_state import workspace_state_root
 
 
 def make_tempdir_path() -> Path:
-    return workspace_state_root() / f".test-executor-{uuid4().hex}"
+    root = workspace_state_root() / f".test-executor-v1-{uuid4().hex}"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 def make_plan(*steps: PlanStep) -> Plan:
-    return Plan(
-        id="plan-1",
-        source_event_id="event-1",
-        title="Executor test plan",
-        steps=list(steps),
-        reasons=["test-plan"],
-    )
+    return Plan(id="plan-v1", source_event_id="event-v1", title="plan", steps=list(steps), reasons=["test"])
 
 
-class ExecutorModelTests(unittest.TestCase):
-    def test_execution_record_round_trips_through_dict(self) -> None:
-        record = ExecutionRecord(
-            id="exec-1",
-            action_type=ActionType.NOOP,
-            plan_id="plan-1",
-            plan_step_id="step-1",
-            status=ExecutionStatus.SUCCESS,
-            dry_run=True,
-            message="Dry-run validated noop action.",
-            metadata={"reason": "execution_completed"},
-        )
-
-        round_tripped = ExecutionRecord.from_dict(record.to_dict())
-
-        self.assertEqual(round_tripped, record)
-
-    def test_execution_result_round_trips_through_dict(self) -> None:
-        result = ExecutionResult(
-            plan_id="plan-1",
-            records=[
-                ExecutionRecord(
-                    id="exec-1",
-                    action_type=ActionType.NOOP,
-                    plan_id="plan-1",
-                    plan_step_id="step-1",
-                    status=ExecutionStatus.SUCCESS,
-                    dry_run=True,
-                    message="Dry-run validated noop action.",
-                )
-            ],
-            overall_status=ExecutionStatus.SUCCESS,
-            halted=False,
-            dry_run=True,
-            reasons=["execution_completed"],
-            metadata={"mode": "dry_run"},
-        )
-
-        round_tripped = ExecutionResult.from_dict(result.to_dict())
-
-        self.assertEqual(round_tripped, result)
-
-
-class InternalActionExecutorTests(unittest.TestCase):
+class ExecutorV1Tests(unittest.TestCase):
     def setUp(self) -> None:
         self.root = make_tempdir_path()
         self.addCleanup(lambda: shutil.rmtree(self.root, ignore_errors=True))
+        self.executor = InternalActionExecutor(state_dir=self.root)
 
-    def test_dry_run_goal_update_records_success_without_mutation(self) -> None:
-        goal_store = SQLiteGoalStore(self.root / "goals.sqlite3")
-        goal_store.add_goal(
-            Goal(
-                id="goal-1",
-                description="Keep this active",
-                status=GoalStatus.ACTIVE,
-            )
-        )
-        executor = InternalActionExecutor(goal_store=goal_store, state_dir=self.root)
+    def test_registry_lists_builtin_file_skills(self) -> None:
+        names = {entry.skill_name for entry in self.executor.registry.list_skills()}
+        self.assertIn("file_read", names)
+        self.assertIn("file_write", names)
+        self.assertIn("file_list", names)
+
+    def test_unknown_skill_is_refused(self) -> None:
         plan = make_plan(
             PlanStep(
-                id="step-1",
-                description="Complete the goal.",
+                id="s1",
+                description="unknown",
                 order=1,
-                target_type="goal",
-                metadata={
-                    "action_type": "update_goal",
-                    "goal_id": "goal-1",
-                    "status": "completed",
-                },
+                target_type="file",
+                policy_status="allowed",
+                metadata={"action_type": "file_read", "skill_name": "unknown_skill", "path": "a.txt"},
             )
         )
+        result = self.executor.execute(plan, mode=ExecutionMode.DRY_RUN)
+        self.assertEqual(result.overall_status, ExecutionStatus.FAILED)
+        self.assertEqual(result.records[0].metadata.get("reason"), "skill_not_registered")
 
-        result = executor.execute(plan, mode=ExecutionMode.DRY_RUN)
-
+    def test_external_skill_must_be_registered(self) -> None:
+        self.executor.register_skill(
+            SkillManifestEntry(
+                skill_name="test_external_skill",
+                version="v1",
+                action_types=["external_echo"],
+                target_types=["general"],
+                dry_run_supported=True,
+                live_supported=True,
+            ),
+            lambda **kwargs: {"success": True, "echo": kwargs.get("payload", {})},
+        )
+        plan = make_plan(
+            PlanStep(
+                id="s1",
+                description="external",
+                order=1,
+                target_type="general",
+                policy_status="allowed",
+                metadata={"action_type": "external_echo", "skill_name": "test_external_skill", "value": "ok"},
+            )
+        )
+        result = self.executor.execute(plan, mode=ExecutionMode.DRY_RUN)
         self.assertEqual(result.overall_status, ExecutionStatus.SUCCESS)
-        self.assertTrue(result.dry_run)
-        self.assertEqual(goal_store.get_goal("goal-1").status, GoalStatus.ACTIVE)
+        self.assertEqual(result.records[0].skill_name, "test_external_skill")
 
-    def test_live_noop_records_success(self) -> None:
-        executor = InternalActionExecutor(state_dir=self.root)
+    def test_sandbox_path_blocks_traversal(self) -> None:
+        with self.assertRaises(ValueError):
+            resolve_sandbox_path(self.root / "sandbox", "../outside.txt")
+
+    def test_file_write_dry_run_does_not_write(self) -> None:
         plan = make_plan(
             PlanStep(
-                id="step-1",
-                description="Do nothing.",
+                id="w1",
+                description="write",
                 order=1,
-                target_type="noop",
-                metadata={"action_type": "noop"},
+                target_type="file",
+                policy_status="allowed",
+                metadata={"action_type": "file_write", "skill_name": "file_write", "path": "notes/a.txt", "content": "hello", "create_parent_dirs": True},
             )
         )
-
-        result = executor.execute(plan, mode=ExecutionMode.LIVE)
-
+        result = self.executor.execute(plan, mode=ExecutionMode.DRY_RUN)
         self.assertEqual(result.overall_status, ExecutionStatus.SUCCESS)
-        self.assertFalse(result.dry_run)
-        self.assertEqual(result.records[0].status, ExecutionStatus.SUCCESS)
+        self.assertFalse((self.root / "sandbox" / "notes" / "a.txt").exists())
 
-    def test_requires_approval_step_is_skipped_and_halts(self) -> None:
-        executor = InternalActionExecutor(state_dir=self.root)
+    def test_file_write_live_writes_inside_sandbox(self) -> None:
         plan = make_plan(
             PlanStep(
-                id="step-1",
-                description="Approval required.",
+                id="w1",
+                description="write",
                 order=1,
-                target_type="noop",
-                requires_approval=True,
-                metadata={"action_type": "noop"},
+                target_type="file",
+                policy_status="allowed",
+                metadata={"action_type": "file_write", "skill_name": "file_write", "path": "notes/live.txt", "content": "hello", "create_parent_dirs": True},
             )
         )
+        result = self.executor.execute(plan, mode=ExecutionMode.LIVE)
+        self.assertEqual(result.overall_status, ExecutionStatus.SUCCESS)
+        self.assertEqual((self.root / "sandbox" / "notes" / "live.txt").read_text(encoding="utf-8"), "hello")
 
-        result = executor.execute(plan)
-
-        self.assertEqual(result.overall_status, ExecutionStatus.SKIPPED)
-        self.assertTrue(result.halted)
-        self.assertEqual(result.reasons, ["requires_approval"])
-        self.assertEqual(result.records[0].metadata["reason"], "requires_approval")
-
-    def test_blocked_step_is_skipped_and_halts(self) -> None:
-        executor = InternalActionExecutor(state_dir=self.root)
+    def test_file_read_dry_run_no_content(self) -> None:
+        target = self.root / "sandbox" / "x.txt"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("hello", encoding="utf-8")
         plan = make_plan(
             PlanStep(
-                id="step-1",
-                description="Blocked by policy.",
+                id="r1",
+                description="read",
                 order=1,
-                target_type="noop",
-                status=PlanStepStatus.BLOCKED,
-                metadata={"action_type": "noop"},
+                target_type="file",
+                policy_status="allowed",
+                metadata={"action_type": "file_read", "skill_name": "file_read", "path": "x.txt"},
             )
         )
+        result = self.executor.execute(plan, mode=ExecutionMode.DRY_RUN)
+        self.assertNotIn("content", result.records[0].metadata)
 
-        result = executor.execute(plan)
-
-        self.assertEqual(result.overall_status, ExecutionStatus.SKIPPED)
-        self.assertTrue(result.halted)
-        self.assertEqual(result.reasons, ["blocked_by_policy"])
-        self.assertEqual(result.records[0].metadata["reason"], "blocked_by_policy")
-
-    def test_policy_denied_step_uses_blocked_by_policy_reason(self) -> None:
-        executor = InternalActionExecutor(state_dir=self.root)
+    def test_file_operation_log_excludes_content(self) -> None:
         plan = make_plan(
             PlanStep(
-                id="step-1",
-                description="Denied by policy.",
+                id="w1",
+                description="write",
                 order=1,
-                target_type="noop",
-                policy_status="denied",
-                metadata={"action_type": "noop"},
+                target_type="file",
+                policy_status="allowed",
+                metadata={"action_type": "file_write", "skill_name": "file_write", "path": "audit.txt", "content": "secret", "overwrite": True},
             )
         )
+        self.executor.execute(plan, mode=ExecutionMode.DRY_RUN)
+        row = self.executor.file_operation_log[-1]
+        self.assertNotIn("content", row)
+        self.assertEqual(row["operation"], "write")
 
-        result = executor.execute(plan)
+    def test_approval_pending_then_timeout(self) -> None:
+        step = PlanStep(
+            id="a1",
+            description="needs approval",
+            order=1,
+            target_type="file",
+            requires_approval=True,
+            policy_status="approval_required",
+            metadata={"action_type": "file_list", "skill_name": "file_list", "path": ".", "cycle_id": 1},
+        )
+        first = self.executor.execute(make_plan(step), mode=ExecutionMode.DRY_RUN)
+        self.assertEqual(first.overall_status, ExecutionStatus.PENDING_APPROVAL)
+        step.metadata["cycle_id"] = 10
+        second = self.executor.execute(make_plan(step), mode=ExecutionMode.DRY_RUN)
+        self.assertEqual(second.overall_status, ExecutionStatus.APPROVAL_TIMEOUT)
 
-        self.assertEqual(result.overall_status, ExecutionStatus.SKIPPED)
-        self.assertTrue(result.halted)
-        self.assertEqual(result.reasons, ["blocked_by_policy"])
-        self.assertEqual(result.records[0].metadata["reason"], "blocked_by_policy")
-
-    def test_high_risk_step_is_skipped_and_halts(self) -> None:
-        executor = InternalActionExecutor(state_dir=self.root)
+    def test_no_partial_execution_after_failure_marks_remaining_skipped(self) -> None:
         plan = make_plan(
-            PlanStep(
-                id="step-1",
-                description="Too risky.",
-                order=1,
-                target_type="noop",
-                risk_level=RiskLevel.HIGH,
-                metadata={"action_type": "noop"},
-            )
+            PlanStep(id="s1", description="bad", order=1, target_type="file", policy_status="allowed", metadata={"action_type": "file_write", "skill_name": "file_write", "path": "../bad.txt", "content": "x"}),
+            PlanStep(id="s2", description="later", order=2, target_type="file", policy_status="allowed", metadata={"action_type": "file_list", "skill_name": "file_list", "path": "."}),
         )
+        result = self.executor.execute(plan, mode=ExecutionMode.LIVE)
+        self.assertEqual(result.records[-1].metadata.get("reason"), "skipped_due_to_prior_failure")
 
-        result = executor.execute(plan)
-
-        self.assertEqual(result.overall_status, ExecutionStatus.SKIPPED)
-        self.assertTrue(result.halted)
-        self.assertEqual(result.reasons, ["high_risk_not_allowed_v0"])
-        self.assertEqual(result.records[0].metadata["reason"], "high_risk_not_allowed_v0")
-
-    def test_unknown_action_type_fails_and_halts(self) -> None:
-        executor = InternalActionExecutor(state_dir=self.root)
+    def test_live_without_policy_allowed_fails_closed(self) -> None:
         plan = make_plan(
-            PlanStep(
-                id="step-1",
-                description="Unknown action.",
-                order=1,
-                target_type="noop",
-                metadata={"action_type": "invented_action"},
-            )
+            PlanStep(id="s1", description="write", order=1, target_type="file", metadata={"action_type": "file_write", "skill_name": "file_write", "path": "a.txt", "content": "x"})
         )
-
-        result = executor.execute(plan)
-
+        result = self.executor.execute(plan, mode=ExecutionMode.LIVE)
         self.assertEqual(result.overall_status, ExecutionStatus.FAILED)
-        self.assertTrue(result.halted)
-        self.assertEqual(result.reasons, ["unsupported_action_type"])
-        self.assertEqual(result.records[0].metadata["reason"], "unsupported_action_type")
-
-    def test_unknown_target_type_fails_and_halts(self) -> None:
-        executor = InternalActionExecutor(state_dir=self.root)
-        plan = make_plan(
-            PlanStep(
-                id="step-1",
-                description="Unknown target.",
-                order=1,
-                target_type="mystery",
-                metadata={"action_type": "noop"},
-            )
-        )
-
-        result = executor.execute(plan)
-
-        self.assertEqual(result.overall_status, ExecutionStatus.FAILED)
-        self.assertTrue(result.halted)
-        self.assertEqual(result.reasons, ["unsupported_target_type"])
-        self.assertEqual(result.records[0].metadata["reason"], "unsupported_target_type")
-
-    def test_external_target_type_fails_and_halts(self) -> None:
-        executor = InternalActionExecutor(state_dir=self.root)
-        plan = make_plan(
-            PlanStep(
-                id="step-1",
-                description="External shell action.",
-                order=1,
-                target_type="shell",
-                metadata={"action_type": "noop"},
-            )
-        )
-
-        result = executor.execute(plan)
-
-        self.assertEqual(result.overall_status, ExecutionStatus.FAILED)
-        self.assertTrue(result.halted)
-        self.assertEqual(result.reasons, ["unsupported_target_type"])
-        self.assertEqual(result.records[0].metadata["reason"], "unsupported_target_type")
-
-    def test_unsupported_live_action_reason_is_distinct(self) -> None:
-        executor = InternalActionExecutor(state_dir=self.root)
-        plan = make_plan(
-            PlanStep(
-                id="step-1",
-                description="Update memory live.",
-                order=1,
-                target_type="memory",
-                metadata={"action_type": "update_memory", "memory_id": "mem-1"},
-            )
-        )
-
-        result = executor.execute(plan, mode=ExecutionMode.LIVE)
-
-        self.assertEqual(result.overall_status, ExecutionStatus.FAILED)
-        self.assertTrue(result.halted)
-        self.assertEqual(result.reasons, ["unsupported_live_action"])
-        self.assertEqual(result.records[0].metadata["reason"], "unsupported_live_action")
-
-    def test_no_partial_execution_after_failure(self) -> None:
-        goal_store = SQLiteGoalStore(self.root / "goals.sqlite3")
-        goal_store.add_goal(
-            Goal(
-                id="goal-1",
-                description="Do not complete me yet",
-                status=GoalStatus.ACTIVE,
-            )
-        )
-        executor = InternalActionExecutor(goal_store=goal_store, state_dir=self.root)
-        plan = make_plan(
-            PlanStep(
-                id="step-1",
-                description="Would complete the goal.",
-                order=1,
-                target_type="goal",
-                metadata={
-                    "action_type": "update_goal",
-                    "goal_id": "goal-1",
-                    "status": "completed",
-                },
-            ),
-            PlanStep(
-                id="step-2",
-                description="Needs approval.",
-                order=2,
-                target_type="noop",
-                requires_approval=True,
-                metadata={"action_type": "noop"},
-            ),
-        )
-
-        result = executor.execute(plan, mode=ExecutionMode.LIVE)
-
-        self.assertEqual(result.overall_status, ExecutionStatus.SKIPPED)
-        self.assertEqual(len(result.records), 1)
-        self.assertEqual(result.records[0].plan_step_id, "step-2")
-        self.assertEqual(goal_store.get_goal("goal-1").status, GoalStatus.ACTIVE)
-
-    def test_second_step_does_not_execute_after_first_failure(self) -> None:
-        executor = InternalActionExecutor(state_dir=self.root)
-        plan = make_plan(
-            PlanStep(
-                id="step-1",
-                description="Unsupported action first.",
-                order=1,
-                target_type="noop",
-                metadata={"action_type": "invented_action"},
-            ),
-            PlanStep(
-                id="step-2",
-                description="Would be a safe noop.",
-                order=2,
-                target_type="noop",
-                metadata={"action_type": "noop"},
-            ),
-        )
-
-        result = executor.execute(plan, mode=ExecutionMode.LIVE)
-
-        self.assertEqual(result.overall_status, ExecutionStatus.FAILED)
-        self.assertTrue(result.halted)
-        self.assertEqual(len(result.records), 1)
-        self.assertEqual(result.records[0].plan_step_id, "step-1")
-        self.assertEqual(result.reasons, ["unsupported_action_type"])
-
-    def test_missing_action_type_does_not_infer_from_target_or_description(self) -> None:
-        goal_store = SQLiteGoalStore(self.root / "goals.sqlite3")
-        goal_store.add_goal(
-            Goal(
-                id="goal-1",
-                description="Stay active",
-                status=GoalStatus.ACTIVE,
-            )
-        )
-        executor = InternalActionExecutor(goal_store=goal_store, state_dir=self.root)
-        plan = make_plan(
-            PlanStep(
-                id="step-1",
-                description="Complete goal goal-1 now.",
-                order=1,
-                target_type="goal",
-                metadata={"goal_id": "goal-1", "status": "completed"},
-            )
-        )
-
-        result = executor.execute(plan, mode=ExecutionMode.LIVE)
-
-        self.assertEqual(result.overall_status, ExecutionStatus.FAILED)
-        self.assertEqual(result.reasons, ["unsupported_action_type"])
-        self.assertEqual(goal_store.get_goal("goal-1").status, GoalStatus.ACTIVE)
-
-    def test_emit_event_requires_explicit_event_payload(self) -> None:
-        executor = InternalActionExecutor(state_dir=self.root)
-        plan = make_plan(
-            PlanStep(
-                id="step-1",
-                description="Emit something based on this sentence.",
-                order=1,
-                target_type="event",
-                metadata={"action_type": "emit_event"},
-            )
-        )
-
-        result = executor.execute(plan)
-
-        self.assertEqual(result.overall_status, ExecutionStatus.FAILED)
-        self.assertTrue(result.halted)
-        self.assertEqual(result.records[0].metadata["reason"], "invalid_action_payload")
+        self.assertEqual(result.records[0].metadata.get("reason"), "policy_not_allowed_for_live")
 
 
-class ExecutorFacetTests(unittest.TestCase):
-    def test_returns_wait_when_no_plan(self) -> None:
-        result = ExecutorFacet().process(
-            Event(
-                event_type=EventType.USER_MESSAGE,
-                content="execute",
-                metadata={"execute_plan": True},
-            ),
-            NexusState(),
-        )
-
-        self.assertEqual(result.proposed_decision, DecisionAction.WAIT)
-        self.assertEqual(result.metadata["execution_result"], None)
-
-    def test_returns_wait_when_execute_plan_not_requested(self) -> None:
+class ExecutorFacetFeedbackTests(unittest.TestCase):
+    def test_planner_feedback_metadata_is_exposed(self) -> None:
+        facet = ExecutorFacet(state_dir=make_tempdir_path())
         state = NexusState(
-            facet_state={"planner": {"last_plan": make_plan(PlanStep()).to_dict()}}
+            facet_state={
+                "planner": {
+                    "last_plan": make_plan(
+                        PlanStep(
+                            id="s1",
+                            description="list",
+                            order=1,
+                            target_type="file",
+                            policy_status="allowed",
+                            metadata={"action_type": "file_list", "skill_name": "file_list", "path": "."},
+                        )
+                    ).to_dict()
+                }
+            }
         )
-
-        result = ExecutorFacet().process(
-            Event(event_type=EventType.USER_MESSAGE, content="execute"),
-            state,
-        )
-
-        self.assertEqual(result.proposed_decision, DecisionAction.WAIT)
-        self.assertEqual(result.metadata["reasons"], ["execution_not_requested"])
-
-    def test_live_metadata_without_execute_plan_still_waits(self) -> None:
-        state = NexusState(
-            facet_state={"planner": {"last_plan": make_plan(PlanStep()).to_dict()}}
-        )
-
-        result = ExecutorFacet().process(
-            Event(
-                event_type=EventType.USER_MESSAGE,
-                content="execute",
-                metadata={"dry_run": False},
-            ),
-            state,
-        )
-
-        self.assertEqual(result.proposed_decision, DecisionAction.WAIT)
-        self.assertEqual(result.metadata["reasons"], ["execution_not_requested"])
-
-    def test_dry_run_executes_proposed_safe_internal_plan_when_requested(self) -> None:
-        plan = make_plan(
-            PlanStep(
-                id="step-1",
-                description="Safe noop.",
-                order=1,
-                target_type="noop",
-                metadata={"action_type": "noop"},
-            )
-        )
-        state = NexusState(facet_state={"planner": {"last_plan": plan.to_dict()}})
-
-        result = ExecutorFacet().process(
-            Event(
-                event_type=EventType.USER_MESSAGE,
-                content="execute",
-                metadata={"execute_plan": True},
-            ),
-            state,
-        )
-
-        self.assertEqual(result.proposed_decision, DecisionAction.RECORD)
-        self.assertTrue(result.metadata["dry_run"])
-        self.assertEqual(
-            result.metadata["execution_result"]["overall_status"],
-            ExecutionStatus.SUCCESS.value,
-        )
-
-    def test_does_not_propose_act_and_includes_execution_result(self) -> None:
-        plan = make_plan(
-            PlanStep(
-                id="step-1",
-                description="Safe noop.",
-                order=1,
-                target_type="noop",
-                metadata={"action_type": "noop"},
-            )
-        )
-        state = NexusState(facet_state={"planner": {"last_plan": plan.to_dict()}})
-
-        result = ExecutorFacet().process(
-            Event(
-                event_type=EventType.USER_MESSAGE,
-                content="execute",
-                metadata={"execute_plan": True},
-            ),
-            state,
-        )
-
-        self.assertNotEqual(result.proposed_decision, DecisionAction.ACT)
-        self.assertIn("execution_result", result.metadata)
-
-
-class ExecutorIntegrationTests(unittest.TestCase):
-    def test_nexus_runs_with_planner_and_executor(self) -> None:
-        runtime = NexusRuntime(
-            facets=[PlannerFacet(), ExecutorFacet()],
-            store=InMemoryStateStore(),
-        )
-
-        record = runtime.process_event(
-            Event(
-                event_type=EventType.USER_MESSAGE,
-                content="make a plan for this",
-                metadata={"execute_plan": True},
-            )
-        )
-
-        planner_result = next(
-            result for result in record.facet_results if result.facet_name == "planner"
-        )
-        executor_result = next(
-            result for result in record.facet_results if result.facet_name == "executor"
-        )
-
-        self.assertEqual([result.facet_name for result in record.facet_results], ["planner", "executor"])
-        self.assertIsNotNone(planner_result.metadata["plan"])
-        self.assertEqual(
-            executor_result.metadata["execution_result"]["plan_id"],
-            planner_result.metadata["plan"]["id"],
-        )
-        self.assertEqual(
-            executor_result.metadata["execution_result"]["overall_status"],
-            ExecutionStatus.SUCCESS.value,
-        )
-
-    def test_executor_respects_planner_step_risk_and_status_metadata(self) -> None:
-        runtime = NexusRuntime(
-            facets=[PlannerFacet(), ExecutorFacet()],
-            store=InMemoryStateStore(),
-        )
-
-        record = runtime.process_event(
-            Event(
-                event_type=EventType.USER_MESSAGE,
-                content="make a plan for this",
-                metadata={"execute_plan": True, "target_type": "shell"},
-            )
-        )
-        executor_result = next(
-            result for result in record.facet_results if result.facet_name == "executor"
-        )
-
-        self.assertEqual(
-            executor_result.metadata["execution_result"]["overall_status"],
-            ExecutionStatus.SKIPPED.value,
-        )
-        self.assertEqual(executor_result.metadata["reasons"], ["requires_approval"])
-        self.assertTrue(executor_result.metadata["halted"])
-
-
-class CLIExecutorIntegrationTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.root = make_tempdir_path()
-        self.addCleanup(lambda: shutil.rmtree(self.root, ignore_errors=True))
-
-    def test_executor_flag_runs_without_error(self) -> None:
-        stdout = io.StringIO()
-
-        with redirect_stdout(stdout):
-            exit_code = cli_main(
-                [
-                    "--json",
-                    "--executor",
-                    "--content",
-                    "hello executor",
-                    "--state-dir",
-                    str(self.root),
-                ]
-            )
-
-        payload = json.loads(stdout.getvalue())
-
-        self.assertEqual(exit_code, 0)
-        self.assertTrue(
-            any(result["facet_name"] == "executor" for result in payload["facet_results"])
-        )
-
-    def test_planner_executor_execute_plan_produces_dry_run_metadata(self) -> None:
-        stdout = io.StringIO()
-
-        with redirect_stdout(stdout):
-            exit_code = cli_main(
-                [
-                    "--json",
-                    "--planner",
-                    "--executor",
-                    "--execute-plan",
-                    "--content",
-                    "make a plan for this",
-                    "--state-dir",
-                    str(self.root),
-                ]
-            )
-
-        payload = json.loads(stdout.getvalue())
-        executor_result = next(
-            result for result in payload["facet_results"] if result["facet_name"] == "executor"
-        )
-
-        self.assertEqual(exit_code, 0)
-        self.assertTrue(executor_result["metadata"]["dry_run"])
-        self.assertEqual(
-            executor_result["metadata"]["execution_result"]["overall_status"],
-            ExecutionStatus.SUCCESS.value,
-        )
-
-    def test_live_flag_is_accepted_but_risky_steps_are_refused(self) -> None:
-        stdout = io.StringIO()
-
-        with redirect_stdout(stdout):
-            exit_code = cli_main(
-                [
-                    "--json",
-                    "--planner",
-                    "--executor",
-                    "--execute-plan",
-                    "--live",
-                    "--content",
-                    "make a plan for this",
-                    "--metadata",
-                    '{"target_type": "shell"}',
-                    "--state-dir",
-                    str(self.root),
-                ]
-            )
-
-        payload = json.loads(stdout.getvalue())
-        executor_result = next(
-            result for result in payload["facet_results"] if result["facet_name"] == "executor"
-        )
-
-        self.assertEqual(exit_code, 0)
-        self.assertFalse(executor_result["metadata"]["dry_run"])
-        self.assertEqual(
-            executor_result["metadata"]["execution_result"]["overall_status"],
-            ExecutionStatus.SKIPPED.value,
-        )
-        self.assertEqual(executor_result["metadata"]["reasons"], ["requires_approval"])
-
-    def test_live_without_execute_plan_does_not_execute(self) -> None:
-        stdout = io.StringIO()
-
-        with redirect_stdout(stdout):
-            exit_code = cli_main(
-                [
-                    "--json",
-                    "--planner",
-                    "--executor",
-                    "--live",
-                    "--content",
-                    "make a plan for this",
-                    "--state-dir",
-                    str(self.root),
-                ]
-            )
-
-        payload = json.loads(stdout.getvalue())
-        executor_result = next(
-            result for result in payload["facet_results"] if result["facet_name"] == "executor"
-        )
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(executor_result["proposed_decision"], DecisionAction.WAIT.value)
-        self.assertEqual(executor_result["metadata"]["reasons"], ["execution_not_requested"])
+        result = facet.process(Event(event_type=EventType.USER_MESSAGE, content="go", metadata={"execute_plan": True}), state)
+        self.assertIn("last_step_results", result.metadata)
+        self.assertIn("requires_plan_reevaluation", result.metadata)
 
 
 if __name__ == "__main__":

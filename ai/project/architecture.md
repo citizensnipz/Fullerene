@@ -292,22 +292,22 @@ score = (
 - **v2** - LLM-assisted step generation, hierarchical plans, and world-model uncertainty signals that can require approval. **Future.**
 - **v3** - predictive planning, plan evaluation loops, and adversarial checking. **Future.**
 
-## Executor v0 (current)
+## Executor v1 (current)
 
-- **Internal actions only** - `fullerene/executor/` plus `ExecutorFacet` accept planner output and execute only inspectable internal actions: `noop`, `emit_event`, `update_goal`, `update_belief`, and dry-run-only `update_memory`.
-- **Explicit handler registry only** - Executor v0 uses an explicit `ActionType -> handler` mapping. It does not infer actions from `target_type`, parse natural language descriptions, or guess missing behavior.
+- **Manifest-backed skill registry** - `fullerene/executor/registry.py` and `fullerene/executor/skills.py` register built-ins and any external skills explicitly; unknown skills are refused (`skill_not_registered`) and no dynamic loading is allowed.
+- **Sandboxed file skills** - Executor v1 adds `file_read`, `file_write`, and `file_list` through `fullerene/executor/file_ops.py` with strict sandbox resolution (`fullerene/executor/sandbox.py`) under `<state-dir>/sandbox` by default.
+- **Internal actions remain constrained** - v0-compatible internal updates still run through explicit registered skills (`memory_write`, `goal_update`, `internal_event`, `world_model_belief_update`) with no shell/network/git/MCP execution.
 - **Dry-run default** - execution happens only when `event.metadata["execute_plan"]` is true, and it stays in dry-run mode unless `event.metadata["dry_run"] == false`.
-- **Conservative preflight** - Executor v0 halts before mutation when any step is blocked, requires approval, is high-risk, targets an unsupported or external target type, or declares an unsupported action type.
-- **Loud failure semantics** - unknown actions fail with `unsupported_action_type`; unsupported or external targets fail with `unsupported_target_type`; live-only gaps fail with `unsupported_live_action`; runtime handler exceptions fail with `execution_failed`.
-- **No partial execution** - the runner validates the full plan first, then executes; if one step is refused, later steps are not attempted and earlier live mutations do not occur.
-- **Every action logged** - execution produces structured `ExecutionRecord` / `ExecutionResult` payloads that are persisted through normal facet metadata and `state.json` facet state.
+- **Approval gate + timeout** - approval-required steps yield `pending_approval` until explicit approval metadata arrives; after bounded cycles they become `approval_timeout` and are skipped.
+- **No partial execution** - all steps preflight first; any preflight failure blocks live execution for the whole plan; runtime failure halts and marks remaining steps `skipped_due_to_prior_failure`.
+- **Every action logged** - execution records include skill/action/target/version/policy/approval/sandbox metadata and file operations have a separate bounded audit log.
 - **Live mode does not broaden permissions** - `--live` only enables already-supported internal mutations for an explicitly requested plan. It does not bypass approval, policy, or risk checks, and it does not unlock shell, network, git, or arbitrary file access.
-- **No external side effects** - no shell, network, git, arbitrary file operations, dynamic skill loading, permission modification, or tool execution.
+- **No external side effects** - no shell, network, git, dynamic plugin loading, MCP connectors, parallel execution, or rollback automation.
 
 ## Executor roadmap
 
-- **v0** - internal actions only; no shell, network, git, or external file writes; dry-run default; every action logged; no partial execution; refuses unapproved, blocked, or unsupported actions. **Current.**
-- **v1** - sandboxed file operations, skill registry, and approval gate. **Future.**
+- **v0** - internal actions only; no shell, network, git, or external file writes; dry-run default; every action logged; no partial execution; refuses unapproved, blocked, or unsupported actions.
+- **v1** - sandboxed file operations, manifest-backed skill registry, approval gate, and planner feedback metadata. **Current.**
 - **v2** - constrained network/git read access, parallel step execution, resource monitoring, and rollback support. **Future.**
 - **v3** - full skill ecosystem, execution learning, adaptive approval thresholds, and execution identity plus audit trail. **Future.**
 
@@ -344,6 +344,17 @@ score = (
 - **Expression Gate hook** - after interrupts/LPB, Nexus emits `expression_recommendation` and merges `validate_expression_gate_v0()` rows onto the verifier facet’s `artifact_checks` when VerifierFacet ran earlier in the same cycle (additive JSON-safe checks).
 - **Nexus hook** - before the verifier phase, Nexus writes `facet_state["nexus"]["verifier_cycle_context"]` (signal map, pressure components, learning-event snapshot, queued internal events, facet order/results seen, initial `final_decision`) so the verifier can inspect the same-cycle bundle without rewiring earlier phases.
 - **Not truth or quality judging** - Verifier v1 validates structure and internal consistency only; it does not score factual correctness or output usefulness.
+
+## Verifier v1.5 (current tightening pass)
+
+- **Deterministic tightening only** - Verifier v1.5 remains model-free and inspectable; it does not add eval datasets, regression harnesses, LLM-as-judge, or prompt-specific hardcoding.
+- **Behavior v2.2 trace consistency** - extends Behavior trace checks for candidate-score ranges, final decision enums, policy/grounding/ambiguity/context-overload consistency, and ACT safety mismatch signaling.
+- **Context v2 packet validation** - validates `pressure_relevance_v2` packet shape, budget metadata, included/excluded item metadata quality, and overload/working-memory continuity warnings.
+- **World Model v1 artifact checks** - validates belief confidence/status/support/contradiction integrity, contradiction-status coherence, and lightweight edge-shape/self-link constraints.
+- **Output metadata checks** - validates structured output metadata when present and adds deterministic generic unsupported capability/source-claim checks against available runtime traces.
+- **Skill validator hooks** - formalizes deterministic skill/executor validator hooks via registry-like wiring with a built-in generic executor-result validator.
+- **Cross-artifact consistency** - adds policy/behavior/planner/executor consistency checks (policy denied vs ACT, approval gating, live execution policy mismatch, denied-plan-step executability conflicts).
+- **Retry/escalation metadata expansion** - retains recommendation-only behavior while surfacing richer retry/escalation reasons and safe-decision hints (`WAIT|RECORD|ASK`) in verifier metadata.
 
 ### Verifier roadmap
 
@@ -402,7 +413,7 @@ flowchart LR
 | World model facet | `fullerene/facets/world_model.py` | Deterministic belief lifecycle, contradiction/redundancy updates, relevance scoring, and pressure-signal emission |
 | Policy facet | `fullerene/facets/policy.py` | Deterministic permission/approval evaluation plus built-in internal-sandbox allowance and external-approval fallback |
 | Planner facet | `fullerene/facets/planner.py` | Deterministic plan proposal layer with pressure-aware step shaping, policy filtering, and no execution |
-| Executor facet | `fullerene/facets/executor.py` | Deterministic internal-only execution layer with dry-run default, preflight refusal rules, and inspectable execution records |
+| Executor facet | `fullerene/facets/executor.py` | Deterministic manifest-backed execution with dry-run default, sandboxed file skills, approval gate, planner feedback metadata, and inspectable execution/audit records |
 | Learning facet | `fullerene/facets/learning.py` | Learning v1 deterministic router: consumes Nexus/Behavior traces, emits routes and bounded adjustments via store APIs only |
 | Verifier facet | `fullerene/facets/verifier.py` | Deterministic post-decision Verifier v1: v0 guards plus artifact/schema validation; can downgrade unsafe `ACT` decisions before persistence |
 | Affect models and derivation | `fullerene/affect/` | `AffectState`, `AffectResult`, `AffectHistoryBuffer`, and `DeterministicAffectDeriver` for observation-only affect state |

@@ -533,6 +533,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Execute plans live instead of the default dry-run simulation.",
     )
     parser.add_argument(
+        "--executor-live",
+        action="store_true",
+        help="Alias for --live when using executor.",
+    )
+    parser.add_argument(
+        "--executor-sandbox-dir",
+        default=None,
+        help="Override executor sandbox directory (still sandbox-constrained).",
+    )
+    parser.add_argument(
+        "--executor-list-skills",
+        action="store_true",
+        help="List registered executor skills and exit.",
+    )
+    parser.add_argument(
         "--event-type",
         choices=[event_type.value for event_type in EventType],
         default=EventType.USER_MESSAGE.value,
@@ -780,6 +795,7 @@ def _cli_build_nexus_runtime(
                 world_model_store=world_store,
                 memory_store=memory_store,
                 state_dir=state_dir,
+                sandbox_dir=Path(args.executor_sandbox_dir) if args.executor_sandbox_dir else None,
             )
         )
     if args.learning:
@@ -903,8 +919,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         metadata["novelty"] = _clamp_unit(args.novelty)
     if args.execute_plan:
         metadata["execute_plan"] = True
+    if args.executor_live:
+        args.live = True
     if args.live and args.execute_plan:
         metadata["dry_run"] = False
+    if args.executor_sandbox_dir:
+        metadata["executor_sandbox_dir"] = str(Path(args.executor_sandbox_dir))
     if args.ticks < 1:
         parser.error("--ticks must be at least 1.")
     if args.ticks > TICK_HARD_CAP:
@@ -968,6 +988,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--working-memory-turns must be at least 1.")
 
     model_adapter = _build_model_adapter(parser, args.model)
+
+    if args.executor_list_skills:
+        facet = ExecutorFacet(
+            state_dir=Path(args.state_dir),
+            sandbox_dir=Path(args.executor_sandbox_dir) if args.executor_sandbox_dir else None,
+        )
+        payload = [entry.to_dict() for entry in facet.executor.registry.list_skills()]
+        print(json.dumps({"executor_skills": payload}, indent=2))
+        return 0
 
     if interactive_mode_run:
         if args.event_type != EventType.USER_MESSAGE.value:

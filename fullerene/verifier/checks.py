@@ -607,6 +607,21 @@ def finalize_verifier_v1_summary(summary: VerificationSummary) -> None:
     summary.metadata["escalation_reasons"] = list(
         dict.fromkeys((*escalation_reasons, *failure_messages))
     )
+    affected_artifact_ids: list[str] = []
+    for row in artifact_checks:
+        if not isinstance(row, Mapping):
+            continue
+        path = row.get("path")
+        if isinstance(path, str) and path:
+            affected_artifact_ids.append(path)
+    summary.metadata["affected_artifact_ids"] = list(dict.fromkeys(affected_artifact_ids))
+    suggested_safe_decision = None
+    downgraded = verifier_downgraded_decision(summary)
+    if isinstance(downgraded, dict):
+        to_value = str(downgraded.get("to") or "").strip().lower()
+        if to_value in {"wait", "record", "ask"}:
+            suggested_safe_decision = to_value.upper()
+    summary.metadata["suggested_safe_decision"] = suggested_safe_decision
 
 def verifier_downgraded_decision(summary: VerificationSummary) -> dict[str, Any] | None:
     """Peek at aggregated recommended_action hints from failed verifier checks."""

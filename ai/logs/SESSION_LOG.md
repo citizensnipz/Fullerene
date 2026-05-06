@@ -1,3 +1,11 @@
+### 2026-05-06 - Verifier v1.5 deterministic tightening pass
+
+- **Context:** Needed a v1.5 polish pass on Verifier v1 to tighten deterministic validation around Behavior v2.2 traces, Context v2 packets, World Model v1 artifacts, output metadata/source claims, executor skill results, and policy/planner/executor consistency without adding eval datasets or LLM judging.
+- **Done:** Extended `fullerene/verifier/artifacts.py` with v1.5 validators for Behavior trace consistency, Context v2 packet quality/overload checks, World Model belief/edge checks, generic output capability-claim validation against runtime metadata, generic executor skill validator hooks, and cross-artifact policy/planner/executor consistency checks; extended `fullerene/verifier/checks.py` summary metadata with `affected_artifact_ids` and `suggested_safe_decision`; expanded `tests/test_verifier.py` with synthetic v1.5 cases.
+- **Verified:** `python -m unittest tests.test_verifier -v`; `python -m unittest tests.test_behavior tests.test_world_model tests.test_context tests.test_executor tests.test_policy tests.test_cli -v`; `python -m unittest discover -s tests -p "test_*.py"`.
+- **Next:** Optional follow-up to route richer model-output metadata into verifier inputs in CLI/runtime paths so unsupported capability checks can rely less on optional metadata fields.
+- **Blockers:** None.
+
 ### 2026-05-06 - Behavior v2.2 modular architecture pass
 
 - **Context:** Behavior v2.1 logic lived mostly in `fullerene/facets/behavior.py`; requested refactor split lexical/signals/scoring/confidence/trace/learning modules while preserving deterministic `WAIT/RECORD/ASK/ACT` contract.
@@ -45,6 +53,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 ```
 
 ## Log
+
+### 2026-05-06 - Executor v1 manifest + sandbox execution
+
+- **Context:** Implement Executor v1 with sandboxed file operations, explicit manifest registry, approval gate/timeout, planner feedback metadata, and stronger verifier-facing execution metadata while preserving v0 safety boundaries.
+- **Done:** Added executor registry/sandbox/file-op modules; upgraded executor models and runner for skill-name/version metadata, policy fail-closed live checks, pending approval and timeout statuses, no-partial-execution behavior, and separate bounded file operation audit log; updated Executor facet metadata/state feedback keys; added CLI flags `--executor-live`, `--executor-sandbox-dir`, and `--executor-list-skills`; extended verifier skill consistency checks for required skill metadata and sandbox status; updated harness docs (architecture, glossary, decisions, commands, changelog).
+- **Verified:** Pending local test run after code updates.
+- **Next:** Run full `test_*.py` suite and resolve any regressions in legacy executor/planner/policy/verifier integration tests.
+- **Blockers:** None.
 
 ### 2026-05-06 - Context v2 pressure/relevance deterministic selection
 

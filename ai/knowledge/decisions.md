@@ -9,6 +9,20 @@ Record decisions that matter later, not every small edit.
 - **Decision:** Introduce `fullerene/behavior/` modules (`models`, `lexical`, `signals`, `scoring`, `confidence`, `trace`, `learning`) and preserve `BehaviorFacet` as the public contract in `fullerene/facets/behavior.py`. Keep decisions constrained to `WAIT/RECORD/ASK/ACT`, deterministic-only behavior, no in-facet LLM calls, and compatibility metadata including `response_template`.
 - **Consequences:** Behavior internals are now testable by module boundary while runtime contract remains stable for Nexus/CLI/tests. `response_intent` becomes explicit metadata while `response_template` remains compatibility output.
 
+## 2026-05-06 - Executor v1 uses explicit skill manifest + sandbox file ops
+
+- **Status:** accepted
+- **Context:** Executor v0 handled only internal actions. v1 needed sandboxed file operations, explicit external skill invocation boundaries, approval gating, and planner/verifier-friendly metadata without introducing shell/network/git/MCP/dynamic loading.
+- **Decision:** Keep `ExecutorFacet` as the same facet boundary and upgrade `fullerene/executor/` with explicit registry primitives (`registry.py`, `skills.py`, `models.py` additions), sandbox path resolver (`sandbox.py`), sandboxed file skills (`file_ops.py`), separate bounded file-op audit log, per-step approval pending/timeout statuses, fail-closed live policy checks, and stronger execution record metadata (`skill_name`, `skill_version`, action/target/policy/approval/sandbox fields). External skills are available only when explicitly registered via code/config, never dynamic imports from plan payload.
+- **Consequences:** Executor remains deterministic and inspectable while widening capability only to sandbox file operations and explicit registered skills. No shell/network/git/MCP/parallel/rollback/plugin ecosystem expansion was introduced. Planner and verifier now receive richer step feedback and consistency metadata.
+
+## 2026-05-06 - Verifier v1.5 extends deterministic artifact consistency checks
+
+- **Status:** accepted
+- **Context:** Verifier v1 already performed deterministic schema checks, but Behavior v2.2 traces, Context v2 packets, World Model v1 lifecycle artifacts, and model/output metadata needed tighter cross-artifact consistency validation and clearer retry/escalation recommendations.
+- **Decision:** Keep existing VerifierFacet architecture and add v1.5 deterministic validators in-place: Behavior trace consistency rules, Context v2 packet checks, World Model v1 belief/edge checks, output metadata + generic unsupported capability/source-claim detection, generic skill/executor validator hooks, and policy/planner/executor consistency checks. Keep retry/escalation recommendation-only (no automatic retry loop, no new facet, no LLM judge).
+- **Consequences:** Fullerene surfaces more structured warnings/errors for inconsistent or unsafe runtime artifacts while preserving inspectability, deterministic behavior, Nexus integration, and existing Verifier v1 guardrails.
+
 ## 2026-05-06 - World Model v1 adds deterministic belief lifecycle and contradiction pressure
 
 - **Context:** World Model v0 only supported explicit belief rows/relevance lookup, which was insufficient for tracking evolving confidence, contradictions, provenance, and unresolved pressure signals from conflicting claims.

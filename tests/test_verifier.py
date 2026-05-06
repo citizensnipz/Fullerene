@@ -1061,6 +1061,239 @@ class VerifierV1ArtifactTests(unittest.TestCase):
         vmeta = payload["facet_results"][-1]["metadata"]
         self.assertEqual(vmeta.get("verifier_version"), "v1")
 
+    def test_behavior_v22_invalid_final_decision_fails(self) -> None:
+        trace = _behavior_trace_complete()
+        trace["final_decision"] = "launch"
+        rows, _ = verifier_artifacts.validate_behavior_decision_trace_v2(
+            trace, decision_is_act=False
+        )
+        self.assertTrue(
+            any(r.get("code") == "invalid_enum" for r in rows if isinstance(r, dict)),
+            rows,
+        )
+
+    def test_behavior_v22_act_policy_denied_is_critical(self) -> None:
+        trace = _behavior_trace_complete()
+        trace["final_decision"] = "act"
+        trace["policy_result"] = "denied"
+        rows, reco = verifier_artifacts.validate_behavior_decision_trace_v2(
+            trace, decision_is_act=True
+        )
+        self.assertEqual(reco, DecisionAction.RECORD)
+        self.assertTrue(
+            any(r.get("code") == "act_policy_mismatch" for r in rows if isinstance(r, dict)),
+            rows,
+        )
+
+    def test_behavior_v22_high_confidence_low_grounding_warns(self) -> None:
+        trace = _behavior_trace_complete()
+        trace["confidence"] = 0.9
+        trace["grounding_confidence"] = 0.2
+        rows, _ = verifier_artifacts.validate_behavior_decision_trace_v2(
+            trace, decision_is_act=False
+        )
+        self.assertTrue(
+            any(
+                r.get("code") == "high_confidence_low_grounding_confidence"
+                for r in rows
+                if isinstance(r, dict)
+            ),
+            rows,
+        )
+
+    def test_context_v2_overloaded_with_act_recommends_retry(self) -> None:
+        rows = verifier_artifacts.validate_context_v2_packet(
+            {
+                "strategy": "pressure_relevance_v2",
+                "context_budget": 4,
+                "budget_used": 4,
+                "item_count": 4,
+                "included_context_types": ["event", "working_memory"],
+                "excluded_context_items": [{"id": "x", "reason": "budget_evicted"}],
+                "context_load": {
+                    "item_count": 4,
+                    "max_items": 4,
+                    "load_ratio": 1.0,
+                    "overloaded": True,
+                },
+            },
+            behavior_trace={"final_decision": "act"},
+            event={"event_type": "user_message"},
+        )
+        self.assertTrue(
+            any(
+                r.get("code") == "overloaded_context_act_retry"
+                for r in rows
+                if isinstance(r, dict)
+            ),
+            rows,
+        )
+
+    def test_context_v2_missing_working_memory_inclusion_warns(self) -> None:
+        rows = verifier_artifacts.validate_context_v2_packet(
+            {
+                "strategy": "pressure_relevance_v2",
+                "working_memory_turn_count": 3,
+                "included_working_memory_turns": [],
+            },
+            behavior_trace={"final_decision": "ask"},
+            event={"event_type": "user_message"},
+        )
+        self.assertTrue(
+            any(
+                r.get("code") == "missing_working_memory_inclusion"
+                for r in rows
+                if isinstance(r, dict)
+            ),
+            rows,
+        )
+
+    def test_world_model_contradicted_without_count_warns(self) -> None:
+        rows = verifier_artifacts.validate_world_model_v1_artifacts(
+            {
+                "relevant_beliefs": [
+                    {
+                        "id": "b1",
+                        "claim": "x",
+                        "normalized_key": "x",
+                        "confidence": 0.8,
+                        "status": "contradicted",
+                        "support_count": 1,
+                        "contradiction_count": 0,
+                    }
+                ]
+            }
+        )
+        self.assertTrue(
+            any(
+                r.get("code") == "contradicted_without_contradiction_count"
+                for r in rows
+                if isinstance(r, dict)
+            ),
+            rows,
+        )
+
+    def test_world_model_self_link_edge_warns(self) -> None:
+        rows = verifier_artifacts.validate_world_model_v1_artifacts(
+            {
+                "world_model_updates": {
+                    "edges": [
+                        {
+                            "source_belief_id": "b1",
+                            "target_belief_id": "b1",
+                            "edge_type": "related",
+                            "weight": 0.5,
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertTrue(
+            any(
+                r.get("code") == "belief_edge_self_link"
+                for r in rows
+                if isinstance(r, dict)
+            ),
+            rows,
+        )
+
+    def test_output_capability_claim_missing_trace_is_detected(self) -> None:
+        rows = verifier_artifacts.validate_output_metadata_and_capability_claims(
+            {"output_text": "I searched and looked up the latest web results."},
+            available_traces={},
+        )
+        self.assertTrue(
+            any(
+                r.get("code") in {"unsupported_capability_claim", "missing_tool_or_executor_trace"}
+                for r in rows
+                if isinstance(r, dict)
+            ),
+            rows,
+        )
+
+    def test_output_capability_claim_with_trace_passes(self) -> None:
+        rows = verifier_artifacts.validate_output_metadata_and_capability_claims(
+            {"output_text": "I called tool and checked database results."},
+            available_traces={"executor": {"execution_result": {"records": [{}]}}},
+        )
+        self.assertTrue(
+            any(
+                r.get("code") == "supported_capability_claim"
+                for r in rows
+                if isinstance(r, dict)
+            ),
+            rows,
+        )
+
+    def test_skill_validator_rejects_malformed_executor_result(self) -> None:
+        rows, reco = verifier_artifacts.validate_executor_skill_result_generic(
+            {
+                "execution_result": {
+                    "records": [
+                        {
+                            "status": "success",
+                            "dry_run": True,
+                            "metadata": {},
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertEqual(reco, DecisionAction.RECORD)
+        self.assertTrue(
+            any(
+                r.get("code") == "success_missing_action_or_target"
+                for r in rows
+                if isinstance(r, dict)
+            ),
+            rows,
+        )
+
+    def test_live_executor_without_policy_allowed_is_critical(self) -> None:
+        rows, reco = verifier_artifacts.validate_policy_planner_executor_consistency(
+            decision_action=DecisionAction.ACT,
+            policy_meta={},
+            behavior_trace={"final_decision": "record"},
+            planner_plan=None,
+            executor_meta={
+                "execution_result": {
+                    "records": [
+                        {
+                            "status": "success",
+                            "dry_run": False,
+                            "metadata": {
+                                "action_type": "update_goal",
+                                "target_type": "goal",
+                                "policy_status": "approval_required",
+                            },
+                        }
+                    ]
+                }
+            },
+        )
+        self.assertEqual(reco, DecisionAction.RECORD)
+        self.assertTrue(
+            any(
+                r.get("code") == "live_execution_without_policy_allowed"
+                for r in rows
+                if isinstance(r, dict)
+            ),
+            rows,
+        )
+
+    def test_verifier_summary_metadata_is_json_serializable(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        runtime = NexusRuntime(
+            facets=[BehaviorFacet(), VerifierFacet(state_dir=root)],
+            store=InMemoryStateStore(),
+        )
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="What should I do next?")
+        )
+        verifier_metadata = record.facet_results[-1].metadata
+        json.dumps(verifier_metadata)
+
 
 if __name__ == "__main__":
     unittest.main()

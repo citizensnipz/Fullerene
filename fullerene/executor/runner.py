@@ -1,51 +1,23 @@
-"""Internal-only plan execution for Fullerene Executor v0."""
+"""Manifest-backed execution engine for Fullerene Executor v1."""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from fullerene.executor.models import (
-    ActionType,
-    ExecutionMode,
-    ExecutionRecord,
-    ExecutionResult,
-    ExecutionStatus,
-    coerce_action_type,
-)
+from fullerene.executor.models import ActionType, ExecutionMode, ExecutionRecord, ExecutionResult, ExecutionStatus, SkillManifestEntry
+from fullerene.executor.registry import SkillRegistry
+from fullerene.executor.skills import register_builtin_skills
 from fullerene.goals import Goal, GoalStatus, GoalStore
 from fullerene.memory import MemoryStore
 from fullerene.planner import Plan, PlanStep, PlanStepStatus, RiskLevel
 from fullerene.policy import PolicyStatus
 from fullerene.world_model import Belief, BeliefStatus, WorldModelStore
 
-EXTERNAL_TARGET_TYPES = frozenset(
-    {"file_write", "file_delete", "shell", "network", "message", "git", "tool"}
-)
-ACTION_TARGETS: dict[ActionType, frozenset[str]] = {
-    ActionType.UPDATE_MEMORY: frozenset({"memory", "internal_state"}),
-    ActionType.UPDATE_GOAL: frozenset({"goal", "internal_state"}),
-    ActionType.UPDATE_BELIEF: frozenset({"belief", "internal_state"}),
-    ActionType.EMIT_EVENT: frozenset({"event", "internal_state"}),
-    ActionType.NOOP: frozenset({"noop", "general", "internal_state"}),
-}
-KNOWN_TARGET_TYPES = frozenset(EXTERNAL_TARGET_TYPES | set().union(*ACTION_TARGETS.values()))
-
-
-@dataclass(slots=True)
-class _PreparedAction:
-    step: PlanStep
-    action_type: ActionType
-    target_type: str
-    payload: dict[str, Any]
-    goal: Goal | None = None
-    belief: Belief | None = None
-
 
 class InternalActionExecutor:
-    """Execute approved internal actions and halt before partial mutation."""
+    """Execute deterministic manifest-registered skills only."""
 
     def __init__(
         self,
@@ -54,6 +26,7 @@ class InternalActionExecutor:
         world_model_store: WorldModelStore | None = None,
         memory_store: MemoryStore | None = None,
         state_dir: Path | str | None = None,
+        sandbox_dir: Path | str | None = None,
     ) -> None:
         self.goal_store = goal_store
         self.world_model_store = world_model_store
@@ -61,20 +34,21 @@ class InternalActionExecutor:
         self.state_dir = (
             Path(state_dir).expanduser().resolve() if state_dir is not None else None
         )
-        self._prepare_handlers = {
-            ActionType.NOOP: self._prepare_noop,
-            ActionType.EMIT_EVENT: self._prepare_emit_event,
-            ActionType.UPDATE_GOAL: self._prepare_goal_update,
-            ActionType.UPDATE_BELIEF: self._prepare_belief_update,
-            ActionType.UPDATE_MEMORY: self._prepare_memory_update,
-        }
-        self._execute_handlers = {
-            ActionType.NOOP: self._execute_noop,
-            ActionType.EMIT_EVENT: self._execute_emit_event,
-            ActionType.UPDATE_GOAL: self._execute_goal_update,
-            ActionType.UPDATE_BELIEF: self._execute_belief_update,
-            ActionType.UPDATE_MEMORY: self._execute_memory_update,
-        }
+        self.registry = SkillRegistry()
+        register_builtin_skills(self.registry)
+        self.pending_approvals: dict[str, dict[str, Any]] = {}
+        self.approval_timeout_cycles = 3
+        self.file_operation_log: list[dict[str, Any]] = []
+        self.max_file_log_entries = 100
+        if sandbox_dir is not None:
+            self.sandbox_root = Path(sandbox_dir).expanduser().resolve()
+        else:
+            self.sandbox_root = (self.state_dir / "sandbox").resolve() if self.state_dir else None
+        if self.sandbox_root is not None:
+            self.sandbox_root.mkdir(parents=True, exist_ok=True)
+
+    def register_skill(self, entry: SkillManifestEntry, handler) -> None:
+        self.registry.register_skill(entry, handler)
 
     def execute(
         self,
@@ -94,27 +68,40 @@ class InternalActionExecutor:
                 metadata={"mode": mode.value},
             )
 
-        prepared: list[_PreparedAction] = []
+        # Preflight all steps first: no partial execution.
+        preflight_records: list[ExecutionRecord] = []
         for step in steps:
-            action, record = self._preflight(step, plan_id=plan_id, dry_run=dry_run)
-            if record is not None:
-                return ExecutionResult(
-                    plan_id=plan_id,
-                    records=[record],
-                    overall_status=record.status,
-                    halted=True,
-                    dry_run=dry_run,
-                    reasons=[str(record.metadata.get("reason", ""))],
-                    metadata={"mode": mode.value, "preflight_failed": True},
-                )
-            assert action is not None
-            prepared.append(action)
+            preflight = self._preflight_step(step=step, plan_id=plan_id, dry_run=dry_run)
+            if preflight is not None:
+                preflight_records.append(preflight)
+        if preflight_records:
+            first = preflight_records[0]
+            return ExecutionResult(
+                plan_id=plan_id,
+                records=preflight_records,
+                overall_status=first.status,
+                halted=True,
+                dry_run=dry_run,
+                reasons=[str(first.metadata.get("reason", "preflight_failed"))],
+                metadata={"mode": mode.value, "preflight_failed": True, "file_operation_log": list(self.file_operation_log)},
+            )
 
         records: list[ExecutionRecord] = []
-        for action in prepared:
-            record = self._execute_action(action, plan_id=plan_id, dry_run=dry_run)
+        for index, step in enumerate(steps):
+            record = self._execute_step(step=step, plan_id=plan_id, dry_run=dry_run)
             records.append(record)
-            if record.status != ExecutionStatus.SUCCESS:
+            if record.status not in {ExecutionStatus.SUCCESS, ExecutionStatus.PENDING_APPROVAL}:
+                for remaining in steps[index + 1 :]:
+                    records.append(
+                        self._make_record(
+                            step=remaining,
+                            plan_id=plan_id,
+                            status=ExecutionStatus.SKIPPED,
+                            dry_run=dry_run,
+                            reason="skipped_due_to_prior_failure",
+                            message="Skipped because a prior step failed.",
+                        )
+                    )
                 return ExecutionResult(
                     plan_id=plan_id,
                     records=records,
@@ -122,13 +109,19 @@ class InternalActionExecutor:
                     halted=True,
                     dry_run=dry_run,
                     reasons=[self._record_reason(record) or "execution_failed"],
-                    metadata={"mode": mode.value, "preflight_failed": False},
+                    metadata={"mode": mode.value, "preflight_failed": False, "file_operation_log": list(self.file_operation_log)},
                 )
-        emitted_events = [
-            record.metadata["emitted_event"]
-            for record in records
-            if isinstance(record.metadata.get("emitted_event"), dict)
-        ]
+            if record.status == ExecutionStatus.PENDING_APPROVAL:
+                return ExecutionResult(
+                    plan_id=plan_id,
+                    records=records,
+                    overall_status=ExecutionStatus.PENDING_APPROVAL,
+                    halted=True,
+                    dry_run=dry_run,
+                    reasons=["pending_approval"],
+                    metadata={"mode": mode.value, "preflight_failed": False, "file_operation_log": list(self.file_operation_log)},
+                )
+
         return ExecutionResult(
             plan_id=plan_id,
             records=records,
@@ -139,7 +132,7 @@ class InternalActionExecutor:
             metadata={
                 "mode": mode.value,
                 "preflight_failed": False,
-                "emitted_events": emitted_events,
+                "file_operation_log": list(self.file_operation_log),
             },
         )
 
@@ -152,590 +145,214 @@ class InternalActionExecutor:
         steps = list(plan_or_steps)
         return None, sorted(steps, key=lambda step: (step.order, step.id))
 
-    def _preflight(
-        self,
-        step: PlanStep,
-        *,
-        plan_id: str | None,
-        dry_run: bool,
-    ) -> tuple[_PreparedAction | None, ExecutionRecord | None]:
-        step_status = self._coerce_status(step.status)
-        risk = self._coerce_risk(step.risk_level)
+    def _preflight_step(self, *, step: PlanStep, plan_id: str | None, dry_run: bool) -> ExecutionRecord | None:
         target_type = self._coerce_target(step.target_type)
+        action_type = self._resolve_action_type(step, target_type=target_type)
+        declared_action = str(step.metadata.get("action_type") or "").strip().lower()
+        action_name = action_type.value if action_type else declared_action
+        skill_name = str(step.metadata.get("skill_name") or self._default_skill_name(action_type)).strip().lower()
         policy_status = self._coerce_policy(step.policy_status)
 
-        if bool(step.requires_approval) or step_status == PlanStepStatus.REQUIRES_APPROVAL:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.SKIPPED,
-                reason="requires_approval",
-                message="Step requires approval and Executor v0 cannot run it.",
-                target_type=target_type,
-                policy_status=policy_status,
-                risk_level=risk,
-            )
-        if step_status == PlanStepStatus.BLOCKED or policy_status == PolicyStatus.DENIED.value:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.SKIPPED,
-                reason="blocked_by_policy",
-                message="Step is blocked by policy and cannot execute.",
-                target_type=target_type,
-                policy_status=policy_status,
-                risk_level=risk,
-            )
-        if policy_status == PolicyStatus.APPROVAL_REQUIRED.value:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.SKIPPED,
-                reason="requires_approval",
-                message="Policy requires approval for this step.",
-                target_type=target_type,
-                policy_status=policy_status,
-                risk_level=risk,
-            )
-        if target_type not in KNOWN_TARGET_TYPES:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="unsupported_target_type",
-                message="Step targets an unknown Executor v0 target type.",
-                target_type=target_type,
-                action_type=self._declared_action_type(step),
-                policy_status=policy_status,
-                risk_level=risk,
-            )
-        if risk == RiskLevel.HIGH.value:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.SKIPPED,
-                reason="high_risk_not_allowed_v0",
-                message="High-risk steps are not allowed in Executor v0.",
-                target_type=target_type,
-                policy_status=policy_status,
-                risk_level=risk,
-            )
-        if target_type in EXTERNAL_TARGET_TYPES:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="unsupported_target_type",
-                message="Executor v0 refuses external side-effect target types.",
-                target_type=target_type,
-                policy_status=policy_status,
-                risk_level=risk,
-            )
-        if target_type == "internal_state":
-            outside_record = self._check_internal_state_path(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                policy_status=policy_status,
-                risk_level=risk,
-            )
-            if outside_record is not None:
-                return None, outside_record
+        if not dry_run and policy_status != PolicyStatus.ALLOWED.value:
+            return self._make_record(step=step, plan_id=plan_id, status=ExecutionStatus.FAILED, dry_run=dry_run, reason="policy_not_allowed_for_live", message="Live execution requires policy allowed.", skill_name=skill_name, target_type=target_type, policy_status=policy_status, action_type_name=action_name)
+        if step.status == PlanStepStatus.BLOCKED or policy_status == PolicyStatus.DENIED.value:
+            return self._make_record(step=step, plan_id=plan_id, status=ExecutionStatus.SKIPPED, dry_run=dry_run, reason="blocked_by_policy", message="Step is blocked by policy.", skill_name=skill_name, target_type=target_type, policy_status=policy_status, action_type_name=action_name)
+        if not action_name:
+            return self._make_record(step=step, plan_id=plan_id, status=ExecutionStatus.FAILED, dry_run=dry_run, reason="unsupported_action_type", message="Unsupported action type.", skill_name=skill_name, target_type=target_type, policy_status=policy_status)
 
-        action_type = self._resolve_action_type(step, target_type=target_type)
-        if action_type is None:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="unsupported_action_type",
-                message="Step does not declare a supported Executor v0 action.",
-                target_type=target_type,
-                action_type=self._declared_action_type(step),
-                policy_status=policy_status,
-                risk_level=risk,
-            )
-        handler = self._prepare_handlers.get(action_type)
-        if handler is None:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="unsupported_action_type",
-                message="Step declares an Executor action without a registered v0 handler.",
-                target_type=target_type,
-                action_type=action_type,
-                policy_status=policy_status,
-                risk_level=risk,
-            )
-        if target_type not in ACTION_TARGETS[action_type]:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="unsupported_target_type",
-                message="Step target type is not supported for the declared Executor action.",
-                target_type=target_type,
-                action_type=action_type,
-                policy_status=policy_status,
-                risk_level=risk,
-            )
-        return handler(
-            step,
-            plan_id=plan_id,
-            dry_run=dry_run,
-            target_type=target_type,
-        )
-
-    def _prepare_noop(
-        self,
-        step: PlanStep,
-        *,
-        plan_id: str | None,
-        dry_run: bool,
-        target_type: str,
-    ) -> tuple[_PreparedAction | None, ExecutionRecord | None]:
-        return _PreparedAction(step, ActionType.NOOP, target_type, {}), None
-
-    def _prepare_emit_event(
-        self,
-        step: PlanStep,
-        *,
-        plan_id: str | None,
-        dry_run: bool,
-        target_type: str,
-    ) -> tuple[_PreparedAction | None, ExecutionRecord | None]:
-        raw_event = step.metadata.get("event")
-        if not isinstance(raw_event, dict):
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="invalid_action_payload",
-                message="emit_event requires explicit dict-like metadata['event'].",
-                target_type=target_type,
-                action_type=ActionType.EMIT_EVENT,
-            )
-        event_payload = dict(raw_event)
-        event_payload.setdefault("event_type", "system_note")
-        return (
-            _PreparedAction(
-                step=step,
-                action_type=ActionType.EMIT_EVENT,
-                target_type=target_type,
-                payload={"event": event_payload},
-            ),
-            None,
-        )
-
-    def _prepare_goal_update(
-        self,
-        step: PlanStep,
-        *,
-        plan_id: str | None,
-        dry_run: bool,
-        target_type: str,
-    ) -> tuple[_PreparedAction | None, ExecutionRecord | None]:
-        goal_id = self._coerce_string(step.metadata.get("goal_id"))
-        raw_status = step.metadata.get("status", step.metadata.get("goal_status"))
-        if goal_id is None or raw_status is None:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="invalid_action_payload",
-                message="update_goal requires goal_id and status.",
-                target_type=target_type,
-                action_type=ActionType.UPDATE_GOAL,
-            )
-        try:
-            status = GoalStatus(str(raw_status).strip().lower())
-        except ValueError:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="invalid_action_payload",
-                message="update_goal status is invalid.",
-                target_type=target_type,
-                action_type=ActionType.UPDATE_GOAL,
-            )
-        goal = self.goal_store.get_goal(goal_id) if self.goal_store else None
-        if self.goal_store is not None and goal is None:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="unknown_goal",
-                message=f"Goal {goal_id!r} does not exist.",
-                target_type=target_type,
-                action_type=ActionType.UPDATE_GOAL,
-            )
-        if not dry_run and self.goal_store is None:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="unsupported_live_action",
-                message="Live update_goal is unsupported without a goal store.",
-                target_type=target_type,
-                action_type=ActionType.UPDATE_GOAL,
-            )
-        return (
-            _PreparedAction(
-                step=step,
-                action_type=ActionType.UPDATE_GOAL,
-                target_type=target_type,
-                payload={"goal_id": goal_id, "status": status},
-                goal=goal,
-            ),
-            None,
-        )
-
-    def _prepare_belief_update(
-        self,
-        step: PlanStep,
-        *,
-        plan_id: str | None,
-        dry_run: bool,
-        target_type: str,
-    ) -> tuple[_PreparedAction | None, ExecutionRecord | None]:
-        belief_id = self._coerce_string(step.metadata.get("belief_id"))
-        if belief_id is None:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="invalid_action_payload",
-                message="update_belief requires belief_id.",
-                target_type=target_type,
-                action_type=ActionType.UPDATE_BELIEF,
-            )
-        status = None
-        if "status" in step.metadata or "belief_status" in step.metadata:
-            raw_status = step.metadata.get("status", step.metadata.get("belief_status"))
-            try:
-                status = BeliefStatus(str(raw_status).strip().lower())
-            except ValueError:
-                return None, self._terminal_record(
-                    step,
-                    plan_id=plan_id,
-                    dry_run=dry_run,
-                    status=ExecutionStatus.FAILED,
-                    reason="invalid_action_payload",
-                    message="update_belief status is invalid.",
-                    target_type=target_type,
-                    action_type=ActionType.UPDATE_BELIEF,
-                )
-        confidence = step.metadata.get("confidence")
-        if status is None and not isinstance(confidence, (int, float)):
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="invalid_action_payload",
-                message="update_belief requires status or numeric confidence.",
-                target_type=target_type,
-                action_type=ActionType.UPDATE_BELIEF,
-            )
-        belief = self.world_model_store.get_belief(belief_id) if self.world_model_store else None
-        if self.world_model_store is not None and belief is None:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="unknown_belief",
-                message=f"Belief {belief_id!r} does not exist.",
-                target_type=target_type,
-                action_type=ActionType.UPDATE_BELIEF,
-            )
-        if not dry_run and self.world_model_store is None:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="unsupported_live_action",
-                message="Live update_belief is unsupported without a world-model store.",
-                target_type=target_type,
-                action_type=ActionType.UPDATE_BELIEF,
-            )
-        return (
-            _PreparedAction(
-                step=step,
-                action_type=ActionType.UPDATE_BELIEF,
-                target_type=target_type,
-                payload={
-                    "belief_id": belief_id,
-                    "status": status,
-                    "confidence": float(confidence) if isinstance(confidence, (int, float)) else None,
-                },
-                belief=belief,
-            ),
-            None,
-        )
-
-    def _prepare_memory_update(
-        self,
-        step: PlanStep,
-        *,
-        plan_id: str | None,
-        dry_run: bool,
-        target_type: str,
-    ) -> tuple[_PreparedAction | None, ExecutionRecord | None]:
-        memory_id = self._coerce_string(step.metadata.get("memory_id"))
-        if memory_id is None:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="invalid_action_payload",
-                message="update_memory requires memory_id.",
-                target_type=target_type,
-                action_type=ActionType.UPDATE_MEMORY,
-            )
-        if not dry_run:
-            return None, self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="unsupported_live_action",
-                message="Live update_memory is unsupported in Executor v0.",
-                target_type=target_type,
-                action_type=ActionType.UPDATE_MEMORY,
-            )
-        return (
-            _PreparedAction(
-                step=step,
-                action_type=ActionType.UPDATE_MEMORY,
-                target_type=target_type,
-                payload={"memory_id": memory_id},
-            ),
-            None,
-        )
-
-    def _execute_action(
-        self,
-        action: _PreparedAction,
-        *,
-        plan_id: str | None,
-        dry_run: bool,
-    ) -> ExecutionRecord:
-        handler = self._execute_handlers.get(action.action_type)
-        if handler is None:
-            return self._terminal_record(
-                action.step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="unsupported_action_type",
-                message="Prepared action has no registered Executor v0 execution handler.",
-                target_type=action.target_type,
-                action_type=action.action_type,
-            )
-        try:
-            return handler(action, plan_id=plan_id, dry_run=dry_run)
-        except Exception as exc:
-            return self._terminal_record(
-                action.step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="execution_failed",
-                message=f"Executor v0 failed while applying {action.action_type.value}.",
-                target_type=action.target_type,
-                action_type=action.action_type,
-                metadata={
-                    "error": str(exc),
-                    "error_type": type(exc).__name__,
-                },
-            )
-
-    def _execute_noop(
-        self,
-        action: _PreparedAction,
-        *,
-        plan_id: str | None,
-        dry_run: bool,
-    ) -> ExecutionRecord:
-        return self._success_record(
-            action.step,
-            plan_id=plan_id,
-            dry_run=dry_run,
-            action_type=action.action_type,
-            message="Dry-run validated noop action." if dry_run else "Executed noop action.",
-            metadata={"target_type": action.target_type},
-        )
-
-    def _execute_emit_event(
-        self,
-        action: _PreparedAction,
-        *,
-        plan_id: str | None,
-        dry_run: bool,
-    ) -> ExecutionRecord:
-        return self._success_record(
-            action.step,
-            plan_id=plan_id,
-            dry_run=dry_run,
-            action_type=action.action_type,
-            message="Dry-run captured internal event emission." if dry_run else "Recorded internal event emission.",
-            metadata={
-                "target_type": action.target_type,
-                "emitted_event": dict(action.payload["event"]),
-            },
-        )
-
-    def _execute_goal_update(
-        self,
-        action: _PreparedAction,
-        *,
-        plan_id: str | None,
-        dry_run: bool,
-    ) -> ExecutionRecord:
-        goal_id = action.payload["goal_id"]
-        status = action.payload["status"]
-        if not dry_run:
-            assert self.goal_store is not None
-            assert action.goal is not None
-            goal = Goal.from_dict(action.goal.to_dict())
-            goal.status = status
-            self.goal_store.update_goal(goal)
-        return self._success_record(
-            action.step,
-            plan_id=plan_id,
-            dry_run=dry_run,
-            action_type=action.action_type,
-            message=f"Dry-run would update goal {goal_id!r}." if dry_run else f"Updated goal {goal_id!r}.",
-            metadata={
-                "target_type": action.target_type,
-                "goal_id": goal_id,
-                "status": status.value,
-            },
-        )
-
-    def _execute_belief_update(
-        self,
-        action: _PreparedAction,
-        *,
-        plan_id: str | None,
-        dry_run: bool,
-    ) -> ExecutionRecord:
-        belief_id = action.payload["belief_id"]
-        if not dry_run:
-            assert self.world_model_store is not None
-            assert action.belief is not None
-            belief = Belief.from_dict(action.belief.to_dict())
-            if action.payload["status"] is not None:
-                belief.status = action.payload["status"]
-            if action.payload["confidence"] is not None:
-                belief.confidence = Belief._validate_confidence(action.payload["confidence"])
-            self.world_model_store.update_belief(belief)
-        return self._success_record(
-            action.step,
-            plan_id=plan_id,
-            dry_run=dry_run,
-            action_type=action.action_type,
-            message=f"Dry-run would update belief {belief_id!r}." if dry_run else f"Updated belief {belief_id!r}.",
-            metadata={
-                "target_type": action.target_type,
-                "belief_id": belief_id,
-                "status": (
-                    action.payload["status"].value
-                    if action.payload["status"] is not None
-                    else None
-                ),
-                "confidence": action.payload["confidence"],
-            },
-        )
-
-    def _execute_memory_update(
-        self,
-        action: _PreparedAction,
-        *,
-        plan_id: str | None,
-        dry_run: bool,
-    ) -> ExecutionRecord:
-        return self._success_record(
-            action.step,
-            plan_id=plan_id,
-            dry_run=dry_run,
-            action_type=action.action_type,
-            message=f"Dry-run would update memory {action.payload['memory_id']!r}.",
-            metadata={
-                "target_type": action.target_type,
-                "memory_id": action.payload["memory_id"],
-            },
-        )
-
-    def _check_internal_state_path(
-        self,
-        step: PlanStep,
-        *,
-        plan_id: str | None,
-        dry_run: bool,
-        policy_status: str | None,
-        risk_level: str | None,
-    ) -> ExecutionRecord | None:
-        raw_path = step.metadata.get("path")
-        if raw_path is None or self.state_dir is None:
-            return None
-        path = self._coerce_string(raw_path)
-        if path is None:
-            return self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.FAILED,
-                reason="invalid_action_payload",
-                message="internal_state path must be a non-empty string.",
-                target_type="internal_state",
-                policy_status=policy_status,
-                risk_level=risk_level,
-            )
-        candidate = Path(path).expanduser()
-        if not candidate.is_absolute():
-            candidate = self.state_dir / candidate
-        candidate = candidate.resolve()
-        try:
-            candidate.relative_to(self.state_dir)
-        except ValueError:
-            return self._terminal_record(
-                step,
-                plan_id=plan_id,
-                dry_run=dry_run,
-                status=ExecutionStatus.SKIPPED,
-                reason="outside_state_dir",
-                message="internal_state paths must stay inside the configured state-dir.",
-                target_type="internal_state",
-                policy_status=policy_status,
-                risk_level=risk_level,
-                metadata={"resolved_path": str(candidate)},
-            )
+        ok, reason = self.registry.validate_skill_invocation(skill_name=skill_name, action_type=action_name, target_type=target_type)
+        if not ok:
+            status = ExecutionStatus.FAILED if reason == "skill_not_registered" else ExecutionStatus.SKIPPED
+            return self._make_record(step=step, plan_id=plan_id, status=status, dry_run=dry_run, reason=reason, message="Skill invocation rejected by registry.", skill_name=skill_name, target_type=target_type, policy_status=policy_status, action_type_name=action_name)
         return None
 
+    def _execute_step(self, *, step: PlanStep, plan_id: str | None, dry_run: bool) -> ExecutionRecord:
+        target_type = self._coerce_target(step.target_type)
+        action_type = self._resolve_action_type(step, target_type=target_type)
+        action_name = action_type.value if action_type else str(step.metadata.get("action_type") or "").strip().lower()
+        skill_name = str(step.metadata.get("skill_name") or self._default_skill_name(action_type)).strip().lower()
+        registered = self.registry.get_skill(skill_name)
+        policy_status = self._coerce_policy(step.policy_status)
+        cycle = int(step.metadata.get("cycle_id", 0) or 0)
+
+        if registered is None:
+            return self._make_record(step=step, plan_id=plan_id, status=ExecutionStatus.FAILED, dry_run=dry_run, reason="skill_not_registered", message="Skill is not registered.", skill_name=skill_name, target_type=target_type, policy_status=policy_status, action_type_name=action_name)
+        entry = registered.entry
+
+        requires_approval = bool(step.requires_approval or step.status == PlanStepStatus.REQUIRES_APPROVAL or policy_status == PolicyStatus.APPROVAL_REQUIRED.value or entry.requires_approval)
+        approval = self._extract_approval(step.metadata.get("approval"))
+        if requires_approval and approval is None:
+            approval_id = f"approval-{step.id}"
+            pending = self.pending_approvals.get(approval_id)
+            if pending is None:
+                pending = {"approval_id": approval_id, "requested_cycle": cycle, "expires_after_cycles": self.approval_timeout_cycles}
+                self.pending_approvals[approval_id] = pending
+            elapsed = max(0, cycle - int(pending.get("requested_cycle", cycle)))
+            if elapsed >= int(pending.get("expires_after_cycles", self.approval_timeout_cycles)):
+                return self._make_record(step=step, plan_id=plan_id, status=ExecutionStatus.APPROVAL_TIMEOUT, dry_run=dry_run, reason="approval_timeout", message="Approval timed out.", skill_name=skill_name, skill_version=entry.version, target_type=target_type, policy_status=policy_status, action_type_name=action_name, approval_status="timed_out")
+            return self._make_record(step=step, plan_id=plan_id, status=ExecutionStatus.PENDING_APPROVAL, dry_run=dry_run, reason="pending_approval", message="Awaiting approval.", skill_name=skill_name, skill_version=entry.version, target_type=target_type, policy_status=policy_status, action_type_name=action_name, approval_status="pending")
+
+        try:
+            payload = dict(step.metadata)
+            response = self._dispatch_skill(registered=registered, payload=payload, dry_run=dry_run, step=step)
+        except Exception as exc:
+            return self._make_record(step=step, plan_id=plan_id, status=ExecutionStatus.FAILED, dry_run=dry_run, reason="execution_failed", message=f"Execution failed: {exc}", skill_name=skill_name, skill_version=entry.version, target_type=target_type, policy_status=policy_status, action_type_name=action_name)
+
+        success = bool(response.get("success", False))
+        status = ExecutionStatus.SUCCESS if success else ExecutionStatus.FAILED
+        reason = str(response.get("reason", "ok" if success else "execution_failed"))
+        sandbox_status = "ok" if entry.sandbox_required else "not_required"
+        metadata = dict(response)
+        if skill_name in {"file_read", "file_write", "file_list"}:
+            self._append_file_op(skill_name=skill_name, step_id=step.id, payload=payload, dry_run=dry_run, response=response)
+        return self._make_record(
+            step=step,
+            plan_id=plan_id,
+            status=status,
+            dry_run=dry_run,
+            reason=reason,
+            message="Skill executed." if success else "Skill execution failed.",
+            skill_name=skill_name,
+            skill_version=entry.version,
+            target_type=target_type,
+            policy_status=policy_status,
+            action_type_name=action_name,
+            sandbox_status=sandbox_status,
+            metadata=metadata,
+            retryable=not success,
+            requires_replan=not success and reason not in {"approval_timeout", "blocked_by_policy"},
+        )
+
+    def _dispatch_skill(self, *, registered, payload: dict[str, Any], dry_run: bool, step: PlanStep) -> dict[str, Any]:
+        handler = registered.handler
+        skill_name = registered.entry.skill_name
+        if skill_name in {"goal_update", "world_model_belief_update", "internal_event", "memory_write"}:
+            return self._dispatch_legacy(skill_name=skill_name, payload=payload, dry_run=dry_run)
+        return handler(payload=payload, dry_run=dry_run, sandbox_root=self.sandbox_root, plan_step=step)
+
+    def _dispatch_legacy(self, *, skill_name: str, payload: dict[str, Any], dry_run: bool) -> dict[str, Any]:
+        if skill_name == "internal_event":
+            event_payload = payload.get("event")
+            if not isinstance(event_payload, dict):
+                return {"success": False, "reason": "invalid_action_payload"}
+            return {"success": True, "emitted_event": dict(event_payload)}
+        if skill_name == "goal_update":
+            goal_id = self._coerce_string(payload.get("goal_id"))
+            raw_status = payload.get("status")
+            if not goal_id or raw_status is None:
+                return {"success": False, "reason": "invalid_action_payload"}
+            try:
+                status = GoalStatus(str(raw_status).strip().lower())
+            except ValueError:
+                return {"success": False, "reason": "invalid_action_payload"}
+            goal = self.goal_store.get_goal(goal_id) if self.goal_store else None
+            if self.goal_store and goal is None:
+                return {"success": False, "reason": "unknown_goal"}
+            if not dry_run and self.goal_store and goal:
+                updated = Goal.from_dict(goal.to_dict())
+                updated.status = status
+                self.goal_store.update_goal(updated)
+            return {"success": True, "goal_id": goal_id, "status": status.value}
+        if skill_name == "world_model_belief_update":
+            belief_id = self._coerce_string(payload.get("belief_id"))
+            if not belief_id:
+                return {"success": False, "reason": "invalid_action_payload"}
+            belief = self.world_model_store.get_belief(belief_id) if self.world_model_store else None
+            if self.world_model_store and belief is None:
+                return {"success": False, "reason": "unknown_belief"}
+            if not dry_run and self.world_model_store and belief:
+                updated = Belief.from_dict(belief.to_dict())
+                if isinstance(payload.get("confidence"), (int, float)):
+                    updated.confidence = Belief._validate_confidence(payload["confidence"])
+                self.world_model_store.update_belief(updated)
+            return {"success": True, "belief_id": belief_id}
+        if skill_name == "memory_write":
+            return {"success": dry_run, "reason": "unsupported_live_action" if not dry_run else "ok"}
+        return {"success": False, "reason": "skill_not_registered"}
+
+    def _append_file_op(self, *, skill_name: str, step_id: str, payload: dict[str, Any], dry_run: bool, response: dict[str, Any]) -> None:
+        op = "read" if skill_name == "file_read" else "write" if skill_name == "file_write" else "list"
+        row = {
+            "operation_id": f"file-op-{len(self.file_operation_log) + 1}",
+            "skill_name": skill_name,
+            "operation": op,
+            "requested_path": payload.get("path", "."),
+            "resolved_relative_path": response.get("resolved_relative_path"),
+            "dry_run": dry_run,
+            "success": bool(response.get("success", False)),
+            "bytes_read": response.get("bytes_read"),
+            "bytes_written": response.get("bytes_written"),
+            "reason": response.get("reason"),
+            "plan_step_id": step_id,
+        }
+        self.file_operation_log.append(row)
+        self.file_operation_log = self.file_operation_log[-self.max_file_log_entries :]
+
     @staticmethod
-    def _declared_action_type(step: PlanStep) -> ActionType | None:
-        return coerce_action_type(step.metadata.get("action_type"))
+    def _extract_approval(raw: Any) -> dict[str, Any] | None:
+        if not isinstance(raw, dict):
+            return None
+        if raw.get("approved") is not True:
+            return None
+        return dict(raw)
+
+    @staticmethod
+    def _default_skill_name(action_type: ActionType | None) -> str:
+        if action_type == ActionType.UPDATE_MEMORY:
+            return "memory_write"
+        if action_type == ActionType.UPDATE_GOAL:
+            return "goal_update"
+        if action_type == ActionType.UPDATE_BELIEF:
+            return "world_model_belief_update"
+        if action_type == ActionType.EMIT_EVENT:
+            return "internal_event"
+        if action_type == ActionType.NOOP:
+            return "internal_event"
+        return ""
+
+    def _make_record(
+        self,
+        *,
+        step: PlanStep,
+        plan_id: str | None,
+        status: ExecutionStatus,
+        dry_run: bool,
+        reason: str,
+        message: str,
+        skill_name: str = "",
+        skill_version: str = "v1",
+        action_type_name: str = "",
+        target_type: str = "",
+        policy_status: str | None = None,
+        approval_status: str | None = None,
+        sandbox_status: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        retryable: bool = False,
+        requires_replan: bool = False,
+    ) -> ExecutionRecord:
+        merged = {"reason": reason, "step_order": step.order, "target_type": target_type, **dict(metadata or {})}
+        if action_type_name:
+            merged.setdefault("action_type", action_type_name)
+        if policy_status:
+            merged.setdefault("policy_status", policy_status)
+        return ExecutionRecord(
+            action_type=self._resolve_action_type(step, target_type=target_type),
+            plan_id=plan_id,
+            plan_step_id=step.id,
+            status=status,
+            dry_run=dry_run,
+            message=message,
+            metadata=merged,
+            skill_name=skill_name,
+            skill_version=skill_version,
+            action_type_name=action_type_name,
+            target_type=target_type,
+            policy_status=policy_status,
+            approval_status=approval_status,
+            sandbox_status=sandbox_status,
+            retryable=retryable,
+            requires_replan=requires_replan,
+        )
 
     @staticmethod
     def _resolve_action_type(
@@ -743,36 +360,21 @@ class InternalActionExecutor:
         *,
         target_type: str,
     ) -> ActionType | None:
-        raw_action_type = step.metadata.get("action_type")
-        action_type = coerce_action_type(raw_action_type)
-        if action_type is not None:
-            return action_type
-        if raw_action_type is not None:
+        raw = step.metadata.get("action_type")
+        if isinstance(raw, ActionType):
+            return raw
+        if isinstance(raw, str):
+            cleaned = raw.strip().lower()
+            for action in ActionType:
+                if action.value == cleaned:
+                    return action
             return None
-        if target_type == "noop":
-            return ActionType.NOOP
-        return None
+        return ActionType.NOOP if target_type == "noop" else None
 
     @staticmethod
     def _coerce_target(raw_value: Any) -> str:
         cleaned = str(raw_value or "").strip().lower()
         return cleaned or "unknown"
-
-    @staticmethod
-    def _coerce_status(raw_value: Any) -> PlanStepStatus | None:
-        if isinstance(raw_value, PlanStepStatus):
-            return raw_value
-        try:
-            return PlanStepStatus(str(raw_value).strip().lower())
-        except ValueError:
-            return None
-
-    @staticmethod
-    def _coerce_risk(raw_value: Any) -> str | None:
-        if isinstance(raw_value, RiskLevel):
-            return raw_value.value
-        cleaned = str(raw_value or "").strip().lower()
-        return cleaned or None
 
     @staticmethod
     def _coerce_policy(raw_value: Any) -> str | None:
@@ -790,61 +392,3 @@ class InternalActionExecutor:
     def _record_reason(record: ExecutionRecord) -> str | None:
         reason = record.metadata.get("reason")
         return reason if isinstance(reason, str) and reason.strip() else None
-
-    def _success_record(
-        self,
-        step: PlanStep,
-        *,
-        plan_id: str | None,
-        dry_run: bool,
-        action_type: ActionType,
-        message: str,
-        metadata: dict[str, Any] | None = None,
-    ) -> ExecutionRecord:
-        return ExecutionRecord(
-            action_type=action_type,
-            plan_id=plan_id,
-            plan_step_id=step.id,
-            status=ExecutionStatus.SUCCESS,
-            dry_run=dry_run,
-            message=message,
-            metadata={
-                "step_order": step.order,
-                "step_description": step.description,
-                **dict(metadata or {}),
-            },
-        )
-
-    def _terminal_record(
-        self,
-        step: PlanStep,
-        *,
-        plan_id: str | None,
-        dry_run: bool,
-        status: ExecutionStatus,
-        reason: str,
-        message: str,
-        target_type: str,
-        action_type: ActionType | None = None,
-        policy_status: str | None = None,
-        risk_level: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> ExecutionRecord:
-        return ExecutionRecord(
-            action_type=action_type,
-            plan_id=plan_id,
-            plan_step_id=step.id,
-            status=status,
-            dry_run=dry_run,
-            message=message,
-            metadata={
-                "reason": reason,
-                "step_order": step.order,
-                "step_description": step.description,
-                "target_type": target_type,
-                "declared_action_type": step.metadata.get("action_type"),
-                "policy_status": policy_status,
-                "risk_level": risk_level,
-                **dict(metadata or {}),
-            },
-        )

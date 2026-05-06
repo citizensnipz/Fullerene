@@ -10,6 +10,13 @@ from fullerene.executor.models import ExecutionStatus, coerce_action_type
 from fullerene.learning.models import AdjustmentStatus, AdjustmentTarget
 from fullerene.nexus.models import DecisionAction
 from fullerene.planner.models import PlanStatus, PlanStepStatus, RiskLevel
+from fullerene.context.models import (
+    DYNAMIC_ACTIVE_FACETS_V1,
+    PRESSURE_RELEVANCE_V2,
+    STATIC_RECENT_EPISODIC_V0,
+    ContextItemType,
+)
+from fullerene.world_model.models import BeliefStatus
 
 DECISION_STRINGS = frozenset({"wait", "record", "ask", "act"})
 KNOWN_POLICY_STATUS = frozenset(
@@ -30,6 +37,21 @@ CANONICAL_PRESSURE_KEYS = (
     "contradiction_pressure",
     "context_overload_pressure",
     "interrupt_pressure",
+)
+BEHAVIOR_DECISION_KEYS = ("wait", "record", "ask", "act")
+ACT_OVERLOAD_THRESHOLD = 0.85
+VALID_CONTEXT_STRATEGIES = frozenset(
+    {STATIC_RECENT_EPISODIC_V0, DYNAMIC_ACTIVE_FACETS_V1, PRESSURE_RELEVANCE_V2}
+)
+VALID_CONTEXT_TYPES = frozenset(item.value for item in ContextItemType)
+VALID_BELIEF_STATUS = frozenset(
+    {BeliefStatus.VALID.value, BeliefStatus.CONTRADICTED.value, BeliefStatus.REDUNDANT.value}
+)
+UNSUPPORTED_CAPABILITY_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("external_access_claim", ("searched", "looked up", "browsed", "accessed the web")),
+    ("file_or_database_access_claim", ("read file", "checked database", "queried api")),
+    ("tool_use_claim", ("called tool", "used clock", "accessed real-time data")),
+    ("memory_source_claim", ("remembered", "retrieved from memory", "based on records")),
 )
 
 
@@ -86,6 +108,14 @@ def _coerce_decision_str(value: Any) -> str | None:
         return None
     s = value.strip().lower()
     return s if s in DECISION_STRINGS else None
+
+
+def _to_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if not isinstance(value, (int, float)):
+        return None
+    return float(value)
 
 
 def validate_behavior_decision_trace_v2(
@@ -224,7 +254,7 @@ def validate_behavior_decision_trace_v2(
                 )
             )
             continue
-        for dec in DECISION_STRINGS:
+        for dec in BEHAVIOR_DECISION_KEYS:
             if dec not in blob:
                 out.append(
                     artifact_result(
@@ -310,6 +340,180 @@ def validate_behavior_decision_trace_v2(
                 retry_recommended=True,
             )
         )
+
+    for metric in (
+        "conversational_intent_score",
+        "grounding_confidence",
+        "ambiguity_score",
+        "continuity_confidence",
+        "self_consistency_confidence",
+        "world_model_belief_confidence",
+        "context_load_ratio",
+    ):
+        if metric in trace and trace.get(metric) is not None and not _is_unit_number(trace.get(metric)):
+            out.append(
+                artifact_result(
+                    validator="behavior_decision_trace_schema",
+                    artifact_kind=artifact_kind,
+                    status="failed",
+                    severity="warning",
+                    code="invalid_numeric",
+                    path=f"behavior.decision_trace.{metric}",
+                    message=f"{metric} must be numeric in [0,1] when present.",
+                    retry_recommended=True,
+                )
+            )
+
+    intent_scores = trace.get("intent_scores")
+    if intent_scores is not None:
+        if not isinstance(intent_scores, Mapping):
+            out.append(
+                artifact_result(
+                    validator="behavior_decision_trace_schema",
+                    artifact_kind=artifact_kind,
+                    status="failed",
+                    severity="warning",
+                    code="invalid_type",
+                    path="behavior.decision_trace.intent_scores",
+                    message="intent_scores must be mapping when present.",
+                    retry_recommended=True,
+                )
+            )
+        else:
+            for k, v in intent_scores.items():
+                if not _is_unit_number(v):
+                    out.append(
+                        artifact_result(
+                            validator="behavior_decision_trace_schema",
+                            artifact_kind=artifact_kind,
+                            status="failed",
+                            severity="warning",
+                            code="invalid_numeric",
+                            path=f"behavior.decision_trace.intent_scores.{k}",
+                            message="intent_scores values must be in [0,1].",
+                            retry_recommended=True,
+                        )
+                    )
+
+    is_act = decision_is_act
+    trace_is_act = fd == "act"
+    policy_result = str(trace.get("policy_result") or "").strip().lower()
+    contradiction = trace.get("contradiction_flag") is True
+    conf = _to_float(trace.get("confidence")) or 0.0
+    grounding_need = str(trace.get("grounding_need") or "unknown").strip().lower()
+    grounding_available = bool(trace.get("grounding_available"))
+    grounding_conf = _to_float(trace.get("grounding_confidence")) or 0.0
+    ambiguity = _to_float(trace.get("ambiguity_score")) or 0.0
+    ctx_ratio = _to_float(trace.get("context_load_ratio")) or 0.0
+
+    if is_act and policy_result in {"denied", "approval_required"}:
+        out.append(
+            artifact_result(
+                validator="behavior_decision_trace_consistency",
+                artifact_kind=artifact_kind,
+                status="failed",
+                severity="critical",
+                code="act_policy_mismatch",
+                path="behavior.decision_trace.policy_result",
+                message="ACT cannot be final_decision when policy_result is denied/approval_required.",
+                retry_recommended=False,
+                escalation_recommended=True,
+            )
+        )
+        reco = DecisionAction.ASK if policy_result == "approval_required" else DecisionAction.RECORD
+    elif trace_is_act and policy_result in {"denied", "approval_required"}:
+        out.append(
+            artifact_result(
+                validator="behavior_decision_trace_consistency",
+                artifact_kind=artifact_kind,
+                status="warning",
+                severity="warning",
+                code="behavior_act_policy_mismatch_downgraded",
+                path="behavior.decision_trace.policy_result",
+                message="Behavior trace selected ACT while policy denied/required approval, but final decision was downgraded.",
+            )
+        )
+
+    if is_act and contradiction:
+        sev = "error" if conf >= 0.7 else "warning"
+        out.append(
+            artifact_result(
+                validator="behavior_decision_trace_consistency",
+                artifact_kind=artifact_kind,
+                status="failed",
+                severity=sev,
+                code="act_with_contradiction",
+                path="behavior.decision_trace.contradiction_flag",
+                message="ACT selected while contradiction_flag is true.",
+                retry_recommended=True,
+                escalation_recommended=sev == "error",
+            )
+        )
+        if sev == "error":
+            reco = reco or DecisionAction.ASK
+
+    if is_act and grounding_need not in {"none", "unknown"} and not grounding_available:
+        sev = "error" if conf >= 0.7 else "warning"
+        out.append(
+            artifact_result(
+                validator="behavior_decision_trace_consistency",
+                artifact_kind=artifact_kind,
+                status="failed",
+                severity=sev,
+                code="act_without_grounding",
+                path="behavior.decision_trace.grounding_available",
+                message="ACT selected while grounding is required but unavailable.",
+                retry_recommended=True,
+                escalation_recommended=False,
+            )
+        )
+        if sev == "error":
+            reco = reco or DecisionAction.ASK
+
+    if conf >= 0.75 and grounding_conf <= 0.35:
+        out.append(
+            artifact_result(
+                validator="behavior_decision_trace_consistency",
+                artifact_kind=artifact_kind,
+                status="warning",
+                severity="warning",
+                code="high_confidence_low_grounding_confidence",
+                path="behavior.decision_trace.grounding_confidence",
+                message="High confidence with low grounding_confidence should be reviewed.",
+                retry_recommended=True,
+            )
+        )
+
+    if (is_act or trace_is_act) and ambiguity >= 0.7 and grounding_conf < 0.8:
+        out.append(
+            artifact_result(
+                validator="behavior_decision_trace_consistency",
+                artifact_kind=artifact_kind,
+                status="warning",
+                severity="warning",
+                code="act_high_ambiguity",
+                path="behavior.decision_trace.ambiguity_score",
+                message="ACT under high ambiguity without strong grounding confidence.",
+                retry_recommended=True,
+            )
+        )
+
+    if is_act and ctx_ratio > ACT_OVERLOAD_THRESHOLD and grounding_conf < 0.5:
+        sev = "error" if conf >= 0.7 else "warning"
+        out.append(
+            artifact_result(
+                validator="behavior_decision_trace_consistency",
+                artifact_kind=artifact_kind,
+                status="failed",
+                severity=sev,
+                code="act_context_overload_low_grounding",
+                path="behavior.decision_trace.context_load_ratio",
+                message="ACT selected during context overload with weak grounding confidence.",
+                retry_recommended=True,
+            )
+        )
+        if sev == "error":
+            reco = reco or DecisionAction.ASK
 
     has_failed = any(r.get("status") == "failed" for r in out)
     if not has_failed:
@@ -1229,6 +1433,399 @@ def validate_context_load_metadata(
     return out
 
 
+def validate_context_v2_packet(
+    context_meta: Mapping[str, Any] | None,
+    *,
+    behavior_trace: Mapping[str, Any] | None,
+    event: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not context_meta:
+        return out
+    kind = "context_v2_packet"
+    strategy = str(context_meta.get("strategy") or "").strip().lower()
+    if strategy and strategy not in VALID_CONTEXT_STRATEGIES:
+        out.append(
+            artifact_result(
+                validator="context_v2_schema",
+                artifact_kind=kind,
+                status="failed",
+                severity="warning",
+                code="invalid_context_strategy",
+                path="context.metadata.strategy",
+                message="Context strategy is not recognized.",
+                retry_recommended=True,
+            )
+        )
+    for key in ("context_budget", "budget_used", "item_count"):
+        if key in context_meta and context_meta.get(key) is not None and _to_float(context_meta.get(key)) is None:
+            out.append(
+                artifact_result(
+                    validator="context_v2_schema",
+                    artifact_kind=kind,
+                    status="failed",
+                    severity="warning",
+                    code="invalid_numeric",
+                    path=f"context.metadata.{key}",
+                    message=f"{key} should be numeric.",
+                    retry_recommended=True,
+                )
+            )
+    ict = context_meta.get("included_context_types")
+    if ict is not None:
+        if not isinstance(ict, list):
+            out.append(
+                artifact_result(
+                    validator="context_v2_schema",
+                    artifact_kind=kind,
+                    status="failed",
+                    severity="warning",
+                    code="invalid_type",
+                    path="context.metadata.included_context_types",
+                    message="included_context_types should be a list.",
+                )
+            )
+        else:
+            bad = [x for x in ict if str(x) not in VALID_CONTEXT_TYPES]
+            if bad:
+                out.append(
+                    artifact_result(
+                        validator="context_v2_schema",
+                        artifact_kind=kind,
+                        status="failed",
+                        severity="warning",
+                        code="invalid_context_type",
+                        path="context.metadata.included_context_types",
+                        message=f"Unknown context types: {bad}.",
+                    )
+                )
+    excluded = context_meta.get("excluded_context_items")
+    if isinstance(excluded, list):
+        for idx, row in enumerate(excluded[:64]):
+            if isinstance(row, Mapping) and not str(row.get("reason") or "").strip():
+                out.append(
+                    artifact_result(
+                        validator="context_v2_schema",
+                        artifact_kind=kind,
+                        status="warning",
+                        severity="warning",
+                        code="excluded_item_missing_reason",
+                        path=f"context.metadata.excluded_context_items[{idx}]",
+                        message="Excluded context items should include reason.",
+                    )
+                )
+    if strategy == PRESSURE_RELEVANCE_V2:
+        for key in ("current_event_id", "context_budget", "excluded_context_items"):
+            if key not in context_meta:
+                out.append(
+                    artifact_result(
+                        validator="context_v2_consistency",
+                        artifact_kind=kind,
+                        status="warning",
+                        severity="warning",
+                        code="missing_pressure_relevance_metadata",
+                        path=f"context.metadata.{key}",
+                        message=f"{key} should be present for pressure_relevance_v2.",
+                        retry_recommended=True,
+                    )
+                )
+    if context_meta.get("working_memory_turn_count", 0) and not context_meta.get("included_working_memory_turns"):
+        event_type = str((event or {}).get("event_type") or "").lower()
+        if event_type == "user_message":
+            out.append(
+                artifact_result(
+                    validator="context_v2_consistency",
+                    artifact_kind=kind,
+                    status="warning",
+                    severity="warning",
+                    code="missing_working_memory_inclusion",
+                    path="context.metadata.included_working_memory_turns",
+                    message="Recent working memory exists but no working-memory item was included.",
+                    retry_recommended=True,
+                )
+            )
+    if context_meta.get("active_unresolved_signal_count", 0) and not context_meta.get("included_lpb_entry_ids"):
+        out.append(
+            artifact_result(
+                validator="context_v2_consistency",
+                artifact_kind=kind,
+                status="warning",
+                severity="warning",
+                code="missing_lpb_context",
+                path="context.metadata.included_lpb_entry_ids",
+                message="Active unresolved signals exist but no LPB context item is included.",
+                retry_recommended=True,
+            )
+        )
+    cload = context_meta.get("context_load")
+    is_overloaded = isinstance(cload, Mapping) and bool(cload.get("overloaded"))
+    if is_overloaded and isinstance(behavior_trace, Mapping) and _coerce_decision_str(behavior_trace.get("final_decision")) == "act":
+        out.append(
+            artifact_result(
+                validator="context_v2_consistency",
+                artifact_kind=kind,
+                status="failed",
+                severity="warning",
+                code="overloaded_context_act_retry",
+                path="context.metadata.context_load.overloaded",
+                message="Overloaded Context v2 with ACT should recommend compaction/retry.",
+                retry_recommended=True,
+            )
+        )
+    out.append(
+        artifact_result(
+            validator="context_v2_schema",
+            artifact_kind=kind,
+            status="passed",
+            severity="info",
+            code="ok",
+            path="context.metadata",
+            message="Context v2 packet checks complete.",
+        )
+    )
+    return out
+
+
+def validate_world_model_v1_artifacts(world_meta: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not world_meta:
+        return out
+    kind = "world_model_v1"
+    relevant = world_meta.get("relevant_beliefs")
+    if isinstance(relevant, list):
+        by_norm: dict[str, int] = {}
+        for idx, belief in enumerate(relevant):
+            if not isinstance(belief, Mapping):
+                continue
+            if not belief.get("id"):
+                out.append(artifact_result(validator="world_model_belief_schema", artifact_kind=kind, status="failed", severity="warning", code="missing_belief_id", path=f"world_model.relevant_beliefs[{idx}].id", message="belief_id should be present."))
+            norm = str(belief.get("normalized_key") or "").strip()
+            if not norm and not str(belief.get("claim") or "").strip():
+                out.append(artifact_result(validator="world_model_belief_schema", artifact_kind=kind, status="failed", severity="warning", code="missing_content_or_normalized_key", path=f"world_model.relevant_beliefs[{idx}]", message="belief should include claim/content or normalized_key."))
+            if not _is_unit_number(belief.get("confidence")):
+                out.append(artifact_result(validator="world_model_belief_schema", artifact_kind=kind, status="failed", severity="warning", code="invalid_confidence", path=f"world_model.relevant_beliefs[{idx}].confidence", message="belief confidence must be in [0,1]."))
+            status = str(belief.get("status") or "").strip().lower()
+            if status and status not in VALID_BELIEF_STATUS:
+                out.append(artifact_result(validator="world_model_belief_schema", artifact_kind=kind, status="failed", severity="warning", code="invalid_belief_status", path=f"world_model.relevant_beliefs[{idx}].status", message="belief status must be valid|contradicted|redundant."))
+            sc = belief.get("support_count", 0)
+            cc = belief.get("contradiction_count", 0)
+            if _to_float(sc) is not None and float(sc) < 0:
+                out.append(artifact_result(validator="world_model_belief_schema", artifact_kind=kind, status="failed", severity="warning", code="negative_support_count", path=f"world_model.relevant_beliefs[{idx}].support_count", message="support_count must be >=0."))
+            if _to_float(cc) is not None and float(cc) < 0:
+                out.append(artifact_result(validator="world_model_belief_schema", artifact_kind=kind, status="failed", severity="warning", code="negative_contradiction_count", path=f"world_model.relevant_beliefs[{idx}].contradiction_count", message="contradiction_count must be >=0."))
+            if status == "contradicted" and float(cc or 0) <= 0:
+                out.append(artifact_result(validator="world_model_belief_consistency", artifact_kind=kind, status="failed", severity="warning", code="contradicted_without_contradiction_count", path=f"world_model.relevant_beliefs[{idx}].contradiction_count", message="Contradicted belief should have contradiction_count > 0."))
+            if float(cc or 0) > 0 and float(belief.get("confidence") or 0.0) >= 0.9 and float(sc or 0) < float(cc):
+                out.append(artifact_result(validator="world_model_belief_consistency", artifact_kind=kind, status="warning", severity="warning", code="contradiction_high_confidence_mismatch", path=f"world_model.relevant_beliefs[{idx}]", message="Belief has contradictions but remains very high confidence."))
+            if status == "valid" and float(belief.get("confidence") or 0.0) < 0.2:
+                out.append(artifact_result(validator="world_model_belief_consistency", artifact_kind=kind, status="warning", severity="warning", code="low_confidence_valid_status", path=f"world_model.relevant_beliefs[{idx}].status", message="Very low-confidence belief marked valid."))
+            if status == "redundant" and norm:
+                by_norm[norm] = by_norm.get(norm, 0) + 1
+        for k, count in by_norm.items():
+            if count > 1:
+                out.append(artifact_result(validator="world_model_belief_consistency", artifact_kind=kind, status="warning", severity="warning", code="duplicate_redundant_normalized_key", path="world_model.relevant_beliefs", message=f"Redundant beliefs duplicate normalized_key {k!r}."))
+    updates = world_meta.get("world_model_updates")
+    if isinstance(updates, Mapping):
+        edges = updates.get("edges")
+        if isinstance(edges, list):
+            for i, edge in enumerate(edges):
+                if not isinstance(edge, Mapping):
+                    continue
+                src = str(edge.get("source_belief_id") or edge.get("source") or "")
+                tgt = str(edge.get("target_belief_id") or edge.get("target") or "")
+                et = str(edge.get("edge_type") or edge.get("type") or "")
+                w = edge.get("weight")
+                if not src or not tgt or not et or _to_float(w) is None:
+                    out.append(artifact_result(validator="world_model_edge_schema", artifact_kind=kind, status="failed", severity="warning", code="invalid_edge_fields", path=f"world_model.world_model_updates.edges[{i}]", message="Belief edge requires source/target/type/weight."))
+                if src and tgt and src == tgt and not bool(edge.get("allow_self_link")):
+                    out.append(artifact_result(validator="world_model_edge_schema", artifact_kind=kind, status="failed", severity="warning", code="belief_edge_self_link", path=f"world_model.world_model_updates.edges[{i}]", message="Belief edge should not self-link unless explicitly allowed."))
+    signals = world_meta.get("contradiction_signals")
+    if isinstance(signals, list):
+        has_contra = any(isinstance(s, Mapping) and s.get("entry_type") == "contradiction" for s in signals)
+        if relevant and not has_contra:
+            contradicted = any(isinstance(b, Mapping) and str(b.get("status") or "").lower() == "contradicted" for b in (relevant or []))
+            if contradicted:
+                out.append(artifact_result(validator="world_model_lpb_consistency", artifact_kind=kind, status="warning", severity="warning", code="missing_contradiction_pressure_signal", path="world_model.contradiction_signals", message="Contradicted belief present without contradiction pressure signal."))
+    out.append(
+        artifact_result(
+            validator="world_model_v1_schema",
+            artifact_kind=kind,
+            status="passed",
+            severity="info",
+            code="ok",
+            path="world_model.metadata",
+            message="World Model v1 checks complete.",
+        )
+    )
+    return out
+
+
+def validate_output_metadata_and_capability_claims(
+    output_meta: Mapping[str, Any] | None,
+    *,
+    available_traces: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    if not output_meta:
+        return out
+    kind = "output_metadata"
+    for key in ("output_type",):
+        if key in output_meta and not isinstance(output_meta.get(key), str):
+            out.append(artifact_result(validator="output_metadata_schema", artifact_kind=kind, status="failed", severity="warning", code="invalid_type", path=f"output.{key}", message=f"{key} should be string when present.", retry_recommended=True))
+    if "response_needed" in output_meta and not isinstance(output_meta.get("response_needed"), bool):
+        out.append(artifact_result(validator="output_metadata_schema", artifact_kind=kind, status="failed", severity="warning", code="invalid_type", path="output.response_needed", message="response_needed should be boolean.", retry_recommended=True))
+    text = str(output_meta.get("output_text") or output_meta.get("response_text") or output_meta.get("final_text") or "").lower()
+    if text:
+        traces = available_traces or {}
+        has_exec = bool(traces.get("executor"))
+        has_source_ids = bool(output_meta.get("source_ids") or output_meta.get("context_ids"))
+        has_grounding = bool(output_meta.get("grounding_metadata") or output_meta.get("grounding_confidence") is not None)
+        for code, patterns in UNSUPPORTED_CAPABILITY_PATTERNS:
+            if any(p in text for p in patterns):
+                missing = False
+                row_code = "unsupported_capability_claim"
+                if code == "tool_use_claim" and not has_exec:
+                    missing = True
+                    row_code = "missing_tool_or_executor_trace"
+                elif code in {"file_or_database_access_claim", "external_access_claim"} and not has_exec:
+                    missing = True
+                elif code == "memory_source_claim" and not has_source_ids:
+                    missing = True
+                    row_code = "missing_source_ids"
+                if "ground" in text and not has_grounding:
+                    missing = True
+                    row_code = "missing_grounding_metadata"
+                out.append(
+                    artifact_result(
+                        validator="output_capability_claims",
+                        artifact_kind=kind,
+                        status="failed" if missing else "info",
+                        severity="error" if missing else "info",
+                        code=row_code if missing else "supported_capability_claim",
+                        path="output.output_text",
+                        message="Capability/source claim requires matching runtime metadata." if missing else "Capability/source claim has matching runtime metadata.",
+                        retry_recommended=missing,
+                        escalation_recommended=False,
+                    )
+                )
+    out.append(artifact_result(validator="output_metadata_schema", artifact_kind=kind, status="passed", severity="info", code="ok", path="output", message="Output metadata checks complete."))
+    return out
+
+
+SKILL_VALIDATORS: dict[str, Any] = {}
+
+
+def register_skill_validator(skill_name: str, validator: Any) -> None:
+    SKILL_VALIDATORS[str(skill_name).strip().lower()] = validator
+
+
+def validate_executor_skill_result_generic(
+    executor_meta: Mapping[str, Any] | None,
+) -> tuple[list[dict[str, Any]], DecisionAction | None]:
+    out: list[dict[str, Any]] = []
+    reco: DecisionAction | None = None
+    if not executor_meta:
+        return out, reco
+    kind = "skill_executor_result"
+    er = executor_meta.get("execution_result")
+    if not isinstance(er, Mapping):
+        return out, reco
+    for idx, rec in enumerate(er.get("records", []) if isinstance(er.get("records"), list) else []):
+        if not isinstance(rec, Mapping):
+            continue
+        st = str(rec.get("status") or "").lower()
+        dry = rec.get("dry_run")
+        md = rec.get("metadata") if isinstance(rec.get("metadata"), Mapping) else {}
+        if not isinstance(dry, bool):
+            out.append(artifact_result(validator="skill_result_generic", artifact_kind=kind, status="failed", severity="warning", code="dry_run_not_explicit", path=f"executor.execution_result.records[{idx}].dry_run", message="dry_run/live mode should be explicit.", retry_recommended=True))
+        action_type = md.get("action_type") or md.get("requested_action_type")
+        target_type = md.get("target_type")
+        if st == "success" and (not action_type or not target_type):
+            out.append(artifact_result(validator="skill_result_generic", artifact_kind=kind, status="failed", severity="error", code="success_missing_action_or_target", path=f"executor.execution_result.records[{idx}].metadata", message="Successful record should include action_type and target_type.", retry_recommended=True))
+            reco = DecisionAction.RECORD
+        skill_name = rec.get("skill_name")
+        skill_version = rec.get("skill_version")
+        if not isinstance(skill_name, str) or not skill_name.strip():
+            out.append(artifact_result(validator="skill_result_generic", artifact_kind=kind, status="failed", severity="warning", code="missing_skill_name", path=f"executor.execution_result.records[{idx}].skill_name", message="Execution record should include skill_name.", retry_recommended=True))
+        if not isinstance(skill_version, str) or not skill_version.strip():
+            out.append(artifact_result(validator="skill_result_generic", artifact_kind=kind, status="failed", severity="warning", code="missing_skill_version", path=f"executor.execution_result.records[{idx}].skill_version", message="Execution record should include skill_version.", retry_recommended=True))
+        if st == "success" and str(target_type or "").strip().lower() == "file":
+            sandbox_status = str(rec.get("sandbox_status") or "").strip().lower()
+            if sandbox_status not in {"ok", "not_required"}:
+                out.append(artifact_result(validator="skill_result_generic", artifact_kind=kind, status="failed", severity="critical", code="file_op_sandbox_status_missing", path=f"executor.execution_result.records[{idx}].sandbox_status", message="File operations require explicit sandbox_status.", escalation_recommended=True))
+        if st == "failed" and not (md.get("reason_code") or md.get("reason")):
+            out.append(artifact_result(validator="skill_result_generic", artifact_kind=kind, status="warning", severity="warning", code="failed_without_reason", path=f"executor.execution_result.records[{idx}].metadata", message="Failed execution should include reason/reason_code."))
+        if st == "success" and dry is False:
+            allowed = str(md.get("policy_status") or "").lower() in {"allowed", "allow"}
+            if not allowed:
+                out.append(artifact_result(validator="skill_result_generic", artifact_kind=kind, status="failed", severity="critical", code="live_execution_policy_mismatch", path=f"executor.execution_result.records[{idx}].metadata.policy_status", message="Live execution requires policy-allowed metadata.", escalation_recommended=True))
+                reco = DecisionAction.RECORD
+    if not any(r.get("status") == "failed" for r in out):
+        out.append(artifact_result(validator="skill_result_generic", artifact_kind=kind, status="passed", severity="info", code="ok", path="executor.execution_result", message="Skill validator hooks passed for executor output."))
+    return out, reco
+
+
+def validate_policy_planner_executor_consistency(
+    *,
+    decision_action: DecisionAction | None,
+    policy_meta: Mapping[str, Any] | None,
+    behavior_trace: Mapping[str, Any] | None,
+    planner_plan: Mapping[str, Any] | None,
+    executor_meta: Mapping[str, Any] | None,
+) -> tuple[list[dict[str, Any]], DecisionAction | None]:
+    out: list[dict[str, Any]] = []
+    reco: DecisionAction | None = None
+    kind = "cross_artifact_consistency"
+    final_decision = _coerce_decision_str((behavior_trace or {}).get("final_decision"))
+    decision_is_act = decision_action == DecisionAction.ACT
+    policy_status = str((policy_meta or {}).get("policy_status") or (behavior_trace or {}).get("policy_result") or "").lower()
+    approval_token = (policy_meta or {}).get("approval_token_valid")
+    if decision_is_act and policy_status == "denied":
+        out.append(artifact_result(validator="policy_behavior_consistency", artifact_kind=kind, status="failed", severity="critical", code="act_while_policy_denied", path="behavior.decision_trace.final_decision", message="Behavior selected ACT while policy denied.", escalation_recommended=True))
+        reco = DecisionAction.RECORD
+    if decision_is_act and policy_status == "approval_required" and approval_token is not True:
+        out.append(artifact_result(validator="policy_behavior_consistency", artifact_kind=kind, status="failed", severity="error", code="act_without_approval_token", path="policy.policy_status", message="ACT selected while approval required without approval token.", escalation_recommended=True))
+        reco = DecisionAction.ASK
+    if not decision_is_act and final_decision == "act" and policy_status in {"denied", "approval_required"}:
+        out.append(artifact_result(validator="policy_behavior_consistency", artifact_kind=kind, status="info", severity="info", code="behavior_act_downgraded_by_policy", path="behavior.decision_trace.final_decision", message="Behavior trace ACT appears to be downgraded by policy/runtime."))
+    if final_decision == "ask" and policy_status == "approval_required":
+        out.append(artifact_result(validator="policy_behavior_consistency", artifact_kind=kind, status="info", severity="info", code="ask_for_approval_ok", path="behavior.decision_trace.final_decision", message="ASK is compatible with approval_required policy."))
+    if isinstance(planner_plan, Mapping):
+        steps = planner_plan.get("steps")
+        executable_steps = [s for s in steps if isinstance(s, Mapping) and str((s.get("metadata") or {}).get("action_type") or "").lower() not in {"", "noop"}] if isinstance(steps, list) else []
+        if executable_steps and not isinstance(policy_meta, Mapping):
+            out.append(artifact_result(validator="planner_policy_consistency", artifact_kind=kind, status="warning", severity="warning", code="planner_missing_policy_evaluation", path="planner.plan.steps", message="Plan has executable steps but policy evaluation metadata is missing.", retry_recommended=True))
+        for idx, step in enumerate(executable_steps):
+            st = str(step.get("status") or "").lower()
+            pol = str(step.get("policy_status") or "").lower()
+            if pol == "denied" and st != "blocked":
+                out.append(artifact_result(validator="planner_policy_consistency", artifact_kind=kind, status="failed", severity="error", code="denied_step_marked_executable", path=f"planner.plan.steps[{idx}].status", message="Denied step should be blocked/non-executable."))
+                reco = reco or DecisionAction.ASK
+            if pol == "approval_required" and not (step.get("requires_approval") or (step.get("metadata") or {}).get("approval")):
+                out.append(artifact_result(validator="planner_policy_consistency", artifact_kind=kind, status="failed", severity="warning", code="approval_required_step_missing_metadata", path=f"planner.plan.steps[{idx}]", message="Approval-required step lacks approval metadata.", retry_recommended=True))
+    if isinstance(executor_meta, Mapping):
+        er = executor_meta.get("execution_result")
+        if isinstance(er, Mapping):
+            for idx, rec in enumerate(er.get("records", []) if isinstance(er.get("records"), list) else []):
+                if not isinstance(rec, Mapping):
+                    continue
+                md = rec.get("metadata") if isinstance(rec.get("metadata"), Mapping) else {}
+                dry = rec.get("dry_run")
+                status = str(rec.get("status") or "").lower()
+                pol = str(md.get("policy_status") or "").lower()
+                if dry is False and pol not in {"allowed", "allow"}:
+                    out.append(artifact_result(validator="executor_policy_consistency", artifact_kind=kind, status="failed", severity="critical", code="live_execution_without_policy_allowed", path=f"executor.execution_result.records[{idx}].metadata.policy_status", message="Live execution requires policy allowed.", escalation_recommended=True))
+                    reco = DecisionAction.RECORD
+                if status == "success" and (not md.get("action_type") or not md.get("target_type")):
+                    out.append(artifact_result(validator="executor_policy_consistency", artifact_kind=kind, status="failed", severity="error", code="success_unsupported_action_target", path=f"executor.execution_result.records[{idx}].metadata", message="Success record missing supported action/target.", retry_recommended=True))
+                    reco = reco or DecisionAction.RECORD
+                if status == "failed" and not (md.get("reason_code") or md.get("reason")):
+                    out.append(artifact_result(validator="executor_policy_consistency", artifact_kind=kind, status="warning", severity="warning", code="failed_execution_missing_reason", path=f"executor.execution_result.records[{idx}].metadata", message="Failed execution should include reason metadata."))
+    if not any(str(r.get("status")) == "failed" for r in out):
+        out.append(artifact_result(validator="cross_artifact_consistency", artifact_kind=kind, status="passed", severity="info", code="ok", path="consistency", message="Policy/Planner/Executor consistency checks complete."))
+    return out, reco
+
+
 ExpressionGateForbiddenPayloadKeys = frozenset(
     {
         "text",
@@ -1798,9 +2395,13 @@ def run_all_artifact_validators(
     behavior_trace = None
     policy_meta = None
     context_load = None
+    context_meta = None
+    world_meta = None
     learning_meta = None
     plan = None
     executor_er = None
+    executor_meta = None
+    behavior_meta = None
 
     for fr in facet_results:
         name = getattr(fr, "facet_name", "")
@@ -1808,7 +2409,11 @@ def run_all_artifact_validators(
         if not isinstance(md, Mapping):
             continue
         if name == "behavior":
+            behavior_meta = md
             behavior_trace = md.get("decision_trace")
+            context_load = md.get("context_load") or context_load
+        if name == "context":
+            context_meta = md
             context_load = md.get("context_load") or context_load
         if name == "policy":
             policy_meta = md
@@ -1820,6 +2425,9 @@ def run_all_artifact_validators(
             plan = md["plan"]
         if name == "executor" and isinstance(md.get("execution_result"), Mapping):
             executor_er = md["execution_result"]
+            executor_meta = md
+        if name == "world_model":
+            world_meta = md
 
     decision_is_act = decision_action == DecisionAction.ACT
 
@@ -1835,6 +2443,18 @@ def run_all_artifact_validators(
 
     if isinstance(context_load, Mapping):
         rows.extend(validate_context_load_metadata(context_load))
+    if isinstance(context_meta, Mapping):
+        rows.extend(
+            validate_context_v2_packet(
+                context_meta,
+                behavior_trace=behavior_trace if isinstance(behavior_trace, Mapping) else None,
+                event={
+                    "event_type": nexus_ctx.get("event_type") if isinstance(nexus_ctx, Mapping) else None
+                },
+            )
+        )
+    if isinstance(world_meta, Mapping):
+        rows.extend(validate_world_model_v1_artifacts(world_meta))
 
     if isinstance(learning_meta, Mapping):
         chunk, r = validate_learning_v1_metadata(learning_meta)
@@ -1866,6 +2486,32 @@ def run_all_artifact_validators(
         chunk, r = validate_executor_result_schema(executor_er)
         rows.extend(chunk)
         _merge_r(r)
+    skill_rows, skill_reco = validate_executor_skill_result_generic(executor_meta)
+    rows.extend(skill_rows)
+    _merge_r(skill_reco)
+
+    consistency_rows, consistency_reco = validate_policy_planner_executor_consistency(
+        decision_action=decision_action,
+        policy_meta=policy_meta if isinstance(policy_meta, Mapping) else None,
+        behavior_trace=behavior_trace if isinstance(behavior_trace, Mapping) else None,
+        planner_plan=plan if isinstance(plan, Mapping) else None,
+        executor_meta=executor_meta if isinstance(executor_meta, Mapping) else None,
+    )
+    rows.extend(consistency_rows)
+    _merge_r(consistency_reco)
+
+    if isinstance(behavior_meta, Mapping):
+        rows.extend(
+            validate_output_metadata_and_capability_claims(
+                behavior_meta,
+                available_traces={
+                    "executor": executor_meta,
+                    "policy": policy_meta,
+                    "world_model": world_meta,
+                    "context": context_meta,
+                },
+            )
+        )
 
     sig = None
     trace = None

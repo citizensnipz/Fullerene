@@ -18,6 +18,10 @@ python -m fullerene --memory --behavior --content "don't ever skip my boss email
 python -m fullerene --behavior --content "what should I do next?"
 python -m fullerene --full --latent-pressure --json --content "what should I do next?"
 python -m fullerene --expression-gate --verify --json --content "inspect expression recommendation"
+python -m fullerene --planner --executor --execute-plan --content "make a plan for this"
+python -m fullerene --planner --executor --execute-plan --executor-live --content "make a plan for this"
+python -m fullerene --executor-list-skills
+python -m fullerene --planner --executor --execute-plan --executor-sandbox-dir state/.fullerene-state/custom-sandbox --content "make a plan for this"
 ```
 
 Manual Tick Runner v0 (explicit `SYSTEM_TICK` cycles — not a daemon or watch UI):

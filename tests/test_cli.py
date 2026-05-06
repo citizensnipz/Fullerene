@@ -317,6 +317,7 @@ class CLIUsabilityTests(unittest.TestCase):
                 "world.sqlite3-journal",
                 "policy.sqlite3",
                 "policy.sqlite3-journal",
+                "sandbox",
                 "snapshots",
             },
         )
@@ -360,6 +361,15 @@ class CLIUsabilityTests(unittest.TestCase):
         )
         self.assertEqual(exit_code, 0)
         self.assertEqual(context_result["metadata"]["strategy"], "pressure_relevance_v2")
+
+    def test_cli_executor_skill_listing_flag_outputs_manifest(self) -> None:
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            exit_code = cli_main(["--executor-list-skills"])
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(exit_code, 0)
+        self.assertIn("executor_skills", payload)
+        self.assertTrue(any(row.get("skill_name") == "file_read" for row in payload["executor_skills"]))
 
 
 if __name__ == "__main__":
