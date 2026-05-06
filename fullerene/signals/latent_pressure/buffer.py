@@ -25,6 +25,8 @@ INITIAL_INTENSITIES = {
     "verifier_failure": 0.7,
     "policy_block": 0.65,
     "approval_required": 0.5,
+    "memory_cluster_activation": 0.42,
+    "unresolved_memory_cluster": 0.45,
     "contradiction": 0.6,
     "uncertainty": 0.45,
     "context_overload": 0.4,
@@ -425,6 +427,28 @@ def _signals_from_learning(metadata: dict[str, Any], event_id: str) -> list[dict
     return out
 
 
+def _signals_from_memory(metadata: dict[str, Any], event: Event) -> list[dict[str, Any]]:
+    signals = metadata.get("latent_pressure_signals")
+    if not isinstance(signals, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in signals:
+        if not isinstance(row, dict):
+            continue
+        payload = dict(row)
+        payload.setdefault("source", "memory")
+        hint = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        intensity = float(hint.get("intensity_hint") or 0.0)
+        if intensity:
+            hint.setdefault("pressure_hint", intensity)
+        et = str(payload.get("entry_type") or "").strip().lower()
+        if et in {"memory_cluster_activation", "unresolved_memory_cluster"}:
+            md = hint
+            payload["metadata"] = md
+        out.append(payload)
+    return out
+
+
 def _signals_from_world_model(metadata: dict[str, Any], event_id: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     rows = metadata.get("contradiction_signals")
@@ -565,6 +589,12 @@ def should_ingest_signal_on_tick(
             return True, "attention_conflict_new"
         return False, "attention_conflict_echo"
 
+    if source == "memory" and entry_type in {
+        "memory_cluster_activation",
+        "unresolved_memory_cluster",
+    }:
+        return False, "memory_cluster_suppressed_on_idle_tick"
+
     return False, "system_tick_routine_signal_suppressed"
 
 
@@ -606,6 +636,8 @@ def update_latent_pressure(
     incoming.extend(_signals_from_verifier(verifier_meta, event.event_id))
     incoming.extend(_signals_from_learning(learning_meta, event.event_id))
     incoming.extend(_signals_from_world_model(world_model_meta, event.event_id))
+    memory_meta = _extract_facet_metadata(facet_results, "memory")
+    incoming.extend(_signals_from_memory(memory_meta, event))
 
     created_entries: list[dict[str, Any]] = []
     updated_entries: list[dict[str, Any]] = []

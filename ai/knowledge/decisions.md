@@ -57,6 +57,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-05-07 - Memory v3 communities + bounded graph (no Leiden by default)
+
+- **Status:** accepted
+- **Context:** Memory v2 wrote bounded `memory_edges` but lacked first-class thematic clusters, community-level pressure, and v3 retrieval seams. Product asked for Leiden-style clustering without mandatory heavy dependencies.
+- **Decision:** Add SQLite-backed `memory_communities` / `memory_community_members`, optional `memories.community_id`, default community detection `deterministic_connected_components_v0` over normalized edge weights with strict caps; keep a pluggable `CommunityDetector` / `LeidenCommunityDetector` NotImplemented seam for future backends. Wire bounded `get_memory_neighbors`, `rebuild_memory_communities`, incremental `update_memory_communities_for_new_memory`, activation/pressure formulas, hybrid v3 bonuses (clamp + v2 breakdown preserved), LPB ingestion for `memory_cluster_activation` suppressed on idle `SYSTEM_TICK`, Context items `memory_community` from prior-cycle Memory facet state, salience v3 via modest affect/pressure hooks, contradiction helpers + metadata seam, optional compression metadata only (non-canonical).
+- **Consequences:** Episodic SQLite rows remain canonical; embeddings stay indexes; graph work stays bounded and inspectable; no new facet; no LLM passes. True Leiden remains optional future work behind explicit dependency choices.
+
 ## 2026-05-06 - Context v2.1 adds deterministic working-memory reference anchors
 
 - **Status:** accepted

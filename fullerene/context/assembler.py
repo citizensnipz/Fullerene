@@ -14,6 +14,7 @@ from fullerene.context.models import (
     ContextItem,
     ContextItemType,
     ContextWindow,
+    utcnow,
 )
 from fullerene.context.reference_anchors import derive_reference_anchors
 from fullerene.goals import GoalStore
@@ -189,6 +190,11 @@ class DynamicContextAssembler:
             reasons.append("included_attention_broadcast")
         else:
             reasons.append("attention_broadcast_unavailable_or_duplicate")
+
+        mc_cand = self._build_memory_community_candidates(working_state)
+        for row in mc_cand:
+            items.append(row["item"])
+        reasons.append(f"included_memory_communities={len(mc_cand)}")
 
         working_memory_items, working_memory_meta = self._working_memory_items(event)
         items.extend(working_memory_items)
@@ -389,6 +395,7 @@ class DynamicContextAssembler:
         candidates.extend(self._build_goal_candidates(event))
         candidates.extend(self._build_belief_candidates(event))
         candidates.extend(self._build_memory_candidates_v2(event))
+        candidates.extend(self._build_memory_community_candidates(working_state))
         candidates.extend(self._build_policy_candidates(working_state, facet_results))
         if self.config.include_recent_signals:
             candidates.extend(self._build_signal_candidates(working_state, facet_results))
@@ -653,6 +660,65 @@ class DynamicContextAssembler:
             )
             out.append({"item": item, "score": score, "source_rank": 5, "source_type": "goal", "include_reason": "active_goal"})
         return out
+
+    def _build_memory_community_candidates(self, state: NexusState) -> list[dict[str, Any]]:
+        """Memory v3: surface active clusters from prior-cycle Memory facet state."""
+        mem_fs = state.facet_state.get("memory")
+        if not isinstance(mem_fs, dict):
+            return []
+        raw_rows = mem_fs.get("last_context_memory_communities")
+        if not isinstance(raw_rows, list):
+            return []
+        out: list[dict[str, Any]] = []
+        for row in raw_rows:
+            if not isinstance(row, dict):
+                continue
+            act = float(row.get("activation_score") or 0.0)
+            press = float(row.get("pressure_score") or 0.0)
+            if act < 0.25 and press < 0.22:
+                continue
+            cid = str(row.get("community_id") or "")
+            if not cid:
+                continue
+            label = str(row.get("label") or "concern area")
+            item = ContextItem(
+                id=f"memory_community:{cid}",
+                item_type=ContextItemType.MEMORY_COMMUNITY,
+                content=(
+                    f"Active memory concern area: {label} "
+                    f"(activation {act:.2f}, pressure {press:.2f})"
+                ),
+                source_id=cid,
+                created_at=utcnow(),
+                metadata={
+                    "community_id": cid,
+                    "activation_score": act,
+                    "pressure_score": press,
+                    "unresolved_score": float(row.get("unresolved_score") or 0.0),
+                    "contradiction_count": int(row.get("contradiction_count") or 0),
+                    "representative_memory_ids": (row.get("representative_memory_ids") or [])[:6],
+                    "top_tags": (row.get("top_tags") or [])[:8],
+                    "top_domains": (row.get("top_domains") or [])[:6],
+                },
+            )
+            score = self._score_candidate(
+                relevance_score=min(1.0, act + 0.15 * press),
+                pressure_score=press,
+                salience_score=act,
+                recency_score=0.6,
+                confidence_score=0.9,
+                priority_score=0.55,
+            )
+            out.append(
+                {
+                    "item": item,
+                    "score": score,
+                    "source_rank": 3,
+                    "source_type": "memory_community",
+                    "include_reason": "active_memory_cluster",
+                }
+            )
+        return out[:6]
 
     def _build_belief_candidates(self, event: Event) -> list[dict[str, Any]]:
         if not self.config.include_world_model:

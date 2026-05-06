@@ -152,11 +152,23 @@ Nexus **v2** extends the same **single-call, event-driven** runtime with **bound
 - **Prompt grounding** - model prompts include a `Recent conversation` section built from the bounded working-memory packet.
 - **Out of scope (v2.5)** - no new facet/subsystem, no LLM summarization/compression, no automatic working→long-term promotion, no graph/community/Leiden pass.
 
+## Memory v3 (current)
+
+- **Linked graph (bounded)** - Memory v3 treats `memory_edges` as a bounded, write-time graph plus persisted **memory communities** (thematic concern / clusters) in SQLite (`memory_communities`, `memory_community_members`, optional `memories.community_id`). Helpers expose direct neighbors and community listing with strict limits; retrieval does **not** perform full-graph walks.
+- **Community detection** - default strategy is `deterministic_connected_components_v0` (deterministic, thresholded connected components; optional split of oversized components). A **Leiden** seam exists (`LeidenCommunityDetector`) but is not enabled without an optional backend.
+- **Activation and pressure** - community-level `activation_score` / `pressure_score` feed Context (prior-cycle snapshot), bounded hybrid v3 retrieval bonuses, and LPB signals (`memory_cluster_activation`) on non-idle ticks only (idle `SYSTEM_TICK` suppresses ingestion).
+- **Contradiction / refinement** - tracked via memory `metadata` (`contradiction_status`, links, scores) and aggregated counts on communities; optional deterministic content heuristics in `fullerene.memory.contradiction`.
+- **Affect / salience v3** - prior-cycle Affect state plus event pressure/novelty optionally adjust stored salience (`salience_version: v3`, bounded deltas).
+- **Compression** - optional non-canonical fields live in memory `metadata` (`compressed_summary`, `compression_is_canonical: false`); episodic rows remain source of truth.
+- **Out of scope for this pass** - LLM summarization, model training, mandatory heavy graph libraries, unbounded traversal, replacing World Model belief logic.
+
 ## Memory roadmap
 
 - **v1** - deterministic scoring, tagging rules, and salience heuristics.
-- **v2** - role/domain classification, optional embedding index, hybrid retrieval, and bounded write-time edges. **Current.**
-- **v3** - graph traversal at retrieval time, reflection / compression, affect-weighted salience, and richer cluster / community inspection on top of v2 edges.
+- **v2** - role/domain classification, optional embedding index, hybrid retrieval, and bounded write-time edges.
+- **v2.5** - working/long-term split and session working turns.
+- **v3** - memory communities, bounded graph helpers, activation/pressure, hybrid v3 bonuses, LPB hooks, contradiction/affect/compression seams. **Current.**
+- **v4+** - future optional Leiden backend, richer reflection/compression pipelines (still non-authoritative over episodic SQLite).
 
 ## Affect v0 (current)
 

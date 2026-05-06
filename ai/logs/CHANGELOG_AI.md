@@ -1,3 +1,12 @@
+### 2026-05-07 (Memory v3 communities, bounded graph, LPB, Context)
+
+- Added `fullerene/memory/communities.py`, `community_detection.py`, `v3.py`, `v3_runtime.py`, `contradiction.py`; SQLite tables `memory_communities`, `memory_community_members`; column `memories.community_id`; `SQLiteMemoryStore` helpers (`rebuild_memory_communities`, `update_memory_communities_for_new_memory`, `list_memory_communities`, `get_memory_community`, `get_memory_neighbors`, `merge_memory_metadata`, decay pass).
+- Extended `MemoryFacet` for salience v3, hybrid breakdown merge with bounded v3 bonuses, community activation cycle + LPB `latent_pressure_signals`, learning-event hooks, `last_context_memory_communities` state for Context.
+- LPB ingests Memory metadata signals; idle tick suppression for memory-cluster entries; `INITIAL_INTENSITIES` entries for memory cluster types.
+- Context: `ContextItemType.MEMORY_COMMUNITY`, `_build_memory_community_candidates` for v1 + pressure_relevance_v2.
+- Tests: `tests/test_memory_v3.py` (synthetic); full `test_*.py` suite passes.
+- Harness: `ai/project/architecture.md`, `ai/knowledge/glossary.md`, `ai/knowledge/decisions.md`.
+
 ### 2026-05-06 (Behavior v2.3 reference-continuity consumption)
 
 - Updated `fullerene/behavior/models.py` with reference-continuity signal fields and constants (`reference_resolution_confidence`, resolved/unresolved booleans/counts, confidence contribution/penalty constants).

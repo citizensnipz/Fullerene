@@ -1,3 +1,11 @@
+### 2026-05-07 - Memory v3 implementation
+
+- **Context:** Implement Memory v3 (communities / concern areas, bounded graph ops, activation+pressure, LPB, Context, affect salience v3 seam) without new facet, LLM, or mandatory Leiden dependency.
+- **Done:** Added SQLite community tables + store/facet wiring, deterministic connected-components community detection with Leiden placeholder seam, v3 hybrid retrieval bonuses, LPB ingestion + tick gating, Context memory_community items, contradiction + v3 helpers, synthetic tests, harness updates.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -q`
+- **Next:** Optional Leiden backend; richer world-model provenance links; CLI convenience flags if desired.
+- **Blockers:** None.
+
 ### 2026-05-06 - Context v2.1 reference anchors from working memory
 
 - **Context:** Context v2 already included bounded working-memory turns, but referential follow-up grounding needed deterministic continuity structure beyond raw transcript snippets.

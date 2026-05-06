@@ -41,6 +41,7 @@ class ContextItemType(str, Enum):
     WORKING_MEMORY = "working_memory"
     CONVERSATION_CONTINUITY = "conversation_continuity"
     ATTENTION = "attention"
+    MEMORY_COMMUNITY = "memory_community"
     MEMORY = "memory"
     GOAL = "goal"
     BELIEF = "belief"

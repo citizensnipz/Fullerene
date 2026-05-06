@@ -32,9 +32,17 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
+from fullerene.memory.communities import MemoryCommunity
+from fullerene.memory.community_detection import (
+    DeterministicConnectedComponentsDetector,
+    aggregate_top_tags_domains_roles,
+    label_from_tags_domains,
+    stable_community_id,
+)
 from fullerene.memory.edges import MemoryEdge, MemoryEdgeType
 from fullerene.memory.embeddings import deserialize_vector, serialize_vector
 from fullerene.memory.hybrid import explain_hybrid_score, hybrid_sort_key
+from fullerene.memory import v3 as memory_v3_formula
 from fullerene.memory.models import MemoryLayer, MemoryRecord, MemoryType
 from fullerene.memory.scoring import score_sort_key, tokenize
 from fullerene.memory.roles import QueryIntent, classify_query_intent
@@ -128,8 +136,9 @@ class SQLiteMemoryStore:
                     metadata_json,
                     role,
                     domain,
-                    memory_layer
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    memory_layer,
+                    community_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     payload["id"],
@@ -144,6 +153,7 @@ class SQLiteMemoryStore:
                     payload.get("role") or "unknown",
                     payload.get("domain"),
                     payload.get("memory_layer", MemoryLayer.LONG_TERM.value),
+                    payload.get("community_id"),
                 ),
             )
             connection.commit()
@@ -227,6 +237,23 @@ class SQLiteMemoryStore:
             )
             if cursor.rowcount == 0:
                 raise KeyError(f"Memory {memory_id!r} does not exist")
+            connection.commit()
+
+    def merge_memory_metadata(self, memory_id: str, patch: dict[str, Any]) -> None:
+        """Merge JSON-safe keys into episodic metadata (Memory v3 contradiction seam)."""
+        rec = self.get_memory(memory_id)
+        if rec is None:
+            raise KeyError(f"Memory {memory_id!r} does not exist")
+        md = dict(rec.metadata or {})
+        for k, v in (patch or {}).items():
+            md[k] = v
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                UPDATE memories SET metadata_json = ? WHERE id = ?
+                """,
+                (json.dumps(md, sort_keys=True), memory_id),
+            )
             connection.commit()
 
     # ---- Memory v2 surface ---------------------------------------------
@@ -708,11 +735,547 @@ class SQLiteMemoryStore:
             connection.commit()
             return int(cursor.rowcount or 0)
 
+    # ---- Memory v3 communities ------------------------------------------
+
+    @staticmethod
+    def normalize_edge_weight(edge: MemoryEdge) -> float:
+        """Normalize edge contribution to [0,1] for community detection."""
+        w = float(edge.weight)
+        boost = {
+            MemoryEdgeType.SAME_GOAL.value: 1.0,
+            MemoryEdgeType.SAME_DOMAIN.value: 0.95,
+            MemoryEdgeType.SEMANTIC_SIMILARITY.value: 1.0,
+            MemoryEdgeType.TAG_OVERLAP.value: 0.85,
+            MemoryEdgeType.KEYWORD_SIMILARITY.value: 0.9,
+            MemoryEdgeType.TEMPORAL_PROXIMITY.value: 0.75,
+            MemoryEdgeType.ROLE_RELATED.value: 0.7,
+        }.get(edge.edge_type.value, 0.8)
+        return memory_v3_formula.clamp01(w * boost)
+
+    def _list_edges_raw_bounded(self, limit: int) -> list[tuple[str, str, str, float]]:
+        bounded = self._normalize_limit(limit)
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT source_memory_id, target_memory_id, edge_type, weight
+                FROM memory_edges
+                ORDER BY weight DESC, created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (bounded,),
+            ).fetchall()
+        out: list[tuple[str, str, str, float]] = []
+        for row in rows:
+            e = MemoryEdge(
+                source_memory_id=row["source_memory_id"],
+                target_memory_id=row["target_memory_id"],
+                edge_type=MemoryEdgeType(row["edge_type"]),
+                weight=float(row["weight"]),
+            )
+            nw = self.normalize_edge_weight(e)
+            out.append(
+                (row["source_memory_id"], row["target_memory_id"], row["edge_type"], nw)
+            )
+        return out
+
+    def _long_term_ids_bounded(self, limit: int) -> list[str]:
+        bounded = self._normalize_limit(limit)
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT id FROM memories
+                WHERE memory_layer != ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (MemoryLayer.WORKING.value, bounded),
+            ).fetchall()
+        return [str(row["id"]) for row in rows]
+
+    def rebuild_memory_communities(
+        self,
+        limit: int | None = None,
+        *,
+        detection_strategy: str = "deterministic_connected_components_v0",
+    ) -> int:
+        """Recompute communities from stored edges (bounded). Returns count written."""
+        edge_cap = limit if limit is not None else 5000
+        edges = self._list_edges_raw_bounded(edge_cap)
+        mem_cap = limit if limit is not None else 20000
+        memory_ids = self._long_term_ids_bounded(mem_cap)
+        if not memory_ids:
+            return 0
+
+        tag_map: dict[str, list[str]] = {}
+        domain_map: dict[str, str | None] = {}
+        role_map: dict[str, str] = {}
+
+        def tags_of(mid: str) -> list[str]:
+            if mid not in tag_map:
+                r = self.get_memory(mid)
+                tag_map[mid] = list(r.tags) if r else []
+            return tag_map[mid]
+
+        def domain_of(mid: str) -> str | None:
+            if mid not in domain_map:
+                r = self.get_memory(mid)
+                domain_map[mid] = r.domain if r else None
+            return domain_map[mid]
+
+        def role_of(mid: str) -> str:
+            if mid not in role_map:
+                r = self.get_memory(mid)
+                role_map[mid] = (r.role or "unknown") if r else "unknown"
+            return role_map[mid]
+
+        detector = DeterministicConnectedComponentsDetector()
+        components = detector.detect(
+            memory_ids=memory_ids,
+            edges=edges,
+            memory_tags={m: tags_of(m) for m in memory_ids},
+            memory_domains={m: domain_of(m) for m in memory_ids},
+        )
+        with closing(self._connect()) as connection:
+            connection.execute("DELETE FROM memory_community_members")
+            connection.execute("DELETE FROM memory_communities")
+            connection.execute(
+                "UPDATE memories SET community_id = NULL WHERE memory_layer != ?",
+                (MemoryLayer.WORKING.value,),
+            )
+            count = 0
+            for comp in components:
+                members = sorted(comp)
+                if not members:
+                    continue
+                top_tags, top_doms, top_roles = aggregate_top_tags_domains_roles(
+                    members,
+                    tags_of,
+                    domain_of,
+                    role_of,
+                )
+                cid = stable_community_id(
+                    members,
+                    top_tags,
+                    strategy=detection_strategy,
+                )
+                label = label_from_tags_domains(top_tags, top_doms)
+                rep_ids = members[:3]
+                payload = MemoryCommunity(
+                    community_id=cid,
+                    label=label,
+                    member_memory_ids=list(members),
+                    member_count=len(members),
+                    top_tags=top_tags,
+                    top_domains=top_doms,
+                    top_roles=top_roles,
+                    representative_memory_ids=rep_ids,
+                    community_detection_strategy=detection_strategy,
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                self._insert_community_row(connection, payload, top_tags, top_doms, top_roles, rep_ids)
+                for mid in members:
+                    connection.execute(
+                        """
+                        INSERT OR REPLACE INTO memory_community_members (community_id, memory_id)
+                        VALUES (?, ?)
+                        """,
+                        (cid, mid),
+                    )
+                    connection.execute(
+                        "UPDATE memories SET community_id = ? WHERE id = ?",
+                        (cid, mid),
+                    )
+                count += 1
+            connection.commit()
+        return count
+
+    @staticmethod
+    def _insert_community_row(
+        connection: sqlite3.Connection,
+        community: MemoryCommunity,
+        top_tags: list[str],
+        top_doms: list[str],
+        top_roles: list[str],
+        rep_ids: list[str],
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO memory_communities (
+                community_id, label, member_count,
+                top_tags_json, top_domains_json, top_roles_json,
+                representative_memory_ids_json,
+                centroid_embedding_id, centroid_vector_hash,
+                activation_score, pressure_score, unresolved_score,
+                contradiction_count, refinement_count,
+                activation_streak, inactive_streak,
+                last_activated_at, last_activated_event_id,
+                last_pressure_update_at, last_resolution_event_id,
+                resolved_recently,
+                activation_reasons_json, pressure_reasons_json,
+                community_detection_strategy,
+                created_at, updated_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                community.community_id,
+                community.label,
+                int(community.member_count),
+                json.dumps(top_tags, sort_keys=True),
+                json.dumps(top_doms, sort_keys=True),
+                json.dumps(top_roles, sort_keys=True),
+                json.dumps(rep_ids, sort_keys=True),
+                community.centroid_embedding_id,
+                community.centroid_vector_hash,
+                float(community.activation_score),
+                float(community.pressure_score),
+                float(community.unresolved_score),
+                int(community.contradiction_count),
+                int(community.refinement_count),
+                int(community.activation_streak),
+                int(community.inactive_streak),
+                community.last_activated_at.isoformat() if community.last_activated_at else None,
+                community.last_activated_event_id,
+                community.last_pressure_update_at.isoformat()
+                if community.last_pressure_update_at
+                else None,
+                community.last_resolution_event_id,
+                1 if community.resolved_recently else 0,
+                json.dumps(community.activation_reasons, sort_keys=True),
+                json.dumps(community.pressure_reasons, sort_keys=True),
+                community.community_detection_strategy,
+                community.created_at.isoformat(),
+                community.updated_at.isoformat(),
+                json.dumps(community.metadata, sort_keys=True),
+            ),
+        )
+
+    def _row_to_memory_community(self, row: sqlite3.Row) -> MemoryCommunity:
+        def _parse_dt(val: object) -> datetime | None:
+            if not val:
+                return None
+            return datetime.fromisoformat(str(val))
+
+        return MemoryCommunity(
+            community_id=str(row["community_id"]),
+            label=str(row["label"] or ""),
+            member_count=int(row["member_count"] or 0),
+            member_memory_ids=[],
+            top_tags=json.loads(row["top_tags_json"] or "[]"),
+            top_domains=json.loads(row["top_domains_json"] or "[]"),
+            top_roles=json.loads(row["top_roles_json"] or "[]"),
+            representative_memory_ids=json.loads(row["representative_memory_ids_json"] or "[]"),
+            centroid_embedding_id=row["centroid_embedding_id"],
+            centroid_vector_hash=row["centroid_vector_hash"],
+            activation_score=float(row["activation_score"] or 0.0),
+            pressure_score=float(row["pressure_score"] or 0.0),
+            unresolved_score=float(row["unresolved_score"] or 0.0),
+            contradiction_count=int(row["contradiction_count"] or 0),
+            refinement_count=int(row["refinement_count"] or 0),
+            activation_streak=int(row["activation_streak"] or 0),
+            inactive_streak=int(row["inactive_streak"] or 0),
+            last_activated_at=_parse_dt(row["last_activated_at"]),
+            last_activated_event_id=row["last_activated_event_id"],
+            last_pressure_update_at=_parse_dt(row["last_pressure_update_at"]),
+            last_resolution_event_id=row["last_resolution_event_id"],
+            resolved_recently=bool(row["resolved_recently"]),
+            activation_reasons=json.loads(row["activation_reasons_json"] or "[]"),
+            pressure_reasons=json.loads(row["pressure_reasons_json"] or "[]"),
+            community_detection_strategy=str(
+                row["community_detection_strategy"]
+                or "deterministic_connected_components_v0"
+            ),
+            created_at=_parse_dt(row["created_at"]) or datetime.now(timezone.utc),
+            updated_at=_parse_dt(row["updated_at"]) or datetime.now(timezone.utc),
+            metadata=json.loads(row["metadata_json"] or "{}"),
+        )
+
+    def get_memory_community(self, community_id: str) -> MemoryCommunity | None:
+        with closing(self._connect()) as connection:
+            row = connection.execute(
+                "SELECT * FROM memory_communities WHERE community_id = ?",
+                (community_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        mc = self._row_to_memory_community(row)
+        with closing(self._connect()) as connection:
+            mids = connection.execute(
+                """
+                SELECT memory_id FROM memory_community_members
+                WHERE community_id = ?
+                ORDER BY memory_id ASC
+                """,
+                (community_id,),
+            ).fetchall()
+        mc.member_memory_ids = [str(r["memory_id"]) for r in mids]
+        return mc
+
+    def list_communities_for_memory(self, memory_id: str) -> list[MemoryCommunity]:
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT c.* FROM memory_communities c
+                INNER JOIN memory_community_members m ON m.community_id = c.community_id
+                WHERE m.memory_id = ?
+                """,
+                (memory_id,),
+            ).fetchall()
+        return [self._row_to_memory_community(r) for r in rows]
+
+    def list_memory_communities(
+        self,
+        *,
+        limit: int = 50,
+        min_activation: float = 0.0,
+        min_pressure: float = 0.0,
+    ) -> list[MemoryCommunity]:
+        bounded = self._normalize_limit(limit)
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM memory_communities
+                WHERE activation_score >= ? AND pressure_score >= ?
+                ORDER BY activation_score DESC, pressure_score DESC, community_id ASC
+                LIMIT ?
+                """,
+                (float(min_activation), float(min_pressure), bounded),
+            ).fetchall()
+        return [self._row_to_memory_community(r) for r in rows]
+
+    def get_memory_neighbors(
+        self,
+        memory_id: str,
+        *,
+        depth: int = 1,
+        limit: int = 40,
+    ) -> list[str]:
+        d = min(max(int(depth), 1), 2)
+        cap = self._normalize_limit(limit)
+        seen: set[str] = {memory_id}
+        frontier = {memory_id}
+        for _ in range(d):
+            next_front: set[str] = set()
+            for mid in sorted(frontier):
+                for edge in self.list_memory_edges(memory_id=mid, limit=cap):
+                    other = (
+                        edge.target_memory_id
+                        if edge.source_memory_id == mid
+                        else edge.source_memory_id
+                    )
+                    if other not in seen:
+                        seen.add(other)
+                        next_front.add(other)
+                    if len(seen) - 1 >= cap:
+                        break
+                if len(seen) - 1 >= cap:
+                    break
+            frontier = next_front
+            if len(seen) - 1 >= cap:
+                break
+        out = [m for m in sorted(seen) if m != memory_id]
+        return out[:cap]
+
+    def update_memory_communities_for_new_memory(self, memory_id: str) -> str | None:
+        """Assign a new long-term memory to a community using bounded neighborhood."""
+        rec = self.get_memory(memory_id)
+        if rec is None or rec.memory_layer == MemoryLayer.WORKING:
+            return None
+        edges = self.list_memory_edges(memory_id=memory_id, limit=60)
+        best_neighbor: str | None = None
+        best_score = 0.0
+        for edge in edges:
+            other = (
+                edge.target_memory_id
+                if edge.source_memory_id == memory_id
+                else edge.source_memory_id
+            )
+            nw = self.normalize_edge_weight(edge)
+            if nw > best_score:
+                best_score = nw
+                best_neighbor = other
+        if best_neighbor is None or best_score < 0.12:
+            cid = self._ensure_singleton_community(memory_id)
+            return cid
+        other_rec = self.get_memory(best_neighbor)
+        if other_rec is None:
+            cid = self._ensure_singleton_community(memory_id)
+            return cid
+        oc = other_rec.community_id
+        if oc:
+            self._add_member_to_community(oc, memory_id)
+            return oc
+        cid = self._ensure_singleton_community(memory_id)
+        return cid
+
+    def _ensure_singleton_community(self, memory_id: str) -> str:
+        rec = self.get_memory(memory_id)
+        tags = list(rec.tags) if rec else []
+        dom = rec.domain if rec else None
+        cid = stable_community_id([memory_id], tags, strategy="deterministic_connected_components_v0")
+        label = label_from_tags_domains(tags, [dom] if dom else [])
+        now = datetime.now(timezone.utc)
+        mc = MemoryCommunity(
+            community_id=cid,
+            label=label or "concern_area",
+            member_memory_ids=[memory_id],
+            member_count=1,
+            top_tags=tags[:6],
+            top_domains=[dom] if dom else [],
+            top_roles=[rec.role] if rec else [],
+            representative_memory_ids=[memory_id],
+            created_at=now,
+            updated_at=now,
+        )
+        with closing(self._connect()) as connection:
+            connection.execute("DELETE FROM memory_community_members WHERE community_id = ?", (cid,))
+            connection.execute("DELETE FROM memory_communities WHERE community_id = ?", (cid,))
+            self._insert_community_row(
+                connection,
+                mc,
+                mc.top_tags,
+                mc.top_domains,
+                mc.top_roles,
+                mc.representative_memory_ids,
+            )
+            connection.execute(
+                "INSERT OR REPLACE INTO memory_community_members (community_id, memory_id) VALUES (?, ?)",
+                (cid, memory_id),
+            )
+            connection.execute(
+                "UPDATE memories SET community_id = ? WHERE id = ?",
+                (cid, memory_id),
+            )
+            connection.commit()
+        return cid
+
+    def _add_member_to_community(self, community_id: str, memory_id: str) -> None:
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO memory_community_members (community_id, memory_id)
+                VALUES (?, ?)
+                """,
+                (community_id, memory_id),
+            )
+            connection.execute(
+                "UPDATE memories SET community_id = ? WHERE id = ?",
+                (community_id, memory_id),
+            )
+            row = connection.execute(
+                "SELECT COUNT(*) AS c FROM memory_community_members WHERE community_id = ?",
+                (community_id,),
+            ).fetchone()
+            count = int(row["c"] if row else 0)
+            connection.execute(
+                """
+                UPDATE memory_communities
+                SET member_count = ?, updated_at = ?
+                WHERE community_id = ?
+                """,
+                (count, datetime.now(timezone.utc).isoformat(), community_id),
+            )
+            connection.commit()
+
+    def update_memory_community_row(self, community: MemoryCommunity) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with closing(self._connect()) as connection:
+            connection.execute(
+                """
+                UPDATE memory_communities SET
+                    label = ?,
+                    member_count = ?,
+                    top_tags_json = ?,
+                    top_domains_json = ?,
+                    top_roles_json = ?,
+                    representative_memory_ids_json = ?,
+                    activation_score = ?,
+                    pressure_score = ?,
+                    unresolved_score = ?,
+                    contradiction_count = ?,
+                    refinement_count = ?,
+                    activation_streak = ?,
+                    inactive_streak = ?,
+                    last_activated_at = ?,
+                    last_activated_event_id = ?,
+                    last_pressure_update_at = ?,
+                    last_resolution_event_id = ?,
+                    resolved_recently = ?,
+                    activation_reasons_json = ?,
+                    pressure_reasons_json = ?,
+                    metadata_json = ?,
+                    updated_at = ?
+                WHERE community_id = ?
+                """,
+                (
+                    community.label,
+                    int(community.member_count),
+                    json.dumps(community.top_tags, sort_keys=True),
+                    json.dumps(community.top_domains, sort_keys=True),
+                    json.dumps(community.top_roles, sort_keys=True),
+                    json.dumps(community.representative_memory_ids, sort_keys=True),
+                    float(community.activation_score),
+                    float(community.pressure_score),
+                    float(community.unresolved_score),
+                    int(community.contradiction_count),
+                    int(community.refinement_count),
+                    int(community.activation_streak),
+                    int(community.inactive_streak),
+                    community.last_activated_at.isoformat() if community.last_activated_at else None,
+                    community.last_activated_event_id,
+                    community.last_pressure_update_at.isoformat()
+                    if community.last_pressure_update_at
+                    else None,
+                    community.last_resolution_event_id,
+                    1 if community.resolved_recently else 0,
+                    json.dumps(community.activation_reasons, sort_keys=True),
+                    json.dumps(community.pressure_reasons, sort_keys=True),
+                    json.dumps(community.metadata, sort_keys=True),
+                    now,
+                    community.community_id,
+                ),
+            )
+            connection.commit()
+
+    def apply_memory_community_inactivity_decay(
+        self,
+        *,
+        activated_ids: set[str],
+        context_ran: bool = True,
+    ) -> None:
+        """Increment inactive streak / decay scores for communities not activated."""
+        if not context_ran:
+            return
+        with closing(self._connect()) as connection:
+            rows = connection.execute("SELECT * FROM memory_communities").fetchall()
+            now = datetime.now(timezone.utc)
+            for row in rows:
+                cid = str(row["community_id"])
+                if cid in activated_ids:
+                    continue
+                inact = int(row["inactive_streak"] or 0) + 1
+                act = float(row["activation_score"] or 0.0) * 0.92
+                press = float(row["pressure_score"] or 0.0) * 0.9
+                unres = float(row["unresolved_score"] or 0.0) * 0.95
+                connection.execute(
+                    """
+                    UPDATE memory_communities
+                    SET inactive_streak = ?,
+                        activation_score = ?,
+                        pressure_score = ?,
+                        unresolved_score = ?,
+                        updated_at = ?
+                    WHERE community_id = ?
+                    """,
+                    (inact, act, press, unres, now.isoformat(), cid),
+                )
+            connection.commit()
+
     # ---- Internals -----------------------------------------------------
 
     _SELECT_MEMORY_COLUMNS = (
         "id, created_at, memory_type, content, source_event_id, "
-        "salience, confidence, tags_json, metadata_json, role, domain, memory_layer"
+        "salience, confidence, tags_json, metadata_json, role, domain, memory_layer, community_id"
     )
 
     def _connect(self) -> sqlite3.Connection:
@@ -828,6 +1391,55 @@ class SQLiteMemoryStore:
                 ON memory_edges (target_memory_id)
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_communities (
+                    community_id TEXT PRIMARY KEY,
+                    label TEXT NOT NULL DEFAULT '',
+                    member_count INTEGER NOT NULL DEFAULT 0,
+                    top_tags_json TEXT NOT NULL DEFAULT '[]',
+                    top_domains_json TEXT NOT NULL DEFAULT '[]',
+                    top_roles_json TEXT NOT NULL DEFAULT '[]',
+                    representative_memory_ids_json TEXT NOT NULL DEFAULT '[]',
+                    centroid_embedding_id TEXT,
+                    centroid_vector_hash TEXT,
+                    activation_score REAL NOT NULL DEFAULT 0.0,
+                    pressure_score REAL NOT NULL DEFAULT 0.0,
+                    unresolved_score REAL NOT NULL DEFAULT 0.0,
+                    contradiction_count INTEGER NOT NULL DEFAULT 0,
+                    refinement_count INTEGER NOT NULL DEFAULT 0,
+                    activation_streak INTEGER NOT NULL DEFAULT 0,
+                    inactive_streak INTEGER NOT NULL DEFAULT 0,
+                    last_activated_at TEXT,
+                    last_activated_event_id TEXT,
+                    last_pressure_update_at TEXT,
+                    last_resolution_event_id TEXT,
+                    resolved_recently INTEGER NOT NULL DEFAULT 0,
+                    activation_reasons_json TEXT NOT NULL DEFAULT '[]',
+                    pressure_reasons_json TEXT NOT NULL DEFAULT '[]',
+                    community_detection_strategy TEXT NOT NULL DEFAULT 'deterministic_connected_components_v0',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL DEFAULT '{}'
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memory_community_members (
+                    community_id TEXT NOT NULL,
+                    memory_id TEXT NOT NULL,
+                    PRIMARY KEY (community_id, memory_id),
+                    FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_memory_community_members_memory
+                ON memory_community_members (memory_id)
+                """
+            )
             connection.commit()
 
     def _migrate_columns(self, connection: sqlite3.Connection) -> None:
@@ -846,6 +1458,8 @@ class SQLiteMemoryStore:
             connection.execute(
                 "ALTER TABLE memories ADD COLUMN memory_layer TEXT NOT NULL DEFAULT 'long_term'"
             )
+        if "community_id" not in existing_columns:
+            connection.execute("ALTER TABLE memories ADD COLUMN community_id TEXT")
 
     @staticmethod
     def _normalize_limit(limit: int) -> int:
@@ -873,6 +1487,11 @@ class SQLiteMemoryStore:
                     row["memory_layer"]
                     if "memory_layer" in keys and row["memory_layer"] is not None
                     else MemoryLayer.LONG_TERM.value
+                ),
+                "community_id": (
+                    row["community_id"]
+                    if "community_id" in keys and row["community_id"]
+                    else None
                 ),
             }
         )

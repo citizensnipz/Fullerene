@@ -69,6 +69,8 @@ class MemoryRecord:
     role: str = "unknown"
     domain: str | None = None
     memory_layer: MemoryLayer = MemoryLayer.LONG_TERM
+    # Memory v3: optional thematic community / cluster assignment (SQLite column).
+    community_id: str | None = None
 
     def __post_init__(self) -> None:
         self.salience = self._validate_score("salience", self.salience)
@@ -78,6 +80,9 @@ class MemoryRecord:
         self.domain = self._normalize_domain(self.domain)
         if not isinstance(self.memory_layer, MemoryLayer):
             self.memory_layer = MemoryLayer(str(self.memory_layer).strip().lower())
+        if self.community_id is not None:
+            cleaned_c = str(self.community_id).strip()
+            self.community_id = cleaned_c or None
 
     @staticmethod
     def _validate_score(field_name: str, value: float) -> float:
@@ -114,6 +119,7 @@ class MemoryRecord:
             "role": self.role,
             "domain": self.domain,
             "memory_layer": self.memory_layer.value,
+            "community_id": self.community_id,
         }
 
     @classmethod
@@ -131,4 +137,5 @@ class MemoryRecord:
             role=data.get("role", "unknown") or "unknown",
             domain=data.get("domain"),
             memory_layer=data.get("memory_layer", MemoryLayer.LONG_TERM.value),
+            community_id=data.get("community_id"),
         )

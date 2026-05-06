@@ -26,7 +26,9 @@ from fullerene.memory import (
     safe_embed,
     tokenize,
 )
-from fullerene.memory.models import normalize_tags
+from fullerene.memory.models import MemoryLayer, normalize_tags
+from fullerene.memory import v3 as mem_v3_formula
+from fullerene.memory.v3_runtime import run_community_activation_cycle
 from fullerene.memory.scoring import extract_event_tags
 from fullerene.nexus.models import (
     DecisionAction,
@@ -103,21 +105,54 @@ class MemoryFacet:
         )
 
     def process(self, event: Event, state: NexusState) -> FacetResult:
-        del state
-
         stored_memory: MemoryRecord | None = None
         stored_embedding_status: str | None = None
         stored_edges: list[MemoryEdge] = []
         if self._should_store_event(event):
-            stored_memory = self._build_memory_record(event)
+            stored_memory = self._build_memory_record(event, state)
             self.store.add_memory(stored_memory)
             stored_embedding_status = self._maybe_store_embedding(stored_memory)
             stored_edges = self._maybe_store_edges(stored_memory)
+            if isinstance(self.store, SQLiteMemoryStore):
+                try:
+                    cid = self.store.update_memory_communities_for_new_memory(stored_memory.id)
+                    if cid:
+                        stored_memory.community_id = cid
+                except Exception:  # noqa: BLE001
+                    pass
 
-        retrieval = self._retrieve_relevant(event, exclude_id=stored_memory.id if stored_memory else None)
+        retrieval = self._retrieve_relevant(
+            event,
+            state,
+            exclude_id=stored_memory.id if stored_memory else None,
+        )
         relevant_memories = retrieval["records"]
         retrieval_strategy = retrieval["strategy"]
         relevant_breakdowns = retrieval["breakdowns"]
+
+        v3_extra_state: dict[str, object] = {}
+        v3_meta: dict[str, object] = {}
+        learning_events: list[dict[str, object]] = []
+        if isinstance(self.store, SQLiteMemoryStore):
+            cyc = run_community_activation_cycle(
+                self.store,
+                event,
+                state,
+                relevant_memories,
+                relevant_breakdowns,
+                retrieve_limit=self.retrieve_limit,
+            )
+            v3_extra_state["last_context_memory_communities"] = cyc.get(
+                "last_context_memory_communities",
+                [],
+            )
+            v3_extra_state["memory_v3_activated_communities"] = cyc.get(
+                "memory_v3_activated_communities",
+                [],
+            )
+            v3_meta["latent_pressure_signals"] = cyc.get("latent_pressure_signals", [])
+            learning_events = list(cyc.get("learning_events", []))
+            v3_meta["memory_v3_community_version"] = "v3"
 
         working_memories = self.store.list_recent(limit=self.working_limit)
 
@@ -135,27 +170,23 @@ class MemoryFacet:
         included_roles = sorted({memory.role or MemoryRole.UNKNOWN.value for memory in relevant_memories})
         included_domains = sorted({memory.domain for memory in relevant_memories if memory.domain})
 
-        return FacetResult(
-            facet_name=self.name,
-            summary=summary,
-            proposed_decision=(
-                DecisionAction.RECORD if stored_memory is not None else None
-            ),
-            state_updates={
-                "last_stored_memory_id": stored_memory.id if stored_memory else None,
-                "last_working_memory_ids": [memory.id for memory in working_memories],
-                "last_relevant_memory_ids": [memory.id for memory in relevant_memories],
-                "last_retrieval_strategy": retrieval_strategy,
-                "last_included_memory_roles": included_roles,
-                "last_included_memory_domains": included_domains,
-                "last_query_intent": retrieval["query_intent"],
-                "last_event_domain": retrieval["event_domain"],
-                "last_stored_memory_role": stored_memory.role if stored_memory else None,
-                "last_stored_memory_domain": stored_memory.domain if stored_memory else None,
-                "last_stored_embedding_status": stored_embedding_status,
-                "last_stored_edge_count": len(stored_edges),
-            },
-            metadata={
+        state_updates = {
+            "last_stored_memory_id": stored_memory.id if stored_memory else None,
+            "last_working_memory_ids": [memory.id for memory in working_memories],
+            "last_relevant_memory_ids": [memory.id for memory in relevant_memories],
+            "last_retrieval_strategy": retrieval_strategy,
+            "last_included_memory_roles": included_roles,
+            "last_included_memory_domains": included_domains,
+            "last_query_intent": retrieval["query_intent"],
+            "last_event_domain": retrieval["event_domain"],
+            "last_stored_memory_role": stored_memory.role if stored_memory else None,
+            "last_stored_memory_domain": stored_memory.domain if stored_memory else None,
+            "last_stored_embedding_status": stored_embedding_status,
+            "last_stored_edge_count": len(stored_edges),
+        }
+        state_updates.update(v3_extra_state)
+
+        md_base: dict[str, object] = {
                 "stored_memory": self._describe_memory(stored_memory)
                 if stored_memory is not None
                 else None,
@@ -173,7 +204,19 @@ class MemoryFacet:
                 "included_memory_domains": included_domains,
                 "stored_embedding_status": stored_embedding_status,
                 "stored_edges": [edge.to_dict() for edge in stored_edges],
-            },
+        }
+        md_base.update(v3_meta)
+        if learning_events:
+            md_base["learning_events"] = learning_events
+
+        return FacetResult(
+            facet_name=self.name,
+            summary=summary,
+            proposed_decision=(
+                DecisionAction.RECORD if stored_memory is not None else None
+            ),
+            state_updates=state_updates,
+            metadata=md_base,
         )
 
     # ---- Storage ------------------------------------------------------
@@ -185,9 +228,9 @@ class MemoryFacet:
             return bool(event.content.strip() or event.metadata)
         return False
 
-    def _build_memory_record(self, event: Event) -> MemoryRecord:
+    def _build_memory_record(self, event: Event, state: NexusState) -> MemoryRecord:
         metadata_tags, inferred_tags, merged_tags = self._derive_tags(event)
-        salience, salience_breakdown = self._derive_salience(event, merged_tags)
+        salience, salience_breakdown = self._derive_salience(event, merged_tags, state)
         role = self._derive_role(event)
         domain = infer_domain(event.content, merged_tags)
 
@@ -220,9 +263,29 @@ class MemoryFacet:
         return metadata_tags, inferred_tags, merged_tags
 
     @staticmethod
+    def _prior_affect_payload(state: NexusState | None) -> dict[str, float]:
+        if state is None:
+            return {}
+        aff = state.facet_state.get("affect")
+        if not isinstance(aff, dict):
+            return {}
+        raw = aff.get("last_affect_state")
+        if not isinstance(raw, dict):
+            return {}
+        out: dict[str, float] = {}
+        for k in ("novelty", "arousal", "valence", "dominance"):
+            if k in raw:
+                try:
+                    out[k] = float(raw[k])
+                except (TypeError, ValueError):
+                    continue
+        return out
+
     def _derive_salience(
+        self,
         event: Event,
         tags: list[str],
+        state: NexusState | None,
     ) -> tuple[float, dict[str, float]]:
         is_user_message = event.event_type == EventType.USER_MESSAGE
         salience = compute_salience(
@@ -235,7 +298,26 @@ class MemoryFacet:
             tags=tags,
             is_user_message=is_user_message,
         )
-        return salience, salience_breakdown
+        affect = self._prior_affect_payload(state)
+        novelty = float(
+            affect.get("novelty", event.metadata.get("novelty", 0.0) or 0.0)
+        )
+        arousal = float(affect.get("arousal", 0.0))
+        valence = float(affect.get("valence", 0.0))
+        pressure_m = event.metadata.get("pressure")
+        try:
+            urg = float(pressure_m) if pressure_m is not None else 0.0
+        except (TypeError, ValueError):
+            urg = 0.0
+        sal_v3, v3_br = mem_v3_formula.compute_salience_v3(
+            salience,
+            novelty=novelty,
+            arousal=arousal,
+            valence=valence,
+            urgency_or_pressure=urg,
+        )
+        merged_br = {**salience_breakdown, "v3": v3_br, "salience_version": "v3"}
+        return sal_v3, merged_br  # type: ignore[return-value]
 
     @staticmethod
     def _derive_role(event: Event) -> MemoryRole:
@@ -483,6 +565,7 @@ class MemoryFacet:
     def _retrieve_relevant(
         self,
         event: Event,
+        state: NexusState,
         *,
         exclude_id: str | None,
     ) -> dict[str, Any]:
@@ -513,18 +596,30 @@ class MemoryFacet:
                 filtered = [
                     pair for pair in ranked_pairs if pair[0].id != exclude_id
                 ][: self.retrieve_limit]
-                return {
-                    "records": [pair[0] for pair in filtered],
-                    "breakdowns": [pair[1] for pair in filtered],
-                    "strategy": "hybrid_v2_with_embeddings"
+                records = [pair[0] for pair in filtered]
+                breakdowns = [
+                    self._enrich_hybrid_v3(
+                        event,
+                        state,
+                        records,
+                        pair[0],
+                        pair[1],
+                    )
+                    for pair in filtered
+                ]
+                strat = (
+                    "hybrid_v2_with_embeddings"
                     if event_vector is not None
-                    else "hybrid_v2_deterministic",
+                    else "hybrid_v2_deterministic"
+                )
+                return {
+                    "records": records,
+                    "breakdowns": breakdowns,
+                    "strategy": strat,
                     "query_intent": intent.value,
                     "event_domain": event_domain,
                 }
 
-        # Fallback: deterministic v1 retrieval, with on-the-fly hybrid
-        # breakdowns so debug/score-breakdown surfaces stay populated.
         records = [
             memory
             for memory in store.retrieve_relevant(event, limit=retrieve_limit)
@@ -541,6 +636,10 @@ class MemoryFacet:
             )
             for memory in records
         ]
+        breakdowns = [
+            self._enrich_hybrid_v3(event, state, records, mem, br)
+            for mem, br in zip(records, breakdowns)
+        ]
         return {
             "records": records,
             "breakdowns": breakdowns,
@@ -548,6 +647,55 @@ class MemoryFacet:
             "query_intent": intent.value,
             "event_domain": event_domain,
         }
+
+    def _enrich_hybrid_v3(
+        self,
+        event: Event,
+        state: NexusState,
+        batch_records: list[MemoryRecord],
+        memory: MemoryRecord,
+        breakdown: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not isinstance(self.store, SQLiteMemoryStore):
+            return breakdown
+        if memory.memory_layer == MemoryLayer.WORKING:
+            return breakdown
+        ids = {r.id for r in batch_records if r.memory_layer != MemoryLayer.WORKING}
+        mc = None
+        cid = memory.community_id
+        if cid:
+            mc = self.store.get_memory_community(cid)
+        if mc is None:
+            comms = self.store.list_communities_for_memory(memory.id)
+            if comms:
+                mc = comms[0]
+        overlap = 0.0
+        if mc and mc.member_count:
+            overlap = min(1.0, len(ids & set(mc.member_memory_ids)) / max(mc.member_count, 1))
+        neigh_w = 0.0
+        for e in self.store.list_memory_edges(memory_id=memory.id, limit=24):
+            other = (
+                e.target_memory_id
+                if e.source_memory_id == memory.id
+                else e.source_memory_id
+            )
+            if other in ids and other != memory.id:
+                neigh_w = max(
+                    neigh_w,
+                    SQLiteMemoryStore.normalize_edge_weight(e),
+                )
+        extras = mem_v3_formula.v3_retrieval_bonuses(
+            community_activation=float(mc.activation_score) if mc else 0.0,
+            community_pressure=float(mc.pressure_score) if mc else 0.0,
+            member_overlap_ratio=overlap,
+            best_neighbor_weight_norm=neigh_w,
+        )
+        merged = mem_v3_formula.merge_v3_into_hybrid_breakdown(breakdown, extras)
+        if mc:
+            merged["community_id"] = mc.community_id
+            merged["community_activation_score"] = float(mc.activation_score)
+            merged["community_pressure_score"] = float(mc.pressure_score)
+        return merged
 
     # ---- Output -------------------------------------------------------
 
