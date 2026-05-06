@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-05-06 - Presentation Vector v0 (read-only UI projection)
+
+- **Context:** UI-adjacent consumers need renderer-neutral animation hints without a new facet or feedback into Nexus.
+- **Done:** `fullerene/presentation/` + verifier optional validator hook + tick/CLI **`--presentation`** + `tests/test_presentation_vector.py` + harness updates.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -q`; smoke `python -m fullerene --full --tick --presentation`, `--full --ticks 5 --tick-summary --presentation`, `--full --ticks 3 --json --presentation`.
+- **Next:** Watch/UI consumers can render from `presentation_vector`; continuous loop renderer integration remains separate.
+- **Blockers:** None.
+
 ### 2026-05-06 - Manual Tick Runner v0 (explicit SYSTEM_TICK)
 
 - **Context:** Need bounded repeatable internal cycles without user prompts, daemons, or watch TUIs to validate LPB, interrupts, Expression Gate, verifier, and persistence.

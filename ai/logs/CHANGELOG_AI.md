@@ -9,6 +9,15 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-06 (Presentation Vector v0)
+
+- Added **`fullerene/presentation/`** (`models.py`, `mapping.py`, `vector.py`, `__init__.py`): deterministic read-only **`PresentationVector`** derivation from **`NexusRecord`** + optional **`NexusState`**, **`derive_presentation_vector_from_summary`**; no runtime mutation.
+- Added **`validate_presentation_vector_v0`** optional schema rows in **`fullerene/verifier/artifacts.py`**.
+- Extended **`fullerene/tick/runner.py`** summaries with optional **`presentation_vector`** (`include_presentation`).
+- **`fullerene/cli.py`**: **`--presentation`** (compact lines; JSON merges `presentation_vector` on single-shot when flag set; tick summaries embed when **`--presentation`** or **`--tick-summary`**).
+- Added **`tests/test_presentation_vector.py`**; full suite green.
+- Harness: `architecture.md`, `glossary.md`, `decisions.md`, `commands.md`, `CHANGELOG_AI`, `SESSION_LOG`.
+
 ### 2026-05-06 (Manual Tick Runner v0)
 
 - Added `fullerene/tick/` (`runner.py`, `__init__.py`): `run_manual_ticks`, `TickRunResult`, `summarize_tick_record`, `build_tick_event_metadata`, hard cap **100**, conservative stop conditions (high `system_pressure` streak, repeated verifier critical, repeated `ask_user` expression same source, internal overflow, exceptions).

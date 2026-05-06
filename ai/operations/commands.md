@@ -24,13 +24,15 @@ Manual Tick Runner v0 (explicit `SYSTEM_TICK` cycles — not a daemon or watch U
 
 ```bash
 python -m fullerene --full --tick --debug --state-dir state/.smoke-tick
-python -m fullerene --full --ticks 5 --tick-summary --state-dir state/.smoke-tick
-python -m fullerene --full --ticks 3 --json --state-dir state/.smoke-tick
+python -m fullerene --full --tick --presentation --state-dir state/.smoke-tick
+python -m fullerene --full --ticks 5 --tick-summary --presentation --state-dir state/.smoke-tick
+python -m fullerene --full --ticks 3 --json --presentation --state-dir state/.smoke-tick
 ```
 
 - `--tick` runs one `SYSTEM_TICK` (combine with `--ticks N` for a sequence; default cap **100**).
 - Default tick metadata sets `suppress_expression`; use `--allow-tick-expression` to opt out.
 - `--json` / `--debug` emit `{ "tick_run": … }` for manual ticks; full per-tick `records` appear with **`--debug`** (or use **`--json` together with `--debug`** for full nested records).
+- **`--presentation`** emits compact Presentation Vector lines and embeds **`presentation_vector`** in each tick **`summaries`** row when **`--presentation`** or **`--tick-summary`** is active.
 
 `--json` / `--debug` emit the full `NexusRecord`, including Nexus v2 `interrupt_candidates`, `suppression_decisions`, Expression Gate recommendation fields (`expression_recommendation`, `expression_score`, `expression_mode`, etc.), and related `cycle_trace` fields when present.
 

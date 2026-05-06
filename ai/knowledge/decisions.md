@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-05-06 - Presentation Vector v0 (read-only UI projection)
+
+- **Status:** accepted
+- **Context:** Downstream surfaces need a stable, animation-friendly snapshot of “what Fullerene appears to be doing” without importing cognition into the UI layer or adding a thirteenth facet.
+- **Decision:** Implement **`fullerene/presentation/`** (`models.py`, `mapping.py`, `vector.py`) with **`derive_presentation_vector`** deterministic priority/intensity rules, renderer-neutral hints only, JSON round-tripping, optional **`validate_presentation_vector_v0`** in **`fullerene/verifier/artifacts.py`**, Manual Tick summary / CLI **`--presentation`** embedding, and **no** mutations of runtime state or facet wiring.
+- **Consequences:** ASCII/Rive/Electron/watch-mode consumers can subscribe to a stable packet later; always-on UI loops and asset rendering remain explicitly out of scope until separately specified.
+
 ## 2026-05-06 - Manual Tick Runner v0 (explicit SYSTEM_TICK sequences)
 
 - **Status:** accepted

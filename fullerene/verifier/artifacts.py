@@ -1413,6 +1413,218 @@ def validate_expression_gate_v0(
     return out
 
 
+_PRESENTATION_MODES = frozenset(
+    {
+        "idle",
+        "listening",
+        "thinking",
+        "speaking",
+        "blocked",
+        "overloaded",
+        "verifying",
+        "learning",
+        "warning",
+        "sleeping",
+        "unknown",
+    }
+)
+_PRESENTATION_MOTIONS = frozenset(
+    {
+        "still",
+        "blink",
+        "slow_blink",
+        "pulse",
+        "bounce",
+        "jitter",
+        "mouth_loop",
+        "ellipsis",
+        "none",
+    }
+)
+_PRESENTATION_CHANNELS = frozenset(
+    {
+        "none",
+        "internal",
+        "status",
+        "user_expression",
+        "ask_user",
+        "warning",
+    }
+)
+
+
+def validate_presentation_vector_v0(
+    presentation: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Structural checks for optional Presentation Vector v0 dicts."""
+    kind = "presentation_vector_v0"
+    out: list[dict[str, Any]] = []
+    if presentation is None or not isinstance(presentation, Mapping):
+        return out
+
+    mode = str(presentation.get("mode") or "").strip().lower()
+    if mode not in _PRESENTATION_MODES:
+        out.append(
+            artifact_result(
+                validator="presentation_vector_schema",
+                artifact_kind=kind,
+                status="failed",
+                severity="error",
+                code="invalid_mode",
+                path="presentation.mode",
+                message=f"Presentation mode '{mode}' is not a valid PresentationMode.",
+            )
+        )
+
+    motion = str(presentation.get("motion") or "").strip().lower()
+    if motion not in _PRESENTATION_MOTIONS:
+        out.append(
+            artifact_result(
+                validator="presentation_vector_schema",
+                artifact_kind=kind,
+                status="failed",
+                severity="error",
+                code="invalid_motion",
+                path="presentation.motion",
+                message=f"Presentation motion '{motion}' is not valid.",
+            )
+        )
+
+    channel = str(presentation.get("channel") or "").strip().lower()
+    if channel not in _PRESENTATION_CHANNELS:
+        out.append(
+            artifact_result(
+                validator="presentation_vector_schema",
+                artifact_kind=kind,
+                status="failed",
+                severity="error",
+                code="invalid_channel",
+                path="presentation.channel",
+                message=f"Presentation channel '{channel}' is not valid.",
+            )
+        )
+
+    for key in (
+        "intensity",
+        "pressure",
+        "latent_pressure",
+        "confidence",
+        "novelty",
+        "attention_motion",
+    ):
+        raw = presentation.get(key)
+        if isinstance(raw, bool) or not _is_unit_number(raw):
+            out.append(
+                artifact_result(
+                    validator="presentation_vector_schema",
+                    artifact_kind=kind,
+                    status="failed",
+                    severity="warning",
+                    code=f"{key}_oob",
+                    path=f"presentation.{key}",
+                    message=f"{key} must be numeric in [0,1].",
+                )
+            )
+
+    for bk in (
+        "user_attention_needed",
+        "expression_active",
+        "blocked",
+        "overloaded",
+        "warning",
+        "speaking",
+        "thinking",
+        "idle",
+    ):
+        if bk in presentation and not isinstance(presentation.get(bk), bool):
+            out.append(
+                artifact_result(
+                    validator="presentation_vector_schema",
+                    artifact_kind=kind,
+                    status="failed",
+                    severity="warning",
+                    code=f"{bk}_not_bool",
+                    path=f"presentation.{bk}",
+                    message=f"{bk} must be a boolean.",
+                )
+            )
+
+    expr_active = presentation.get("expression_active") is True
+    expr_mode = str(presentation.get("expression_mode") or "").strip().lower()
+    if expr_active and expr_mode not in {"short_utterance", "ask_user"}:
+        out.append(
+            artifact_result(
+                validator="presentation_vector_schema",
+                artifact_kind=kind,
+                status="failed",
+                severity="warning",
+                code="expression_active_mode_mismatch",
+                path="presentation.expression_active",
+                message="expression_active requires expression_mode short_utterance or ask_user.",
+            )
+        )
+
+    meta = presentation.get("metadata")
+    if isinstance(meta, Mapping) and meta.get("expression_suppressed") is True and expr_active:
+        out.append(
+            artifact_result(
+                validator="presentation_vector_schema",
+                artifact_kind=kind,
+                status="failed",
+                severity="error",
+                code="expression_active_while_suppressed",
+                path="presentation.metadata.expression_suppressed",
+                message="expression_active cannot be true when expression is suppressed.",
+                escalation_recommended=True,
+            )
+        )
+
+    try:
+        dumped = json.dumps(presentation)
+    except (TypeError, ValueError):
+        dumped = ""
+        out.append(
+            artifact_result(
+                validator="presentation_vector_schema",
+                artifact_kind=kind,
+                status="failed",
+                severity="error",
+                code="not_json_serializable",
+                path="presentation",
+                message="Presentation vector must be JSON-serializable.",
+            )
+        )
+    if dumped and len(dumped) > 32000:
+        out.append(
+            artifact_result(
+                validator="presentation_vector_schema",
+                artifact_kind=kind,
+                status="failed",
+                severity="warning",
+                code="presentation_too_large",
+                path="presentation",
+                message="Presentation vector JSON exceeds compact size budget.",
+            )
+        )
+
+    if not any(
+        isinstance(it, Mapping) and str(it.get("status") or "").lower() == "failed"
+        for it in out
+    ):
+        out.append(
+            artifact_result(
+                validator="presentation_vector_schema",
+                artifact_kind=kind,
+                status="passed",
+                severity="info",
+                code="ok",
+                path="presentation_vector_v0",
+                message="Presentation Vector v0 checked.",
+            )
+        )
+    return out
+
+
 def validate_nexus_interrupt_v2_audit(
     prior_cycle_trace: Mapping[str, Any] | None,
 ) -> list[dict[str, Any]]:

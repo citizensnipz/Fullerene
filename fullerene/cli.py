@@ -50,6 +50,7 @@ from fullerene.policy import (
     coerce_policy_source,
     coerce_policy_target_type,
 )
+from fullerene.presentation import derive_presentation_vector
 from fullerene.tick.runner import TICK_HARD_CAP, TickRunResult, build_tick_event_metadata, run_manual_ticks
 from fullerene.workspace_state import DEFAULT_STATE_DIR
 from fullerene.state import FileStateStore
@@ -213,6 +214,13 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Do not set metadata suppress_expression on manual ticks; Expression "
             "Gate may surface user-facing recommendation flags when scoring allows."
+        ),
+    )
+    parser.add_argument(
+        "--presentation",
+        action="store_true",
+        help=(
+            "Emit Presentation Vector v0 (compact lines and/or summaries; read-only projection)."
         ),
     )
     parser.add_argument(
@@ -610,9 +618,18 @@ def _cli_build_nexus_runtime(
     return NexusRuntime(facets=facets, store=store)
 
 
-def _format_tick_summary_line(summary: dict[str, Any]) -> str:
-    idx = summary.get("tick_index")
+def _format_presentation_compact(vector: dict[str, Any]) -> str:
     return (
+        f"mode={vector.get('mode')} "
+        f"intensity={float(vector.get('intensity') or 0):.2f} "
+        f"motion={vector.get('motion')} "
+        f"channel={vector.get('channel')}"
+    )
+
+
+def _format_tick_summary_line(summary: dict[str, Any], *, presentation: bool = False) -> str:
+    idx = summary.get("tick_index")
+    base = (
         f"tick {idx}: decision={summary.get('decision')} "
         f"system_pressure={float(summary.get('system_pressure') or 0):.3f} "
         f"latent_pressure={float(summary.get('latent_pressure') or 0):.3f} "
@@ -622,6 +639,11 @@ def _format_tick_summary_line(summary: dict[str, Any]) -> str:
         f"suppressed_interrupts={summary.get('suppressed_interrupt_count')} "
         f"internal_processed={summary.get('internal_event_processed')}"
     )
+    if presentation:
+        pv = summary.get("presentation_vector")
+        if isinstance(pv, dict):
+            base = f"tick {idx}: {_format_presentation_compact(pv)}"
+    return base
 
 
 def _print_tick_run_cli(args: argparse.Namespace, result: TickRunResult) -> None:
@@ -632,12 +654,12 @@ def _print_tick_run_cli(args: argparse.Namespace, result: TickRunResult) -> None
             blob.pop("records", None)
         print(json.dumps({"tick_run": blob}, indent=2))
         return
-    if args.tick_summary:
+    if args.tick_summary or args.presentation:
         for row in result.summaries:
             if "error" in row:
                 print(f"tick {row.get('tick_index')}: error={row.get('error')}")
             else:
-                print(_format_tick_summary_line(row))
+                print(_format_tick_summary_line(row, presentation=bool(args.presentation)))
     parts = [
         f"tick_run: completed={result.tick_count}",
         f"stopped_early={str(result.stopped_early).lower()}",
@@ -722,6 +744,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             suppress_expression=not args.allow_tick_expression,
             extra_metadata=metadata,
             include_full_records=bool(args.json or args.debug),
+            include_presentation=bool(args.presentation or args.tick_summary),
         )
         _print_tick_run_cli(args, tick_result)
         return 0
@@ -736,16 +759,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     record = runtime.process_event(event)
 
     if args.json or args.debug:
-        print(json.dumps(record.to_dict(), indent=2))
-    else:
-        print(
-            format_record_output(
+        out_rec = record.to_dict()
+        if args.presentation:
+            out_rec = dict(out_rec)
+            out_rec["presentation_vector"] = derive_presentation_vector(
                 record,
-                model_adapter=model_adapter,
-                debug=args.debug,
-                expression_gate=args.expression_gate,
-            )
+                runtime.state,
+            ).to_dict()
+        print(json.dumps(out_rec, indent=2))
+    else:
+        text = format_record_output(
+            record,
+            model_adapter=model_adapter,
+            debug=args.debug,
+            expression_gate=args.expression_gate,
         )
+        lines = [text]
+        if args.presentation:
+            lines.append(
+                "presentation: "
+                + _format_presentation_compact(
+                    derive_presentation_vector(record, runtime.state).to_dict(),
+                )
+            )
+        print("\n".join(lines))
     return 0
 
 

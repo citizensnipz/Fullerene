@@ -5,8 +5,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from fullerene.nexus.models import Event, EventType, NexusRecord
+from fullerene.nexus.models import Event, EventType, NexusRecord, NexusState
 from fullerene.nexus.runtime import NexusRuntime
+from fullerene.presentation import derive_presentation_vector
 
 # Hard safety cap for CLI --ticks (reject above this).
 TICK_HARD_CAP = 100
@@ -40,7 +41,12 @@ def build_tick_event_metadata(
     return base
 
 
-def summarize_tick_record(record: NexusRecord) -> dict[str, Any]:
+def summarize_tick_record(
+    record: NexusRecord,
+    *,
+    state: NexusState | None = None,
+    include_presentation: bool = False,
+) -> dict[str, Any]:
     """Compact JSON-serializable summary for one processed tick."""
     md = record.metadata if isinstance(record.metadata, dict) else {}
     sig = md.get("signal_map") if isinstance(md.get("signal_map"), dict) else {}
@@ -79,7 +85,7 @@ def summarize_tick_record(record: NexusRecord) -> dict[str, Any]:
     internal_processed = md.get("internal_events_processed")
     internal_ct = len(internal_processed) if isinstance(internal_processed, list) else 0
 
-    return {
+    summ: dict[str, Any] = {
         "tick_index": ev_meta.get("tick_index"),
         "tick_count": ev_meta.get("tick_count"),
         "decision": record.decision.action.value,
@@ -100,6 +106,10 @@ def summarize_tick_record(record: NexusRecord) -> dict[str, Any]:
         "verifier_status": str(sig.get("verifier_status", "unknown") or "unknown"),
         "internal_events_dropped": int(md.get("internal_events_dropped") or 0),
     }
+    if include_presentation:
+        pv = derive_presentation_vector(record, state)
+        summ["presentation_vector"] = pv.to_dict()
+    return summ
 
 
 @dataclass(slots=True)
@@ -146,6 +156,7 @@ def run_manual_ticks(
     suppress_expression: bool = True,
     extra_metadata: dict[str, Any] | None = None,
     include_full_records: bool = True,
+    include_presentation: bool = False,
 ) -> TickRunResult:
     """
     Run ``total_ticks`` SYSTEM_TICK events in sequence on ``runtime``.
@@ -185,7 +196,11 @@ def run_manual_ticks(
                 records_out.append({"error": str(exc), "tick_index": i})
             break
 
-        summ = summarize_tick_record(record)
+        summ = summarize_tick_record(
+            record,
+            state=runtime.state,
+            include_presentation=include_presentation,
+        )
         summaries.append(summ)
 
         if include_full_records:
