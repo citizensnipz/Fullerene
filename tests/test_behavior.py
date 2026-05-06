@@ -728,6 +728,110 @@ class BehaviorV2Tests(unittest.TestCase):
         )
         self.assertEqual(result.proposed_decision, DecisionAction.RECORD)
 
+    def test_source_request_intent_is_detected(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="where did that come from?"),
+            NexusState(),
+        )
+        self.assertEqual(result.metadata["conversational_intent"], "source_request")
+        self.assertEqual(result.metadata["grounding_need"], "runtime_state")
+
+    def test_short_referential_follow_up_uses_working_memory(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="where?"),
+            NexusState(
+                facet_state={
+                    "context": {
+                        "working_memory_turn_count": 2,
+                        "included_working_memory_turns": ["u1", "a1"],
+                    }
+                }
+            ),
+        )
+        self.assertEqual(result.metadata["conversational_intent"], "follow_up")
+        self.assertNotEqual(result.metadata["ambiguity_kind"], "generic")
+        self.assertGreater(result.metadata["continuity_confidence"], 0.6)
+
+    def test_short_referential_follow_up_without_context_biases_ask(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="where?"),
+            NexusState(),
+        )
+        self.assertIn(result.proposed_decision, {DecisionAction.ASK, DecisionAction.RECORD})
+        self.assertLess(result.metadata["continuity_confidence"], 0.5)
+
+    def test_clarification_supplied_reduces_ambiguity(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="To clarify, I mean the API timeout case."),
+            NexusState(),
+        )
+        self.assertEqual(result.metadata["conversational_intent"], "clarification_supplied")
+        self.assertEqual(result.metadata["ambiguity_kind"], "none")
+
+    def test_challenge_lowers_confidence_and_emits_learning_signal(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="that's not right"),
+            NexusState(),
+        )
+        self.assertEqual(result.metadata["conversational_intent"], "challenge")
+        self.assertGreater(result.metadata["challenge_confidence_penalty"], 0.0)
+        learning = result.metadata["learning_event"]
+        self.assertIn("signals", learning)
+        self.assertIn("challenge_unresolved", learning["signals"])
+
+    def test_repeated_dissatisfaction_emits_learning_signal(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="you still did not answer that"),
+            NexusState(),
+        )
+        self.assertEqual(result.metadata["conversational_intent"], "repeated_dissatisfaction")
+        self.assertIn("repeated_dissatisfaction", result.metadata["learning_event"]["signals"])
+
+    def test_world_model_signal_changes_act_confidence_path(self) -> None:
+        contradicted = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="execute this"),
+            NexusState(
+                facet_state={
+                    "world_model": {
+                        "last_relevant_beliefs": [{"id": "b1", "confidence": 0.9, "status": "contradicted"}],
+                    }
+                }
+            ),
+        )
+        supported = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="execute this"),
+            NexusState(
+                facet_state={
+                    "world_model": {
+                        "last_relevant_beliefs": [{"id": "b2", "confidence": 0.95, "status": "active"}],
+                    }
+                }
+            ),
+        )
+        self.assertLess(
+            contradicted.metadata["decision_trace"]["adjusted_candidate_scores"]["act"],
+            supported.metadata["decision_trace"]["adjusted_candidate_scores"]["act"],
+        )
+
+    def test_decision_trace_exposes_v21_fields(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="how do you know that?"),
+            NexusState(),
+        )
+        trace = result.metadata["decision_trace"]
+        for key in (
+            "conversational_intent",
+            "conversational_intent_score",
+            "grounding_need",
+            "grounding_available",
+            "grounding_confidence",
+            "ambiguity_kind",
+            "continuity_confidence",
+            "self_consistency_confidence",
+            "challenge_confidence_penalty",
+        ):
+            self.assertIn(key, trace)
+
 
 class CLIBehaviorIntegrationTests(unittest.TestCase):
     def test_cli_with_behavior_flag_uses_behavior_facet(self) -> None:

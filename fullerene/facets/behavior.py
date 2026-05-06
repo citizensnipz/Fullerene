@@ -1,4 +1,4 @@
-"""Deterministic behavior facet for Fullerene Behavior v1."""
+"""Deterministic behavior facet for Fullerene Behavior v2.1."""
 
 from __future__ import annotations
 
@@ -121,6 +121,54 @@ QUERY_INTENTS_REQUIRING_RESPONSE = frozenset(
 LOW_BELIEF_CONFIDENCE_THRESHOLD = 0.4
 CONTRADICTION_ACT_PENALTY = 0.35
 CONTEXT_OVERLOAD_RATIO_THRESHOLD = 0.85
+FOLLOW_UP_REFERENCE_WORDS = frozenset(
+    {
+        "that",
+        "this",
+        "it",
+        "there",
+        "those",
+        "them",
+        "one",
+        "ones",
+        "then",
+        "again",
+        "where",
+        "why",
+        "how",
+    }
+)
+CONVERSATIONAL_INTENTS = frozenset(
+    {
+        "new_question",
+        "follow_up",
+        "clarification_request",
+        "clarification_supplied",
+        "challenge",
+        "source_request",
+        "correction",
+        "contradiction_report",
+        "repeated_dissatisfaction",
+        "action_request",
+        "planning_request",
+        "memory_update",
+        "status_request",
+        "unknown",
+    }
+)
+GROUNDING_NEEDS = frozenset(
+    {
+        "none",
+        "memory",
+        "working_memory",
+        "world_model",
+        "policy",
+        "executor",
+        "verifier",
+        "runtime_state",
+        "unknown",
+    }
+)
 
 
 @dataclass(slots=True)
@@ -184,6 +232,30 @@ class _BehaviorSignals:
     context_load_ratio: float
     context_overloaded: bool
     latent_pressure: float
+    conversational_intent: str
+    conversational_intent_score: float
+    conversational_intent_reasons: list[str]
+    follow_up_reference_detected: bool
+    short_follow_up: bool
+    grounding_need: str
+    grounding_need_reasons: list[str]
+    grounding_available: bool
+    grounding_confidence: float
+    continuity_confidence: float
+    self_consistency_confidence: float
+    challenge_confidence_penalty: float
+    ambiguity_kind: str
+    ambiguity_reasons: list[str]
+    repeated_dissatisfaction: bool
+    included_working_memory_turns: list[str]
+    working_memory_turn_count: int
+    included_context_types: list[str]
+    included_lpb_entry_ids: list[str]
+    included_belief_ids: list[str]
+    context_strategy: str | None
+    related_context_item_ids: list[str]
+    related_memory_ids: list[str]
+    related_belief_ids: list[str]
 
 
 class BehaviorFacet:
@@ -199,6 +271,11 @@ class BehaviorFacet:
         )
         raw_candidate_scores = dict(decision_scores)
         decision_scores = self._apply_v2_candidate_adjustments(decision_scores, signals, reasons)
+        decision_scores, adjustment_reasons = self._apply_v21_candidate_adjustments(
+            decision_scores,
+            signals,
+        )
+        reasons.extend(adjustment_reasons)
         selected_decision = self._select_highest_scored_decision(decision_scores)
         if (
             selected_decision == DecisionAction.ACT
@@ -223,6 +300,24 @@ class BehaviorFacet:
             goal_alignment_priority=signals.goal_alignment_priority,
             world_alignment_score=signals.world_alignment_score,
             world_alignment_confidence=signals.world_alignment_confidence,
+        )
+        confidence_breakdown["grounding_confidence"] = signals.grounding_confidence
+        confidence_breakdown["continuity_confidence"] = signals.continuity_confidence
+        confidence_breakdown["self_consistency_confidence"] = (
+            signals.self_consistency_confidence
+        )
+        confidence_breakdown["challenge_confidence_penalty"] = (
+            -signals.challenge_confidence_penalty
+        )
+        confidence_breakdown["total"] = round(
+            _clamp_unit(
+                confidence_breakdown["total"]
+                + (signals.grounding_confidence * 0.15)
+                + (signals.continuity_confidence * 0.1)
+                + (signals.self_consistency_confidence * 0.1)
+                - signals.challenge_confidence_penalty
+            ),
+            3,
         )
         attention_confidence_bias = self._attention_confidence_bias(
             state,
@@ -320,6 +415,8 @@ class BehaviorFacet:
                 "reasons": list(reasons),
                 "decision": selected_decision.value,
                 "ambiguity_score": signals.ambiguity_score,
+                "ambiguity_kind": signals.ambiguity_kind,
+                "ambiguity_reasons": list(signals.ambiguity_reasons),
                 "has_relevant_memory": signals.has_relevant_memory,
                 "has_preference_memory": signals.has_preference_memory,
                 "has_goal": signals.has_goal,
@@ -340,6 +437,24 @@ class BehaviorFacet:
                 "planner_available": signals.planner_available,
                 "context_sufficiency": signals.context_sufficiency,
                 "missing_context": list(signals.missing_context),
+                "conversational_intent": signals.conversational_intent,
+                "conversational_intent_score": signals.conversational_intent_score,
+                "conversational_intent_reasons": list(
+                    signals.conversational_intent_reasons
+                ),
+                "follow_up_reference_detected": signals.follow_up_reference_detected,
+                "short_follow_up": signals.short_follow_up,
+                "grounding_need": signals.grounding_need,
+                "grounding_need_reasons": list(signals.grounding_need_reasons),
+                "grounding_available": signals.grounding_available,
+                "grounding_confidence": signals.grounding_confidence,
+                "continuity_confidence": signals.continuity_confidence,
+                "self_consistency_confidence": signals.self_consistency_confidence,
+                "challenge_confidence_penalty": signals.challenge_confidence_penalty,
+                "final_confidence_reasons": self._final_confidence_reasons(
+                    signals,
+                    confidence_breakdown,
+                ),
                 "included_memory_roles": list(signals.included_memory_roles),
                 "included_memory_domains": list(signals.included_memory_domains),
                 "attention_confidence_bias": attention_confidence_bias,
@@ -372,6 +487,15 @@ class BehaviorFacet:
                 "learning_event": {
                     "event_type": "behavior_decision_trace_v2",
                     "trace": trace,
+                    "signals": self._learning_signals(signals),
+                    "conversational_intent": signals.conversational_intent,
+                    "grounding_need": signals.grounding_need,
+                    "grounding_available": signals.grounding_available,
+                    "ambiguity_kind": signals.ambiguity_kind,
+                    "confidence": confidence,
+                    "related_context_item_ids": list(signals.related_context_item_ids),
+                    "related_belief_ids": list(signals.related_belief_ids),
+                    "related_memory_ids": list(signals.related_memory_ids),
                 },
             },
         )
@@ -440,6 +564,12 @@ class BehaviorFacet:
         relevant_belief_count = len(aligned_beliefs)
         context_item_count = self._context_item_count(state)
         planner_available = self._planner_available(planner_context)
+        included_context_types = self._included_context_types(context_signal)
+        included_working_memory_turns = self._included_working_memory_turns(context_signal)
+        working_memory_turn_count = self._working_memory_turn_count(context_signal)
+        included_lpb_entry_ids = self._included_lpb_entry_ids(context_signal)
+        included_belief_ids = self._included_belief_ids(context_signal)
+        context_strategy = self._context_strategy(context_signal)
         included_memory_roles = self._included_memory_roles(
             context_signal=context_signal,
             memory_context=memory_context,
@@ -522,6 +652,56 @@ class BehaviorFacet:
             relevant_belief_count=relevant_belief_count,
             domain_match=domain_match,
             event_domain=event_domain,
+        )
+        (
+            follow_up_reference_detected,
+            short_follow_up,
+            conversational_intent,
+            conversational_intent_score,
+            conversational_intent_reasons,
+        ) = self._classify_conversational_intent(
+            event,
+            query_intent=query_intent,
+            working_memory_turn_count=working_memory_turn_count,
+            has_recent_assistant_output=working_memory_turn_count > 0,
+            has_previous_user_turn=working_memory_turn_count > 1,
+            has_context_items=context_item_count > 0,
+        )
+        grounding_need, grounding_need_reasons = self._classify_grounding_need(
+            conversational_intent
+        )
+        grounding_available, grounding_confidence = self._resolve_grounding(
+            grounding_need=grounding_need,
+            working_memory_turn_count=working_memory_turn_count,
+            relevant_memory_count=relevant_memory_count,
+            relevant_belief_count=relevant_belief_count,
+            policy_result=policy_result,
+            planner_available=planner_available,
+            context_item_count=context_item_count,
+        )
+        ambiguity_kind, ambiguity_reasons = self._classify_ambiguity_kind(
+            ambiguity_score=ambiguity_score,
+            conversational_intent=conversational_intent,
+            follow_up_reference_detected=follow_up_reference_detected,
+            short_follow_up=short_follow_up,
+            grounding_available=grounding_available,
+            working_memory_turn_count=working_memory_turn_count,
+        )
+        repeated_dissatisfaction = conversational_intent == "repeated_dissatisfaction"
+        continuity_confidence = self._continuity_confidence(
+            follow_up_reference_detected=follow_up_reference_detected,
+            working_memory_turn_count=working_memory_turn_count,
+            short_follow_up=short_follow_up,
+        )
+        self_consistency_confidence = self._self_consistency_confidence(
+            belief_confidence=belief_confidence,
+            belief_contradiction=belief_contradiction,
+        )
+        challenge_confidence_penalty = self._challenge_penalty(
+            conversational_intent=conversational_intent,
+            repeated_dissatisfaction=repeated_dissatisfaction,
+            belief_contradiction=belief_contradiction,
+            grounding_available=grounding_available,
         )
         direct_response_needed = (
             query_intent in QUERY_INTENTS_REQUIRING_RESPONSE
@@ -636,6 +816,33 @@ class BehaviorFacet:
             context_load_ratio=context_load_ratio,
             context_overloaded=context_overloaded,
             latent_pressure=latent_pressure,
+            conversational_intent=conversational_intent,
+            conversational_intent_score=conversational_intent_score,
+            conversational_intent_reasons=conversational_intent_reasons,
+            follow_up_reference_detected=follow_up_reference_detected,
+            short_follow_up=short_follow_up,
+            grounding_need=grounding_need,
+            grounding_need_reasons=grounding_need_reasons,
+            grounding_available=grounding_available,
+            grounding_confidence=grounding_confidence,
+            continuity_confidence=continuity_confidence,
+            self_consistency_confidence=self_consistency_confidence,
+            challenge_confidence_penalty=challenge_confidence_penalty,
+            ambiguity_kind=ambiguity_kind,
+            ambiguity_reasons=ambiguity_reasons,
+            repeated_dissatisfaction=repeated_dissatisfaction,
+            included_working_memory_turns=included_working_memory_turns,
+            working_memory_turn_count=working_memory_turn_count,
+            included_context_types=included_context_types,
+            included_lpb_entry_ids=included_lpb_entry_ids,
+            included_belief_ids=included_belief_ids,
+            context_strategy=context_strategy,
+            related_context_item_ids=self._related_context_item_ids(context_signal),
+            related_memory_ids=self._related_memory_ids(
+                context_signal,
+                memory_context,
+            ),
+            related_belief_ids=self._related_belief_ids(context_signal, world_context),
         )
 
     @staticmethod
@@ -1433,6 +1640,264 @@ class BehaviorFacet:
         return stripped in vague_queries or (stripped.endswith("?") and len(tokens) <= 3)
 
     @staticmethod
+    def _included_context_types(context_signal: dict[str, Any]) -> list[str]:
+        raw = context_signal.get("included_context_types") or context_signal.get(
+            "last_included_context_types"
+        )
+        return sorted(set(_clean_strings(raw if isinstance(raw, list) else [])))
+
+    @staticmethod
+    def _included_working_memory_turns(context_signal: dict[str, Any]) -> list[str]:
+        raw = context_signal.get("included_working_memory_turns")
+        if not isinstance(raw, list):
+            window = BehaviorFacet._context_window_from_signal(context_signal)
+            metadata = window.get("metadata") if isinstance(window, dict) else {}
+            raw = metadata.get("included_working_memory_turns") if isinstance(metadata, dict) else []
+        return [str(item) for item in raw] if isinstance(raw, list) else []
+
+    @staticmethod
+    def _working_memory_turn_count(context_signal: dict[str, Any]) -> int:
+        raw_count = context_signal.get("working_memory_turn_count")
+        if isinstance(raw_count, int) and raw_count >= 0:
+            return raw_count
+        return len(BehaviorFacet._included_working_memory_turns(context_signal))
+
+    @staticmethod
+    def _included_lpb_entry_ids(context_signal: dict[str, Any]) -> list[str]:
+        raw = context_signal.get("included_lpb_entry_ids")
+        if not isinstance(raw, list):
+            window = BehaviorFacet._context_window_from_signal(context_signal)
+            metadata = window.get("metadata") if isinstance(window, dict) else {}
+            raw = metadata.get("included_lpb_entry_ids") if isinstance(metadata, dict) else []
+        return [str(item) for item in raw] if isinstance(raw, list) else []
+
+    @staticmethod
+    def _included_belief_ids(context_signal: dict[str, Any]) -> list[str]:
+        raw = context_signal.get("included_belief_ids")
+        if not isinstance(raw, list):
+            window = BehaviorFacet._context_window_from_signal(context_signal)
+            metadata = window.get("metadata") if isinstance(window, dict) else {}
+            raw = metadata.get("included_belief_ids") if isinstance(metadata, dict) else []
+        return [str(item) for item in raw] if isinstance(raw, list) else []
+
+    @staticmethod
+    def _context_strategy(context_signal: dict[str, Any]) -> str | None:
+        for key in ("context_strategy", "last_context_strategy", "strategy"):
+            raw = context_signal.get(key)
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+        window = BehaviorFacet._context_window_from_signal(context_signal)
+        if isinstance(window, dict):
+            raw = window.get("strategy")
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+        return None
+
+    @staticmethod
+    def _classify_conversational_intent(
+        event: Event,
+        *,
+        query_intent: str | None,
+        working_memory_turn_count: int,
+        has_recent_assistant_output: bool,
+        has_previous_user_turn: bool,
+        has_context_items: bool,
+    ) -> tuple[bool, bool, str, float, list[str]]:
+        text = _normalize_content(event.content)
+        tokens = tokenize(text)
+        short_follow_up = len(tokens) <= 4
+        follow_up_reference_detected = bool(tokens & FOLLOW_UP_REFERENCE_WORDS)
+        reasons: list[str] = []
+        if any(phrase in text for phrase in ("where did that come from", "how do you know", "what is your source", "where did you get that", "based on what")):
+            return follow_up_reference_detected, short_follow_up, "source_request", 0.95, ["explicit_source_request"]
+        if any(phrase in text for phrase in ("that's not right", "that does not answer", "you keep saying", "why did you say", "i didn't ask that", "that's not what i meant")):
+            return follow_up_reference_detected, short_follow_up, "challenge", 0.9, ["explicit_challenge"]
+        if any(phrase in text for phrase in ("i mean", "to clarify", "what i mean is")):
+            return follow_up_reference_detected, short_follow_up, "clarification_supplied", 0.85, ["clarification_language"]
+        if any(phrase in text for phrase in ("actually", "correction")) or text.startswith("no,"):
+            return follow_up_reference_detected, short_follow_up, "correction", 0.8, ["correction_language"]
+        if any(phrase in text for phrase in ("contradiction", "that conflicts", "inconsistent with")):
+            return follow_up_reference_detected, short_follow_up, "contradiction_report", 0.8, ["contradiction_language"]
+        if query_intent == "planning":
+            return follow_up_reference_detected, short_follow_up, "planning_request", 0.75, ["planning_intent"]
+        if any(phrase in text for phrase in ("remember", "update memory", "store this")):
+            return follow_up_reference_detected, short_follow_up, "memory_update", 0.75, ["memory_update_language"]
+        if query_intent == "factual" and any(phrase in text for phrase in STATUS_RESPONSE_PHRASES):
+            return follow_up_reference_detected, short_follow_up, "status_request", 0.7, ["status_request_language"]
+        if short_follow_up and follow_up_reference_detected and (
+            has_recent_assistant_output or has_previous_user_turn or has_context_items
+        ):
+            reasons.append("short_referential_with_recent_context")
+            return follow_up_reference_detected, True, "follow_up", 0.7, reasons
+        if any(phrase in text for phrase in ("you still", "again", "still not", "you keep")):
+            return follow_up_reference_detected, short_follow_up, "repeated_dissatisfaction", 0.8, ["repeated_dissatisfaction_language"]
+        if event.content.strip().endswith("?"):
+            return follow_up_reference_detected, short_follow_up, "new_question", 0.6, ["question_mark"]
+        if any(phrase in text for phrase in ("do ", "run ", "execute ", "update ", "change ")):
+            return follow_up_reference_detected, short_follow_up, "action_request", 0.55, ["action_request_language"]
+        return follow_up_reference_detected, short_follow_up, "unknown", 0.4, ["no_strong_intent_signal"]
+
+    @staticmethod
+    def _classify_grounding_need(conversational_intent: str) -> tuple[str, list[str]]:
+        mapping = {
+            "source_request": ("runtime_state", ["source_request_needs_provenance"]),
+            "challenge": ("world_model", ["challenge_needs_world_state"]),
+            "correction": ("world_model", ["correction_needs_world_state"]),
+            "contradiction_report": ("verifier", ["contradiction_needs_verifier"]),
+            "follow_up": ("working_memory", ["follow_up_needs_working_memory"]),
+            "planning_request": ("policy", ["planning_needs_policy_and_goal_context"]),
+            "action_request": ("executor", ["action_request_needs_executor_policy"]),
+            "memory_update": ("memory", ["memory_update_needs_memory_store"]),
+            "status_request": ("runtime_state", ["status_request_needs_runtime_state"]),
+        }
+        return mapping.get(conversational_intent, ("none", ["no_specific_grounding_required"]))
+
+    @staticmethod
+    def _resolve_grounding(
+        *,
+        grounding_need: str,
+        working_memory_turn_count: int,
+        relevant_memory_count: int,
+        relevant_belief_count: int,
+        policy_result: str,
+        planner_available: bool,
+        context_item_count: int,
+    ) -> tuple[bool, float]:
+        if grounding_need == "working_memory":
+            available = working_memory_turn_count > 0
+            return available, 0.8 if available else 0.25
+        if grounding_need == "memory":
+            available = relevant_memory_count > 0
+            return available, 0.75 if available else 0.2
+        if grounding_need in {"world_model", "verifier"}:
+            available = relevant_belief_count > 0
+            return available, 0.7 if available else 0.25
+        if grounding_need == "policy":
+            available = planner_available or context_item_count > 0
+            return available, 0.7 if available else 0.3
+        if grounding_need == "executor":
+            available = policy_result in {"allowed", "allow"}
+            return available, 0.7 if available else 0.2
+        if grounding_need == "runtime_state":
+            available = context_item_count > 0
+            return available, 0.65 if available else 0.3
+        return True, 0.6
+
+    @staticmethod
+    def _classify_ambiguity_kind(
+        *,
+        ambiguity_score: float,
+        conversational_intent: str,
+        follow_up_reference_detected: bool,
+        short_follow_up: bool,
+        grounding_available: bool,
+        working_memory_turn_count: int,
+    ) -> tuple[str, list[str]]:
+        reasons: list[str] = []
+        if conversational_intent == "clarification_supplied":
+            return "none", ["clarification_supplied_reduces_ambiguity"]
+        if conversational_intent in {"source_request", "challenge", "contradiction_report"} and not grounding_available:
+            return "missing_grounding", ["grounding_required_but_missing"]
+        if conversational_intent == "repeated_dissatisfaction":
+            return "repeated_unresolved", ["repeated_dissatisfaction_detected"]
+        if follow_up_reference_detected and short_follow_up:
+            if working_memory_turn_count > 0:
+                return "referential", ["short_referential_with_continuity"]
+            return "generic", ["short_referential_without_continuity"]
+        if ambiguity_score >= HIGH_AMBIGUITY_THRESHOLD:
+            reasons.append("high_ambiguity_score")
+            return "generic", reasons
+        return "none", ["ambiguity_within_threshold"]
+
+    @staticmethod
+    def _continuity_confidence(
+        *,
+        follow_up_reference_detected: bool,
+        working_memory_turn_count: int,
+        short_follow_up: bool,
+    ) -> float:
+        if follow_up_reference_detected and working_memory_turn_count > 0:
+            return 0.85
+        if short_follow_up and working_memory_turn_count > 0:
+            return 0.7
+        if working_memory_turn_count > 0:
+            return 0.6
+        return 0.25
+
+    @staticmethod
+    def _self_consistency_confidence(
+        *,
+        belief_confidence: float,
+        belief_contradiction: bool,
+    ) -> float:
+        if belief_contradiction:
+            return 0.2
+        if belief_confidence > 0.0:
+            return round(_clamp_unit(belief_confidence), 3)
+        return 0.5
+
+    @staticmethod
+    def _challenge_penalty(
+        *,
+        conversational_intent: str,
+        repeated_dissatisfaction: bool,
+        belief_contradiction: bool,
+        grounding_available: bool,
+    ) -> float:
+        penalty = 0.0
+        if conversational_intent in {"challenge", "contradiction_report", "correction"}:
+            penalty += 0.12
+        if repeated_dissatisfaction:
+            penalty += 0.1
+        if belief_contradiction:
+            penalty += 0.1
+        if not grounding_available:
+            penalty += 0.08
+        return round(_clamp_unit(penalty), 3)
+
+    @staticmethod
+    def _related_context_item_ids(context_signal: dict[str, Any]) -> list[str]:
+        ids: list[str] = []
+        for key in ("included_item_ids", "last_context_item_ids"):
+            raw = context_signal.get(key)
+            if isinstance(raw, list):
+                ids.extend(str(item) for item in raw)
+        return sorted(set(ids))
+
+    @staticmethod
+    def _related_memory_ids(
+        context_signal: dict[str, Any],
+        memory_context: dict[str, Any] | None,
+    ) -> list[str]:
+        ids: set[str] = set()
+        raw = context_signal.get("included_memory_ids")
+        if isinstance(raw, list):
+            ids.update(str(item) for item in raw)
+        if memory_context is not None:
+            for key in ("last_relevant_memory_ids",):
+                raw_mem = memory_context.get(key)
+                if isinstance(raw_mem, list):
+                    ids.update(str(item) for item in raw_mem)
+        return sorted(ids)
+
+    @staticmethod
+    def _related_belief_ids(
+        context_signal: dict[str, Any],
+        world_context: dict[str, Any] | None,
+    ) -> list[str]:
+        ids: set[str] = set()
+        raw = context_signal.get("included_belief_ids")
+        if isinstance(raw, list):
+            ids.update(str(item) for item in raw)
+        if world_context is not None:
+            raw_world = world_context.get("last_relevant_beliefs")
+            if isinstance(raw_world, list):
+                for row in raw_world:
+                    if isinstance(row, dict) and isinstance(row.get("id"), str):
+                        ids.add(row["id"])
+        return sorted(ids)
+
+    @staticmethod
     def _attention_memory_strength(attention_state: dict[str, Any]) -> float:
         raw_result = attention_state.get("last_attention_result")
         if not isinstance(raw_result, dict):
@@ -1922,6 +2387,23 @@ class BehaviorFacet:
             "contradiction_flag": signals.belief_contradiction,
             "policy_result": signals.policy_result,
             "context_load_ratio": signals.context_load_ratio,
+            "conversational_intent": signals.conversational_intent,
+            "conversational_intent_score": signals.conversational_intent_score,
+            "conversational_intent_reasons": list(
+                signals.conversational_intent_reasons
+            ),
+            "follow_up_reference_detected": signals.follow_up_reference_detected,
+            "short_follow_up": signals.short_follow_up,
+            "grounding_need": signals.grounding_need,
+            "grounding_need_reasons": list(signals.grounding_need_reasons),
+            "grounding_available": signals.grounding_available,
+            "grounding_confidence": signals.grounding_confidence,
+            "ambiguity_kind": signals.ambiguity_kind,
+            "ambiguity_score": signals.ambiguity_score,
+            "ambiguity_reasons": list(signals.ambiguity_reasons),
+            "continuity_confidence": signals.continuity_confidence,
+            "self_consistency_confidence": signals.self_consistency_confidence,
+            "challenge_confidence_penalty": signals.challenge_confidence_penalty,
             "raw_candidate_scores": raw_candidate_scores,
             "adjusted_candidate_scores": adjusted_candidate_scores,
             "final_decision": selected_decision.value,
@@ -2145,6 +2627,96 @@ class BehaviorFacet:
                 f"total={confidence_breakdown['total']:.3f}"
             ),
         ]
+
+    @staticmethod
+    def _apply_v21_candidate_adjustments(
+        decision_scores: dict[str, float],
+        signals: _BehaviorSignals,
+    ) -> tuple[dict[str, float], list[str]]:
+        adjusted = {key: _clamp_unit(value) for key, value in decision_scores.items()}
+        reasons: list[str] = []
+        if signals.conversational_intent == "source_request":
+            if signals.grounding_available:
+                adjusted["act"] = _clamp_unit(adjusted["act"] + 0.25)
+                reasons.append("source_request with grounding boosted ACT")
+            else:
+                adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.25)
+                adjusted["act"] = _clamp_unit(adjusted["act"] - 0.2)
+                reasons.append("source_request without grounding biased ASK")
+        if signals.conversational_intent in {
+            "challenge",
+            "contradiction_report",
+            "correction",
+        }:
+            adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.2)
+            adjusted["act"] = _clamp_unit(
+                adjusted["act"] - (0.15 if signals.grounding_available else 0.25)
+            )
+            reasons.append("challenge_or_contradiction bias toward ASK")
+        if signals.conversational_intent == "clarification_supplied":
+            adjusted["act"] = _clamp_unit(adjusted["act"] + 0.2)
+            adjusted["ask"] = _clamp_unit(adjusted["ask"] - 0.1)
+            reasons.append("clarification_supplied reduced ASK bias")
+        if signals.conversational_intent == "follow_up":
+            if signals.continuity_confidence >= 0.5:
+                adjusted["act"] = _clamp_unit(adjusted["act"] + 0.2)
+                reasons.append("follow_up continuity boosted ACT")
+            else:
+                adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.15)
+                reasons.append("follow_up unresolved reference boosted ASK")
+        if signals.repeated_dissatisfaction:
+            adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.1)
+            adjusted["act"] = _clamp_unit(adjusted["act"] - 0.15)
+            reasons.append("repeated dissatisfaction lowered ACT confidence path")
+        if signals.conversational_intent == "planning_request":
+            if signals.planner_available and signals.context_sufficiency >= 1.0:
+                adjusted["act"] = _clamp_unit(adjusted["act"] + 0.2)
+                reasons.append("planning_request with planner boosted ACT")
+            else:
+                adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.15)
+                reasons.append("planning_request missing constraints boosted ASK")
+        if signals.conversational_intent == "action_request":
+            if signals.policy_blocks_act:
+                adjusted["act"] = _clamp_unit(adjusted["act"] - 0.4)
+                adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.2)
+                reasons.append("action_request policy guardrail suppressed ACT")
+        return ({k: round(v, 3) for k, v in adjusted.items()}, reasons)
+
+    @staticmethod
+    def _final_confidence_reasons(
+        signals: _BehaviorSignals,
+        confidence_breakdown: dict[str, float],
+    ) -> list[str]:
+        reasons: list[str] = []
+        if not signals.grounding_available:
+            reasons.append("grounding unavailable lowers confidence")
+        if signals.belief_contradiction:
+            reasons.append("belief contradiction lowers confidence")
+        if signals.repeated_dissatisfaction:
+            reasons.append("repeated dissatisfaction lowers confidence")
+        if signals.continuity_confidence >= 0.6:
+            reasons.append("working memory continuity supports confidence")
+        reasons.append(f"final_total={confidence_breakdown.get('total', 0.0):.3f}")
+        return reasons
+
+    @staticmethod
+    def _learning_signals(signals: _BehaviorSignals) -> list[str]:
+        out: list[str] = []
+        if signals.conversational_intent == "source_request" and not signals.grounding_available:
+            out.append("source_request_unresolved")
+        if signals.conversational_intent in {"challenge", "contradiction_report"} and not signals.grounding_available:
+            out.append("challenge_unresolved")
+        if signals.repeated_dissatisfaction:
+            out.append("repeated_dissatisfaction")
+        if signals.conversational_intent == "clarification_supplied":
+            out.append("clarification_supplied")
+        if signals.conversational_intent == "follow_up" and signals.continuity_confidence >= 0.6:
+            out.append("follow_up_resolved_by_working_memory")
+        if signals.grounding_confidence < 0.4:
+            out.append("low_grounding_confidence")
+        if signals.belief_contradiction:
+            out.append("contradiction_pressure")
+        return out
 
     @staticmethod
     def _is_unclear(signals: _BehaviorSignals) -> bool:

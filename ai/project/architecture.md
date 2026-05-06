@@ -235,14 +235,14 @@ score = (
 - **v2** - pressure/relevance-filtered deterministic assembly with protected working-memory continuity and LPB/attention-aware inclusion. **Current.**
 - **v3** - self-editing context, semantic consolidation, predictive loading, and pressure signaling when the context window overloads. **Future.**
 
-## Behavior v0 (current)
+## Behavior v2.1 (current)
 
-- **Deterministic and model-free** - `BehaviorFacet` does not call an LLM, planner, graph, executor, or external policy engine.
-- **Current role in the 12-facet vision** - this is the first implemented deterministic decision-policy layer; it is intentionally narrow and inspectable.
-- **Inputs** - event type/content, explicit event metadata, deterministic tag inference, deterministic salience, and any passed-through memory metadata when the caller provides it.
-- **Outputs** - a proposed `WAIT` / `RECORD` / `ASK` / `ACT` decision plus inspectable metadata (`selected_decision`, `confidence`, `salience`, `tags_considered`, and `reasons`).
-- **Inspectable confidence only** - `confidence` and `confidence_breakdown` are deterministic trace fields for inspection/debugging, not probabilistic ML confidence or model uncertainty.
-- **Conservative policy** - empty/no-signal events wait; normal user messages record; response/uncertainty signals ask; explicit low-risk actions can propose `ACT`.
+- **Deterministic and model-free** - `BehaviorFacet` does not call an LLM and does not generate final prose; it routes decisions only.
+- **Conversational intent routing** - Behavior v2.1 classifies inspectable conversational intents (for example follow-up, source request, challenge/correction, planning/action/memory update) and adjusts `WAIT` / `RECORD` / `ASK` / `ACT` candidate scores without changing the enum contract.
+- **Grounding and ambiguity signals** - Behavior v2.1 computes grounding need/availability/confidence plus ambiguity kind/score/reasons, using Context v2 metadata (working-memory continuity, included context/belief/LPB ids) and optional World Model/Policy signals when present.
+- **Confidence decomposition** - `confidence` remains deterministic and inspectable, now including grounding, continuity, self-consistency, and challenge penalties while preserving Behavior v2 trace compatibility for Verifier checks.
+- **Learning-event metadata** - Behavior emits richer deterministic `learning_event` metadata (intent/grounding/ambiguity/confidence + related ids + generic learning signals) for downstream Learning/World Model consumers.
+- **Safety compatibility** - Policy/Verifier constraints are still enforced (`denied` suppresses `ACT`, `approval_required` biases `ASK`); Behavior v2.1 is a tightening pass, not a new facet or Nexus rewrite.
 - **No execution** - `ACT` is only a typed proposal for a future executor; Nexus v0 still performs no autonomous tool execution or irreversible side effects.
 
 ## Learning v1 (current)

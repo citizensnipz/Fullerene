@@ -1,3 +1,11 @@
+### 2026-05-06 - Behavior v2.1 deterministic routing polish
+
+- **Context:** Behavior v2 needed tighter conversational routing and confidence handling for follow-up/challenge/source-request turns while preserving deterministic inspectability, policy/verifier compatibility, and existing decision enums.
+- **Done:** Updated `fullerene/facets/behavior.py` with conversational-intent classification, grounding-need/availability classification, ambiguity-kind labeling, v2.1 decision-score adjustments, richer confidence decomposition (`grounding`, `continuity`, `self_consistency`, `challenge_penalty`), expanded decision-trace metadata, and richer learning-event metadata including related context/memory/belief ids and generic learning signals. Expanded `tests/test_behavior.py` with synthetic intent/grounding/ambiguity/learning/trace checks.
+- **Verified:** `python -m pytest tests/test_behavior.py tests/test_verifier.py`; full-suite run pending.
+- **Next:** Run full `test_*.py` suite and manual interactive validation (`--full --interactive --interactive-allow-model --context-strategy pressure_relevance_v2`) to inspect `decision_trace` v2.1 metadata under follow-up/challenge/source-request scenarios.
+- **Blockers:** None.
+
 ### 2026-05-06 - World Model v1 belief lifecycle integration
 
 - **Context:** World Model v0 explicit beliefs were not enough to track confidence shifts, contradictions, provenance, or contradiction-driven latent pressure.
