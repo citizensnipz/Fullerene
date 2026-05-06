@@ -9,6 +9,44 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-06 (Memory v2.5 working memory / conversation continuity)
+
+- Updated `fullerene/memory/models.py` + `fullerene/memory/store.py`: added `memory_layer` (`working`/`long_term`) with additive migration defaulting legacy rows to `long_term`; added bounded working-turn helpers (`add_working_turn`, `list_working_turns`, `prune_working_memory`); long-term retrieval/hybrid paths now exclude working-layer rows by default.
+- Updated `fullerene/context/models.py`, `fullerene/context/assembler.py`, and `fullerene/facets/context.py`: added bounded `working_memory` context item support keyed by `session_id`, plus working-memory context metadata (`working_memory_session_id`, turn counts/ids, included context types).
+- Updated `fullerene/interactive/models.py` + `fullerene/interactive/runner.py`: interactive loop now carries a stable `session_id`, stores exact user + assistant visible turns in working memory with turn indexes/metadata, and prunes retained working turns each cycle.
+- Updated `fullerene/cli.py`: added `--session-id`, `--working-memory-context-turns`, `--working-memory-turns`; model prompt now includes `Recent conversation` from bounded working memory.
+- Expanded tests: `tests/test_memory_v2.py`, `tests/test_context.py`, `tests/test_interactive_loop.py`, and `tests/test_cli.py` for migration defaults, working-turn store behavior, context session scoping, prompt grounding section presence, and interactive continuity.
+- Updated harness docs: `ai/project/architecture.md`, `ai/knowledge/glossary.md`, `ai/knowledge/decisions.md`, `ai/operations/commands.md`, and session log.
+
+### 2026-05-06 (Interactive Loop v0 terminal UX stabilization)
+
+- Updated `fullerene/interactive/models.py`: transcript-first defaults (`clear_screen=False`), added `show_ticks` and `status_every`.
+- Updated `fullerene/interactive/runner.py`: default idle-tick silence, transcript output (`You:` / `Fullerene:` + `[status]`), slash commands (`/status`, `/help`, `/quit`, `/ticks on`, `/ticks off`), and richer interactive status metadata.
+- Updated `fullerene/cli.py`: added `--interactive-show-ticks`, `--interactive-status-every`, `--interactive-clear`; kept `--interactive-no-clear` compatibility with transcript default.
+- Expanded `tests/test_interactive_loop.py` for transcript defaults, idle tick silence, optional tick printing cadence, slash-command behavior, and CLI validation.
+- Updated harness docs: `ai/project/architecture.md`, `ai/knowledge/decisions.md`, `ai/operations/commands.md`, and session log.
+
+### 2026-05-06 (LPB v1.1 idle tick stabilization + stop nuance)
+
+- Updated `fullerene/signals/latent_pressure/models.py` and `fullerene/signals/latent_pressure/buffer.py` with tick-aware ingestion gating (`should_ingest_signal_on_tick`), skipped-signal metadata (`skipped_signals`, `skipped_signal_count`, `skip_reasons`), LPB/Nexus echo suppression on `SYSTEM_TICK`, idle-decay acceleration (`IDLE_TICK_DECAY_MULTIPLIER`, `MIN_IDLE_DECAY`), tick reactivation dampening metadata (`last_reactivation_event_type`, `last_reactivation_source_id`, `tick_reactivation_count`), and damped total-pressure aggregation/ignition behavior.
+- Updated `fullerene/tick/runner.py` `TickStopTracker` so danger high-pressure streaks and latent-only saturation streaks are tracked separately (`HIGH_PRESSURE_CONSEC=5`, `LATENT_ONLY_HIGH_PRESSURE_CONSEC=20`), with summary metadata fields (`high_pressure_streak`, `latent_saturation_streak`, `stop_pressure_kind`).
+- Updated `fullerene/nexus/runtime.py` to persist `last_interrupt_source_id` for LPB tick gating.
+- Expanded/adjusted tests: `tests/test_latent_pressure.py`, `tests/test_manual_tick_runner.py`, `tests/test_continuous_loop.py`, `tests/test_interactive_loop.py`, `tests/test_watch_mode.py`, `tests/test_nexus_runtime.py`.
+- Harness docs refreshed: `ai/project/architecture.md`, `ai/knowledge/decisions.md`, `ai/knowledge/glossary.md`, `ai/operations/commands.md`, `ai/logs/SESSION_LOG.md`.
+
+### 2026-05-06 (Interactive Loop v0)
+
+- Added `fullerene/interactive/` (`models.py`, `input.py`, `renderer.py`, `runner.py`, `__init__.py`): bounded foreground interactive loop config/result models, line-input provider abstraction with a single queueing stdin thread, compact renderer, and `run_interactive_loop()` alternating `SYSTEM_TICK` and user `USER_MESSAGE` processing.
+- Updated `fullerene/cli.py` with `--interactive`, `--interactive-interval`, `--interactive-max-ticks`, `--interactive-no-clear`, `--interactive-allow-model`, `--interactive-no-expression`, `--interactive-stop-on-ask-user`; interactive mode rejects `--json` and rejects `--model` unless `--interactive-allow-model` is set.
+- Added `tests/test_interactive_loop.py` covering config clamping, exit commands, USER_MESSAGE metadata mapping, empty-input handling, tick/input alternation, final text updates, renderer output forms, and CLI validation.
+
+### 2026-05-06 (Continuous Loop v0)
+
+- Added `fullerene/continuous/` (`models.py`, `runner.py`, `renderer.py`, `__init__.py`): bounded foreground loop config/result models, minimal renderer, and `run_continuous_loop()` reusing `SYSTEM_TICK` + tick summary + shared stop tracker.
+- Updated `fullerene/tick/runner.py` with reusable `TickStopTracker`; `run_manual_ticks()` now uses the shared stop-condition evaluator.
+- Updated `fullerene/cli.py` with `--loop`, `--loop-interval`, `--loop-max-ticks`, `--loop-no-clear`, `--loop-allow-expression`, `--loop-stop-on-ask-user`, `--loop-json`; loop rejects `--model` with `Continuous loop does not support --model in v0.`
+- Added `tests/test_continuous_loop.py` covering config clamping, bounded loop execution, minimal display modes, JSON output, clamp behavior, model rejection, keyboard interrupt handling, and ask-user stop behavior.
+
 ### 2026-05-06 (Watch Mode v0)
 
 - Added `fullerene/watch/` (`models.py`, `renderer.py`, `runner.py`, `__init__.py`): `WatchConfig`, JSON-safe `WatchSnapshot`, terminal renderer, and `run_watch_mode()` that reuses `run_manual_ticks` + embeds Presentation Vector state.

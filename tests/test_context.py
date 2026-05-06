@@ -626,6 +626,54 @@ class DynamicContextAssemblerTests(unittest.TestCase):
         self.assertEqual(len(window.items), 1)
         self.assertEqual(window.items[0].item_type, ContextItemType.EVENT)
 
+    def test_includes_recent_working_memory_for_matching_session_only(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        memory_store = SQLiteMemoryStore(root / "memory.sqlite3")
+        memory_store.add_working_turn(
+            content="Do you know your name?",
+            session_id="session-a",
+            turn_index=1,
+            dialogue_role="user",
+        )
+        memory_store.add_working_turn(
+            content="I don't have a name.",
+            session_id="session-a",
+            turn_index=2,
+            dialogue_role="assistant",
+        )
+        memory_store.add_working_turn(
+            content="Other session turn",
+            session_id="session-b",
+            turn_index=1,
+            dialogue_role="user",
+        )
+        assembler = DynamicContextAssembler(
+            memory_store=memory_store,
+            config=ContextAssemblyConfig(
+                max_working_turns=8,
+                include_policy_summary=False,
+                include_signal_summaries=False,
+            ),
+        )
+        window = assembler.assemble(
+            event=Event(
+                event_type=EventType.USER_MESSAGE,
+                content="Would you like one?",
+                metadata={"session_id": "session-a"},
+            ),
+            state=NexusState(),
+        )
+        working_items = [
+            item for item in window.items if item.item_type == ContextItemType.WORKING_MEMORY
+        ]
+        self.assertEqual(len(working_items), 2)
+        self.assertEqual(
+            [item.content for item in working_items],
+            ["Do you know your name?", "I don't have a name."],
+        )
+        self.assertEqual(window.metadata["working_memory_session_id"], "session-a")
+
 
 class ContextFacetTests(unittest.TestCase):
     def test_returns_empty_context_without_memory_store(self) -> None:

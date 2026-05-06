@@ -35,7 +35,7 @@ from uuid import uuid4
 from fullerene.memory.edges import MemoryEdge, MemoryEdgeType
 from fullerene.memory.embeddings import deserialize_vector, serialize_vector
 from fullerene.memory.hybrid import explain_hybrid_score, hybrid_sort_key
-from fullerene.memory.models import MemoryRecord, MemoryType
+from fullerene.memory.models import MemoryLayer, MemoryRecord, MemoryType
 from fullerene.memory.scoring import score_sort_key, tokenize
 from fullerene.memory.roles import QueryIntent, classify_query_intent
 from fullerene.nexus.models import Event
@@ -76,6 +76,25 @@ class MemoryStore(Protocol):
     ) -> MemoryEdge:
         """Increase (or create) a bounded write-time edge weight by ``delta``."""
 
+    def add_working_turn(
+        self,
+        *,
+        content: str,
+        session_id: str,
+        turn_index: int,
+        dialogue_role: str,
+        source_event_id: str | None = None,
+        created_from: str = "interactive",
+        metadata: dict[str, Any] | None = None,
+    ) -> MemoryRecord:
+        """Persist one exact working-memory dialogue turn."""
+
+    def list_working_turns(self, session_id: str, limit: int = 8) -> list[MemoryRecord]:
+        """Return recent working turns for one session in chronological order."""
+
+    def prune_working_memory(self, session_id: str, keep_last: int = 20) -> int:
+        """Delete older working turns for a session and return removed count."""
+
 
 class SQLiteMemoryStore:
     """SQLite-backed source of truth for Fullerene memory.
@@ -108,8 +127,9 @@ class SQLiteMemoryStore:
                     tags_json,
                     metadata_json,
                     role,
-                    domain
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    domain,
+                    memory_layer
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     payload["id"],
@@ -123,6 +143,7 @@ class SQLiteMemoryStore:
                     json.dumps(payload["metadata"], sort_keys=True),
                     payload.get("role") or "unknown",
                     payload.get("domain"),
+                    payload.get("memory_layer", MemoryLayer.LONG_TERM.value),
                 ),
             )
             connection.commit()
@@ -143,8 +164,10 @@ class SQLiteMemoryStore:
         bounded_limit = self._normalize_limit(limit)
         query = f"SELECT {self._SELECT_MEMORY_COLUMNS} FROM memories"
         params: list[object] = []
+        query += " WHERE memory_layer != ?"
+        params.append(MemoryLayer.WORKING.value)
         if memory_type is not None:
-            query += " WHERE memory_type = ?"
+            query += " AND memory_type = ?"
             params.append(memory_type.value)
         query += " ORDER BY created_at DESC, id DESC LIMIT ?"
         params.append(bounded_limit)
@@ -166,11 +189,11 @@ class SQLiteMemoryStore:
                 f"""
                 SELECT {self._SELECT_MEMORY_COLUMNS}
                 FROM memories
-                WHERE {clauses}
+                WHERE memory_layer != ? AND ({clauses})
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?
                 """,
-                params,
+                [MemoryLayer.WORKING.value, *params],
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
@@ -226,11 +249,11 @@ class SQLiteMemoryStore:
                 f"""
                 SELECT {self._SELECT_MEMORY_COLUMNS}
                 FROM memories
-                WHERE salience >= ?
+                WHERE memory_layer != ? AND salience >= ?
                 ORDER BY salience DESC, created_at DESC, id DESC
                 LIMIT ?
                 """,
-                (threshold, bounded_limit),
+                (MemoryLayer.WORKING.value, threshold, bounded_limit),
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
@@ -249,11 +272,11 @@ class SQLiteMemoryStore:
                 f"""
                 SELECT {self._SELECT_MEMORY_COLUMNS}
                 FROM memories
-                WHERE domain = ?
+                WHERE memory_layer != ? AND domain = ?
                 ORDER BY created_at DESC, id DESC
                 LIMIT ?
                 """,
-                (cleaned_domain, bounded_limit),
+                (MemoryLayer.WORKING.value, cleaned_domain, bounded_limit),
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
@@ -608,11 +631,88 @@ class SQLiteMemoryStore:
         )
         return scored[:bounded_limit]
 
+    def add_working_turn(
+        self,
+        *,
+        content: str,
+        session_id: str,
+        turn_index: int,
+        dialogue_role: str,
+        source_event_id: str | None = None,
+        created_from: str = "interactive",
+        metadata: dict[str, Any] | None = None,
+    ) -> MemoryRecord:
+        cleaned_content = str(content or "").strip()
+        if not cleaned_content:
+            raise ValueError("Working turn content must not be empty")
+        record = MemoryRecord(
+            memory_type=MemoryType.WORKING,
+            memory_layer=MemoryLayer.WORKING,
+            content=cleaned_content,
+            source_event_id=source_event_id,
+            salience=0.5,
+            confidence=1.0,
+            metadata={
+                "session_id": session_id,
+                "turn_index": int(turn_index),
+                "dialogue_role": str(dialogue_role),
+                "created_from": str(created_from or "interactive"),
+                **(metadata or {}),
+            },
+            role="dialogue_turn",
+            domain="conversation",
+        )
+        self.add_memory(record)
+        return record
+
+    def list_working_turns(self, session_id: str, limit: int = 8) -> list[MemoryRecord]:
+        bounded_limit = self._normalize_limit(limit)
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT {self._SELECT_MEMORY_COLUMNS}
+                FROM memories
+                WHERE memory_layer = ?
+                  AND json_extract(metadata_json, '$.session_id') = ?
+                ORDER BY json_extract(metadata_json, '$.turn_index') DESC, created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (MemoryLayer.WORKING.value, session_id, bounded_limit),
+            ).fetchall()
+        records = [self._row_to_record(row) for row in rows]
+        records.sort(key=lambda r: int((r.metadata or {}).get("turn_index", 0)))
+        return records
+
+    def prune_working_memory(self, session_id: str, keep_last: int = 20) -> int:
+        keep = self._normalize_limit(keep_last)
+        with closing(self._connect()) as connection:
+            rows = connection.execute(
+                """
+                SELECT id
+                FROM memories
+                WHERE memory_layer = ?
+                  AND json_extract(metadata_json, '$.session_id') = ?
+                ORDER BY json_extract(metadata_json, '$.turn_index') DESC, created_at DESC, id DESC
+                """,
+                (MemoryLayer.WORKING.value, session_id),
+            ).fetchall()
+            ids = [row["id"] for row in rows]
+            stale_ids = ids[keep:]
+            if not stale_ids:
+                return 0
+            placeholders = ",".join("?" for _ in stale_ids)
+            cursor = connection.execute(
+                f"DELETE FROM memories WHERE id IN ({placeholders})",
+                stale_ids,
+            )
+            connection.commit()
+            return int(cursor.rowcount or 0)
+
     # ---- Internals -----------------------------------------------------
 
     _SELECT_MEMORY_COLUMNS = (
         "id, created_at, memory_type, content, source_event_id, "
-        "salience, confidence, tags_json, metadata_json, role, domain"
+        "salience, confidence, tags_json, metadata_json, role, domain, memory_layer"
     )
 
     def _connect(self) -> sqlite3.Connection:
@@ -638,13 +738,15 @@ class SQLiteMemoryStore:
                     metadata_json TEXT NOT NULL,
                     role TEXT NOT NULL DEFAULT 'unknown',
                     domain TEXT,
+                    memory_layer TEXT NOT NULL DEFAULT 'long_term',
                     CHECK (memory_type IN ('working', 'episodic', 'semantic')),
+                    CHECK (memory_layer IN ('working', 'long_term')),
                     CHECK (salience >= 0.0 AND salience <= 1.0),
                     CHECK (confidence >= 0.0 AND confidence <= 1.0)
                 )
                 """
             )
-            self._migrate_role_and_domain_columns(connection)
+            self._migrate_columns(connection)
             connection.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_memories_created_at
@@ -667,6 +769,17 @@ class SQLiteMemoryStore:
                 """
                 CREATE INDEX IF NOT EXISTS idx_memories_domain
                 ON memories (domain)
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_memories_layer_session_turn
+                ON memories (
+                    memory_layer,
+                    json_extract(metadata_json, '$.session_id'),
+                    json_extract(metadata_json, '$.turn_index') DESC,
+                    created_at DESC
+                )
                 """
             )
             connection.execute(
@@ -717,8 +830,8 @@ class SQLiteMemoryStore:
             )
             connection.commit()
 
-    def _migrate_role_and_domain_columns(self, connection: sqlite3.Connection) -> None:
-        """Add v2 columns when an older v1 database is opened."""
+    def _migrate_columns(self, connection: sqlite3.Connection) -> None:
+        """Add backward-compatible columns when older databases are opened."""
         existing_columns = {
             row["name"]
             for row in connection.execute("PRAGMA table_info(memories)").fetchall()
@@ -729,6 +842,10 @@ class SQLiteMemoryStore:
             )
         if "domain" not in existing_columns:
             connection.execute("ALTER TABLE memories ADD COLUMN domain TEXT")
+        if "memory_layer" not in existing_columns:
+            connection.execute(
+                "ALTER TABLE memories ADD COLUMN memory_layer TEXT NOT NULL DEFAULT 'long_term'"
+            )
 
     @staticmethod
     def _normalize_limit(limit: int) -> int:
@@ -752,5 +869,10 @@ class SQLiteMemoryStore:
                 "metadata": json.loads(row["metadata_json"]),
                 "role": role,
                 "domain": domain,
+                "memory_layer": (
+                    row["memory_layer"]
+                    if "memory_layer" in keys and row["memory_layer"] is not None
+                    else MemoryLayer.LONG_TERM.value
+                ),
             }
         )

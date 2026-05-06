@@ -670,6 +670,16 @@ class VerifierV1ArtifactTests(unittest.TestCase):
         codes = [r["code"] for r in rows if r["status"] == "passed"]
         self.assertIn("ok", codes)
 
+    def test_behavior_v2_empty_content_summary_is_valid(self) -> None:
+        trace = _behavior_trace_complete()
+        trace["event"]["content_summary"] = ""
+        rows, reco = verifier_artifacts.validate_behavior_decision_trace_v2(
+            trace, decision_is_act=False
+        )
+        self.assertIsNone(reco)
+        failed = [r for r in rows if r.get("status") == "failed"]
+        self.assertFalse(failed, failed)
+
     def test_behavior_v2_missing_core_fields_warns(self) -> None:
         bad = dict(_behavior_trace_complete())
         del bad["confidence"]

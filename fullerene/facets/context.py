@@ -80,6 +80,7 @@ class ContextFacet:
     def process(self, event: Event, state: NexusState) -> FacetResult:
         window = self._assemble_window(event, state)
         source_types = self._source_types(window)
+        included_context_types = sorted(set(source_types))
         included_goal_ids = self._ids_from_metadata(window, key="included_goal_ids")
         deduped_goal_ids = self._ids_from_metadata(window, key="deduped_goal_ids")
         included_memory_ids = self._ids_from_metadata(window, key="included_memory_ids")
@@ -124,6 +125,7 @@ class ContextFacet:
                 "last_context_overloaded": context_load["overloaded"],
                 "last_context_strategy": window.strategy,
                 "last_context_source_types": source_types,
+                "last_included_context_types": included_context_types,
                 "last_included_goal_ids": included_goal_ids,
                 "last_deduped_goal_ids": deduped_goal_ids,
                 "last_included_memory_ids": included_memory_ids,
@@ -142,6 +144,7 @@ class ContextFacet:
                 "max_items": max_items,
                 "context_load": context_load,
                 "source_types": source_types,
+                "included_context_types": included_context_types,
                 "included_goal_ids": included_goal_ids,
                 "deduped_goal_count": window.metadata.get("deduped_goal_count", 0),
                 "deduped_goal_ids": deduped_goal_ids,

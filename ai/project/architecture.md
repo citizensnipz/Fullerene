@@ -42,6 +42,22 @@ Watch Mode v0 is intentionally **not** a continuous loop v0 and is **not** an al
 
 In v0, the renderer is plain stdout text only; future work can add richer ASCII/animation renderers and/or continuous watch-loop behavior.
 
+## Continuous Loop v0 (foreground bounded SYSTEM_TICK loop)
+
+**Continuous Loop v0** is `fullerene/continuous/` plus CLI `--loop*` flags. It runs in the foreground only, executes one `SYSTEM_TICK` per interval, reuses existing tick/runtime/presentation/expression plumbing, and keeps display output minimal (`mode`, `pressure`, `text/status`). It is **not** a daemon, **not** a background service, **not** autonomous tool execution, **not** face/TUI rendering, and **not** infinite by default (bounded by `--loop-max-ticks`, default `100`).
+
+Loop ticks keep state persistence across cycles through the normal `NexusRuntime.process_event` path. Expression Gate remains recommendation-only and suppresses user-facing output by default unless `--loop-allow-expression` is set. Even when expression is allowed, loop output is structured status only and does not invoke LLM prose generation or tools.
+
+## Interactive Loop v0 (foreground conversational loop + SYSTEM_TICK)
+
+**Interactive Loop v0** is `fullerene/interactive/` plus CLI `--interactive*` flags. It runs in the foreground only and alternates between bounded `SYSTEM_TICK` processing and line-oriented user input handling. User lines become normal `EventType.USER_MESSAGE` events processed through the standard `NexusRuntime.process_event` path (Context/Behavior/Policy/Verifier/Learning/Expression Gate are not bypassed).
+
+Interactive Loop v0 is **not** a daemon/background service, **not** a full TUI, **not** autonomous tool execution, and **not** recursive self-talk. Input handling uses a minimal queue-based reader with one dedicated stdin thread only for collecting complete user lines; it never runs cognition or mutates runtime state directly.
+
+Interactive v0 now defaults to **transcript mode** (no per-tick redraw): ticks continue internally but idle ticks stay silent unless configured. User interactions print `You:` and `Fullerene:` lines plus compact `[status]` summaries. `/status`, `/help`, and `/quit` are built-in line commands. Optional idle tick visibility is available through `--interactive-show-ticks` and `--interactive-status-every`.
+
+By default, model text generation is disabled in interactive mode. `--interactive-allow-model` explicitly permits existing CLI model realization for **USER_MESSAGE** outputs only. `SYSTEM_TICK` events never call model adapters.
+
 ## Presentation Vector v0 (read-only UI projection)
 
 **Presentation Vector v0** is **`fullerene/presentation/`** — a deterministic, JSON-serializable **read-only projection** of Nexus/cycle signals for future UIs or renderers. It is **not** one of the twelve canonical facets, **not** cognition, **not** emotion recognition, **not** an avatar renderer, **not** watch mode, **not** a background loop, and **must not** mutate `NexusState`, `NexusRecord` metadata, Memory, Policy, Behavior, Learning, Verifier, or any other runtime store. **`derive_presentation_vector(record, state=None)`** maps `NexusRecord` fields (including `signal_map`, Expression Gate recommendation, verifier rows, policy/learning/context/interrupt/LPB metadata, and optional `NexusState.facet_state` for attention/affect) onto `PresentationVector` with `mode`, `intensity`, `motion`, `channel`, renderer-neutral `face_state` / `eye_state` / `mouth_state` / `animation_hint`, and inspectable `reasons`. Priority and intensity rules are stable and documented in code. **Watch mode, live renderers, ASCII/TUI faces, and continuous presentation loops** remain future work; the CLI may surface compact lines via **`--presentation`** and embed `presentation_vector` in tick summaries when **`--presentation`** or **`--tick-summary`** is used with JSON output.
@@ -74,7 +90,7 @@ Nexus **v2** extends the same **single-call, event-driven** runtime with **bound
 - Persist compact `cycle_trace` metadata each cycle (decisions, pressure before/after, pressure components, signal map, learning events, queued/processed internal events, verifier adjustments, Nexus v2 `interrupt_candidates` / `suppression_decisions` / `allowed_interrupt_candidate` / `suppressed_interrupts` / compact `interrupt_cooldowns` / `interrupt_queue_size` / `interrupt_processed` / `suppression_summary`, Expression Gate `expression_recommendation` / scores / budget summaries, and source facets). Expression recommendation and `ExpressionBudgetState` also persist under `facet_state["nexus"]["expression_gate"]` (support infrastructure, **not** one of the twelve canonical facets).
 - Avoid autonomous external tool execution; `ACT` is still only a typed decision, and Executor v0 only records or applies approved internal state actions.
 - Scope guardrail: this deeper pass is still **single-cycle orchestration only**; it is not an always-on daemon loop, sleep/wake system, dynamic suppression engine, or autonomous expression system.
-- Latent Pressure Buffer (LPB) v1 now runs as **signal infrastructure** under `fullerene/signals/latent_pressure/` (not a canonical facet). Nexus calls LPB after facet results are available, persists LPB state under `facet_state["signals"]["latent_pressure"]`, exposes LPB metadata on records (`latent_pressure`, `latent_pressure_result`, top entries, ignition recommendation), and feeds `latent_pressure_total` into pressure aggregation.
+- Latent Pressure Buffer (LPB) v1.1 runs as **signal infrastructure** under `fullerene/signals/latent_pressure/` (not a canonical facet). Nexus calls LPB after facet results are available, persists LPB state under `facet_state["signals"]["latent_pressure"]`, exposes LPB metadata on records (`latent_pressure`, `latent_pressure_result`, top entries, ignition recommendation), and feeds `latent_pressure_total` into pressure aggregation. On idle/internal `SYSTEM_TICK` cycles LPB now prefers decay over ingestion: routine echo signals are gated/suppressed, LPB/Nexus interrupt self-feedback is filtered, inactive entries decay faster, repeated same-key reactivation is dampened, and tick-time total-pressure ignition is gated so latent-only idle totals do not keep retriggering interruption without new/critical signal.
 
 ## Data stores (current v0)
 
@@ -112,6 +128,16 @@ Nexus **v2** extends the same **single-call, event-driven** runtime with **bound
 - **Context integration** - `DynamicContextAssembler` and `ContextFacet` use hybrid retrieval when the store supports it, surface `retrieval_strategy`, `query_intent`, `event_domain`, `included_memory_roles`, `included_memory_domains`, and `memory_score_breakdowns` in context metadata, and attach role/domain to each memory `ContextItem`.
 - **Prompt grounding** - the CLI model prompt builder annotates relevant/recent memories with `role=...` and `domain=...` so model prompts no longer dump JSON or repeat prior questions as primary grounding.
 - **Out of scope (v2)** - no LLM summarization, no graph traversal at retrieval time, no Leiden/community detection, no learned weights, no required external services. The `OllamaEmbeddingProvider` exists but is opt-in only.
+
+## Memory v2.5 (working memory / conversation continuity)
+
+- **Same Memory subsystem, new layer field** - `MemoryRecord` now carries `memory_layer` (`working` or `long_term`), with additive SQLite migration defaulting legacy rows to `long_term`.
+- **Session-scoped working memory turns** - `SQLiteMemoryStore` supports bounded `add_working_turn`, `list_working_turns(session_id, limit)`, and `prune_working_memory(session_id, keep_last)` helpers that store exact dialogue turns (`dialogue_role`, `turn_index`, `session_id`) without embedding/hybrid retrieval.
+- **Strict boundary from long-term retrieval** - working-memory rows are excluded from Memory v2 long-term/hybrid retrieval paths unless working helpers are explicitly used.
+- **Interactive loop continuity** - interactive runs now carry one stable `session_id` and write exact user + assistant visible turns into working memory; tick-only cycles do not create assistant dialogue turns.
+- **Context v2-lite behavior** - dynamic context now includes a bounded `working_memory` packet (`recent_working_memory`) before generic long-term memory items when `session_id` is present.
+- **Prompt grounding** - model prompts include a `Recent conversation` section built from the bounded working-memory packet.
+- **Out of scope (v2.5)** - no new facet/subsystem, no LLM summarization/compression, no automatic working→long-term promotion, no graph/community/Leiden pass.
 
 ## Memory roadmap
 
@@ -186,6 +212,12 @@ score = (
 - **Goal hygiene** - goal-intent creation now normalizes descriptions (case, punctuation, spacing, and common intent prefixes) and merges exact normalized duplicates into an existing active goal instead of creating a second row. Context also shields reused state directories by deduplicating already-persisted active goals before prompt grounding.
 - **Prompt grounding** - the CLI model prompt builder now renders a concise "Current working context" section from the assembled window so active goals, memories, beliefs, policy constraints, and the current event are visible to later response generation without dumping raw JSON.
 - **Read-only role** - Context v1 still does not plan, summarize with an LLM, mutate stores, use embeddings, use RAG, perform graph traversal, or compress context. It is a deterministic assembly layer only.
+
+## Context v1.5-lite (working-memory inclusion)
+
+- **Bounded recent dialogue inclusion** - when `event.metadata.session_id` is present, context includes a bounded chronological `working_memory` section sourced from Memory v2.5 working turns.
+- **Session isolation** - only turns for the current session id are included.
+- **Inspectable metadata** - context metadata now surfaces `working_memory_session_id`, `working_memory_turn_count`, and `included_working_memory_turns`.
 
 ## Context roadmap
 

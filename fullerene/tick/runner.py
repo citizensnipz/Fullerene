@@ -13,7 +13,8 @@ from fullerene.presentation import derive_presentation_vector
 TICK_HARD_CAP = 100
 
 _HIGH_PRESSURE = 0.95
-_HIGH_PRESSURE_CONSEC = 5
+HIGH_PRESSURE_CONSEC = 5
+LATENT_ONLY_HIGH_PRESSURE_CONSEC = 20
 _ASK_USER_REPEAT_STOP = 4
 _VERIFIER_CRITICAL_CONSEC = 3
 
@@ -127,6 +128,94 @@ class TickRunResult:
         return asdict(self)
 
 
+@dataclass(slots=True)
+class TickStopTracker:
+    consec_high: int = 0
+    latent_saturation_streak: int = 0
+    consec_critical: int = 0
+    consec_ask_same: int = 0
+    last_ask_key: tuple[str, str] | None = None
+
+    def evaluate(self, record: NexusRecord, summary: dict[str, Any]) -> str | None:
+        sp = float(summary.get("system_pressure") or 0.0)
+        lp = float(summary.get("latent_pressure") or 0.0)
+        danger = _has_danger_pressure_signals(record)
+        pressure_kind = "danger" if danger else ("latent_only" if lp >= _HIGH_PRESSURE else "mixed")
+        summary["stop_pressure_kind"] = pressure_kind
+        if sp >= _HIGH_PRESSURE:
+            self.consec_high += 1
+        else:
+            self.consec_high = 0
+        summary["high_pressure_streak"] = self.consec_high
+
+        if sp >= _HIGH_PRESSURE and lp >= _HIGH_PRESSURE and not danger:
+            self.latent_saturation_streak += 1
+        else:
+            self.latent_saturation_streak = 0
+        summary["latent_saturation_streak"] = self.latent_saturation_streak
+
+        if danger and self.consec_high >= HIGH_PRESSURE_CONSEC:
+            return "consecutive_high_system_pressure"
+        if (
+            not danger
+            and self.latent_saturation_streak >= LATENT_ONLY_HIGH_PRESSURE_CONSEC
+        ):
+            return "consecutive_high_system_pressure_latent_only"
+
+        dropped = int(summary.get("internal_events_dropped") or 0)
+        if dropped > 0:
+            return "internal_events_overflow"
+
+        internal_ct = int(summary.get("internal_events_processed_count") or 0)
+        if internal_ct > 1:
+            return "internal_event_recursion"
+
+        if _verifier_has_critical_failure(record):
+            self.consec_critical += 1
+        else:
+            self.consec_critical = 0
+        if self.consec_critical >= _VERIFIER_CRITICAL_CONSEC:
+            return "repeated_verifier_critical"
+
+        mode = str(summary.get("expression_mode") or "")
+        cand = str(
+            summary.get("expression_source_candidate_id")
+            or summary.get("allowed_interrupt_candidate_id")
+            or "",
+        )
+        if mode == "ask_user" and cand:
+            key = (mode, cand)
+            if self.last_ask_key == key:
+                self.consec_ask_same += 1
+            else:
+                self.last_ask_key = key
+                self.consec_ask_same = 1
+            if self.consec_ask_same >= _ASK_USER_REPEAT_STOP:
+                return "repeated_expression_ask_user_same_source"
+        else:
+            self.last_ask_key = None
+            self.consec_ask_same = 0
+        return None
+
+
+def _has_danger_pressure_signals(record: NexusRecord) -> bool:
+    md = record.metadata if isinstance(record.metadata, dict) else {}
+    sig = md.get("signal_map") if isinstance(md.get("signal_map"), dict) else {}
+    if bool(sig.get("policy_blocks_act")):
+        return True
+    if str(sig.get("policy_status") or "").lower() == "denied":
+        return True
+    if _verifier_has_critical_failure(record):
+        return True
+    for result in record.facet_results:
+        if result.facet_name != "behavior" or not isinstance(result.metadata, dict):
+            continue
+        reason = str(result.metadata.get("interrupt_reason") or "").lower()
+        if any(tok in reason for tok in ("critical", "danger", "safety")):
+            return True
+    return False
+
+
 def _verifier_has_critical_failure(record: NexusRecord) -> bool:
     for fr in record.facet_results:
         if fr.facet_name != "verifier":
@@ -171,10 +260,7 @@ def run_manual_ticks(
     stopped_early = False
     stop_idx: int | None = None
 
-    consec_high = 0
-    consec_critical = 0
-    consec_ask_same = 0
-    last_ask_key: tuple[str, str] | None = None
+    stop_tracker = TickStopTracker()
 
     for i in range(1, total_ticks + 1):
         meta = build_tick_event_metadata(
@@ -206,62 +292,12 @@ def run_manual_ticks(
         if include_full_records:
             records_out.append(record.to_dict())
 
-        sp = float(summ.get("system_pressure") or 0.0)
-        if sp >= _HIGH_PRESSURE:
-            consec_high += 1
-        else:
-            consec_high = 0
-        if consec_high >= _HIGH_PRESSURE_CONSEC:
+        reason = stop_tracker.evaluate(record, summ)
+        if reason:
             stopped_early = True
             stop_idx = i
-            stop_reason = "consecutive_high_system_pressure"
+            stop_reason = reason
             break
-
-        dropped = int(summ.get("internal_events_dropped") or 0)
-        if dropped > 0:
-            stopped_early = True
-            stop_idx = i
-            stop_reason = "internal_events_overflow"
-            break
-
-        internal_ct = int(summ.get("internal_events_processed_count") or 0)
-        if internal_ct > 1:
-            stopped_early = True
-            stop_idx = i
-            stop_reason = "internal_event_recursion"
-            break
-
-        if _verifier_has_critical_failure(record):
-            consec_critical += 1
-        else:
-            consec_critical = 0
-        if consec_critical >= _VERIFIER_CRITICAL_CONSEC:
-            stopped_early = True
-            stop_idx = i
-            stop_reason = "repeated_verifier_critical"
-            break
-
-        mode = str(summ.get("expression_mode") or "")
-        cand = str(
-            summ.get("expression_source_candidate_id")
-            or summ.get("allowed_interrupt_candidate_id")
-            or "",
-        )
-        if mode == "ask_user" and cand:
-            key = (mode, cand)
-            if last_ask_key == key:
-                consec_ask_same += 1
-            else:
-                last_ask_key = key
-                consec_ask_same = 1
-            if consec_ask_same >= _ASK_USER_REPEAT_STOP:
-                stopped_early = True
-                stop_idx = i
-                stop_reason = "repeated_expression_ask_user_same_source"
-                break
-        else:
-            last_ask_key = None
-            consec_ask_same = 0
 
     final_state = runtime.state
     final_summary: dict[str, Any] = {

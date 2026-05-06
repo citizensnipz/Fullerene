@@ -311,11 +311,11 @@ class WatchCLITests(unittest.TestCase):
         self.assertEqual(code, 0)
         payload = json.loads(stdout.getvalue())
         wr = payload["watch_run"]
-        self.assertTrue(wr["stopped_early"])
-        self.assertEqual(wr["stop_reason"], "consecutive_high_system_pressure")
-        # Same stop rule as manual tick runner (5 ticks at pressure 0.99).
-        self.assertEqual(wr["tick_count"], 5)
-        self.assertEqual(len(wr["snapshots"]), 5)
+        self.assertFalse(wr["stopped_early"])
+        self.assertIsNone(wr["stop_reason"])
+        # Latent-only saturation has a longer threshold than danger pressure.
+        self.assertEqual(wr["tick_count"], 12)
+        self.assertEqual(len(wr["snapshots"]), 12)
 
     def test_watch_includes_presentation_vector_data(self) -> None:
         root = _temp_state_dir()

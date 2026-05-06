@@ -22,6 +22,46 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-05-06 - Memory v2.5 working memory continuity
+
+- **Context:** Memory v2 long-term retrieval was strong, but immediate turn-to-turn references in interactive dialogue needed deterministic recent-turn continuity without introducing a new Dialogue subsystem or Memory v3 behavior.
+- **Done:** Added `memory_layer` (`working`/`long_term`) with backward-compatible migration defaults; implemented bounded working-turn store helpers and excluded working rows from long-term hybrid retrieval by default; interactive loop now keeps a stable `session_id`, stores exact user + assistant visible turns with `turn_index`/`dialogue_role` metadata, and prunes per-session working turns; context now includes bounded session-scoped `working_memory` items; prompt grounding now includes a `Recent conversation` section; CLI added `--session-id`, `--working-memory-context-turns`, and `--working-memory-turns`.
+- **Verified:** Targeted tests for memory/context/interactive/cli plus full suite run (see latest run in task output).
+- **Next:** Optional future work (not in v2.5): deterministic reference-hint extraction and explicit working→long-term promotion policy under Memory v3/Learning v2 planning.
+- **Blockers:** None.
+
+### 2026-05-06 - Interactive Loop v0 transcript UX pass
+
+- **Context:** Per-tick redraw output in interactive mode interleaved with typing, causing broken prompts and unusable line input.
+- **Done:** Switched interactive defaults to transcript mode (silent idle ticks), added optional idle tick output controls (`--interactive-show-ticks`, `--interactive-status-every`), added slash commands (`/status`, `/help`, `/quit`, optional `/ticks on|off`), and kept model-on-user-message-only behavior unchanged. Added `--interactive-clear` for explicit experimental redraw behavior while keeping compatibility with `--interactive-no-clear`.
+- **Verified:** Targeted interactive tests, full test suite, and requested interactive smoke commands.
+- **Next:** Future prompt-aware/TUI renderer work can build on transcript state outputs without changing v0 line-oriented loop stability.
+- **Blockers:** None.
+
+### 2026-05-06 - LPB v1.1 idle tick stabilization + latent-only stop nuance
+
+- **Context:** Idle `SYSTEM_TICK` loops were self-reinforcing LPB pressure via routine echo signals (Behavior/Nexus/Learning/context), causing repeated latent ignition and early `consecutive_high_system_pressure` stops.
+- **Done:** Added LPB tick-aware ingestion gating/suppression (`should_ingest_signal_on_tick`) with explicit critical/new signal allowances, skip metadata (`skipped_signals`, `skipped_signal_count`, `skip_reasons`), LPB self-feedback filtering, faster idle decay for inactive entries, tick reactivation dampening metadata, and damped total aggregation/ignition logic; updated tick stop tracker with separate danger vs latent-only streak handling and summary metadata (`high_pressure_streak`, `latent_saturation_streak`, `stop_pressure_kind`).
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -q`; `cmd /c "echo quit| python -m fullerene --full --interactive --interactive-max-ticks 20 --interactive-interval 0.5 --interactive-no-clear"`; `python -m fullerene --full --loop --loop-max-ticks 20 --loop-interval 0.2 --loop-no-clear`; `python -m fullerene --full --ticks 10 --tick-summary --presentation`.
+- **Next:** Optional follow-up: cleanly shut down interactive stdin thread to avoid occasional interpreter-shutdown `stdin` lock warnings in non-interactive smoke runs.
+- **Blockers:** None.
+
+### 2026-05-06 - Interactive Loop v0 (foreground conversational loop)
+
+- **Context:** Continuous Loop v0 covered repeated internal ticks, but needed a foreground conversational mode where user input can be processed while ticking continues.
+- **Done:** Added `fullerene/interactive/` with `InteractiveLoopConfig`, queue-based line input helper, compact interactive renderer, and `run_interactive_loop()` that alternates `SYSTEM_TICK` events and user `USER_MESSAGE` events using normal Nexus processing; wired CLI `--interactive*` flags and model gating (`--interactive-allow-model` required for `--model`, and user-message-only realization intent).
+- **Verified:** `python -m unittest tests.test_interactive_loop -v`; `python -m unittest tests.test_continuous_loop tests.test_watch_mode tests.test_manual_tick_runner tests.test_presentation_vector tests.test_expression_gate tests.test_cli -v`; `python -m unittest discover -s tests -p "test_*.py" -q`.
+- **Next:** Improve terminal redraw ergonomics for partially typed lines (optional) and integrate future face/TUI renderers on top of interactive summaries without widening v0 scope.
+- **Blockers:** None.
+
+### 2026-05-06 - Continuous Loop v0 (foreground bounded SYSTEM_TICK loop)
+
+- **Context:** Need a controlled foreground loop proving repeated internal ticks, persistent state, presentation updates, and expression-gated surfaced output without daemon/background autonomy.
+- **Done:** Added `fullerene/continuous/` + CLI `--loop*` flags; implemented bounded interval loop rendering only mode/pressure/text-status; reused shared manual tick stop tracking through new `TickStopTracker`; loop path rejects `--model`; added JSON output `{ "continuous_loop": ... }`.
+- **Verified:** `python -m unittest tests.test_continuous_loop -v` plus full suite run.
+- **Next:** Future renderer/face integration can subscribe to loop summaries/presentation vector without changing v0 safety boundaries.
+- **Blockers:** None.
+
 ### 2026-05-06 - Watch Mode v0 (controlled terminal snapshots)
 
 - **Context:** Operators needed a compact, terminal-facing view of repeated Manual Tick Runner cycles (pressure/latent pressure/expression/interrupt/presentation) without continuous loop or autonomous expression.

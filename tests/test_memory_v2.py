@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import sqlite3
 import shutil
 import unittest
 from contextlib import redirect_stdout
@@ -18,6 +19,7 @@ from fullerene.memory import (
     DeterministicHashEmbeddingProvider,
     MemoryEdgeType,
     MemoryRecord,
+    MemoryLayer,
     MemoryRole,
     MemoryType,
     QueryIntent,
@@ -172,6 +174,132 @@ class QueryIntentTests(unittest.TestCase):
             classify_query_intent("hello there"),
             QueryIntent.UNKNOWN,
         )
+
+
+class WorkingMemorySchemaTests(unittest.TestCase):
+    def test_memory_record_round_trip_includes_memory_layer(self) -> None:
+        record = MemoryRecord(
+            content="turn content",
+            memory_layer=MemoryLayer.WORKING,
+        )
+        round_tripped = MemoryRecord.from_dict(record.to_dict())
+        self.assertEqual(round_tripped.memory_layer, MemoryLayer.WORKING)
+
+    def test_existing_rows_default_to_long_term_after_migration(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        root.mkdir(parents=True, exist_ok=True)
+        db_path = root / "memory.sqlite3"
+        con = sqlite3.connect(str(db_path))
+        con.execute(
+            """
+            CREATE TABLE memories (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                memory_type TEXT NOT NULL,
+                content TEXT NOT NULL,
+                source_event_id TEXT,
+                salience REAL NOT NULL,
+                confidence REAL NOT NULL,
+                tags_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'unknown',
+                domain TEXT
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO memories (
+                id, created_at, memory_type, content, source_event_id,
+                salience, confidence, tags_json, metadata_json, role, domain
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-id",
+                utcnow().isoformat(),
+                MemoryType.EPISODIC.value,
+                "legacy content",
+                None,
+                0.5,
+                1.0,
+                "[]",
+                "{}",
+                "unknown",
+                None,
+            ),
+        )
+        con.commit()
+        con.close()
+        store = SQLiteMemoryStore(db_path)
+        loaded = store.get_memory("legacy-id")
+        assert loaded is not None
+        self.assertEqual(loaded.memory_layer, MemoryLayer.LONG_TERM)
+
+
+class WorkingMemoryStoreTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(self.root, ignore_errors=True))
+        self.store = SQLiteMemoryStore(self.root / "memory.sqlite3")
+
+    def test_store_and_list_working_turns_by_session(self) -> None:
+        self.store.add_working_turn(
+            content="user says hi",
+            session_id="s1",
+            turn_index=1,
+            dialogue_role="user",
+        )
+        self.store.add_working_turn(
+            content="assistant says hello",
+            session_id="s1",
+            turn_index=2,
+            dialogue_role="assistant",
+        )
+        turns = self.store.list_working_turns("s1", limit=8)
+        self.assertEqual([t.metadata["dialogue_role"] for t in turns], ["user", "assistant"])
+        self.assertTrue(all(t.memory_layer == MemoryLayer.WORKING for t in turns))
+
+    def test_list_working_turns_is_bounded_chronological(self) -> None:
+        for index in range(1, 11):
+            self.store.add_working_turn(
+                content=f"turn {index}",
+                session_id="s1",
+                turn_index=index,
+                dialogue_role="user" if index % 2 else "assistant",
+            )
+        turns = self.store.list_working_turns("s1", limit=4)
+        self.assertEqual([t.metadata["turn_index"] for t in turns], [7, 8, 9, 10])
+
+    def test_prune_working_memory_keeps_latest(self) -> None:
+        for index in range(1, 8):
+            self.store.add_working_turn(
+                content=f"turn {index}",
+                session_id="s1",
+                turn_index=index,
+                dialogue_role="user",
+            )
+        removed = self.store.prune_working_memory("s1", keep_last=3)
+        self.assertEqual(removed, 4)
+        remaining = self.store.list_working_turns("s1", limit=10)
+        self.assertEqual([t.metadata["turn_index"] for t in remaining], [5, 6, 7])
+
+    def test_working_turns_not_in_long_term_retrieval(self) -> None:
+        self.store.add_working_turn(
+            content="working memory only",
+            session_id="s1",
+            turn_index=1,
+            dialogue_role="user",
+        )
+        self.store.add_memory(
+            MemoryRecord(
+                content="long term memory",
+                tags=["memory"],
+            )
+        )
+        event = Event(event_type=EventType.USER_MESSAGE, content="memory")
+        ranked = self.store.hybrid_retrieve_relevant(event, limit=5)
+        self.assertTrue(all(pair[0].memory_layer == MemoryLayer.LONG_TERM for pair in ranked))
 
 
 # ---------------------------------------------------------------------------

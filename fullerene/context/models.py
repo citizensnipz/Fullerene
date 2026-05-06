@@ -37,6 +37,7 @@ def _parse_datetime(raw: str | None) -> datetime | None:
 
 class ContextItemType(str, Enum):
     EVENT = "event"
+    WORKING_MEMORY = "working_memory"
     ATTENTION = "attention"
     MEMORY = "memory"
     GOAL = "goal"
@@ -51,6 +52,7 @@ class ContextAssemblyConfig:
     max_goals: int = 3
     max_memories: int = 5
     max_beliefs: int = 5
+    max_working_turns: int = 8
     salience_threshold: float = 0.0
     include_policy_summary: bool = True
     include_signal_summaries: bool = True
@@ -60,6 +62,7 @@ class ContextAssemblyConfig:
         self.max_goals = max(int(self.max_goals), 0)
         self.max_memories = max(int(self.max_memories), 0)
         self.max_beliefs = max(int(self.max_beliefs), 0)
+        self.max_working_turns = max(int(self.max_working_turns), 0)
         self.salience_threshold = max(0.0, min(float(self.salience_threshold), 1.0))
         self.include_policy_summary = bool(self.include_policy_summary)
         self.include_signal_summaries = bool(self.include_signal_summaries)
@@ -77,6 +80,7 @@ class ContextAssemblyConfig:
             "max_goals": self.max_goals,
             "max_memories": self.max_memories,
             "max_beliefs": self.max_beliefs,
+            "max_working_turns": self.max_working_turns,
             "salience_threshold": self.salience_threshold,
             "include_policy_summary": self.include_policy_summary,
             "include_signal_summaries": self.include_signal_summaries,
@@ -90,6 +94,7 @@ class ContextAssemblyConfig:
             max_goals=data.get("max_goals", 3),
             max_memories=data.get("max_memories", 5),
             max_beliefs=data.get("max_beliefs", 5),
+            max_working_turns=data.get("max_working_turns", 8),
             salience_threshold=data.get("salience_threshold", 0.0),
             include_policy_summary=data.get("include_policy_summary", True),
             include_signal_summaries=data.get("include_signal_summaries", True),

@@ -33,6 +33,7 @@ python -m fullerene --full --ticks 3 --json --presentation --state-dir state/.sm
 - Default tick metadata sets `suppress_expression`; use `--allow-tick-expression` to opt out.
 - `--json` / `--debug` emit `{ "tick_run": … }` for manual ticks; full per-tick `records` appear with **`--debug`** (or use **`--json` together with `--debug`** for full nested records).
 - **`--presentation`** emits compact Presentation Vector lines and embeds **`presentation_vector`** in each tick **`summaries`** row when **`--presentation`** or **`--tick-summary`** is active.
+- Tick stop nuance (LPB v1.1): danger pressure still uses a short stop streak (`5`), while latent-only saturation uses a longer streak (`20`).
 
 `--json` / `--debug` emit the full `NexusRecord`, including Nexus v2 `interrupt_candidates`, `suppression_decisions`, Expression Gate recommendation fields (`expression_recommendation`, `expression_score`, `expression_mode`, etc.), and related `cycle_trace` fields when present.
 
@@ -52,6 +53,51 @@ python -m fullerene --full --watch --watch-clear
 - `--watch-trace` adds compact `trace:` fragments when available.
 - `--watch-json` emits `{ "watch_run": ... }` JSON output only.
 - Watch Mode v0 stops when the Manual Tick Runner stop conditions trigger, and reports the `stop_reason`.
+
+Continuous Loop v0 (foreground bounded loop, minimal output):
+
+```bash
+python -m fullerene --full --loop
+python -m fullerene --full --loop --loop-max-ticks 20 --loop-interval 0.5
+python -m fullerene --full --loop --loop-no-clear
+python -m fullerene --full --loop --loop-json
+```
+
+- `--loop` runs a foreground, bounded `SYSTEM_TICK` loop (not a daemon/background service).
+- `--loop-interval` and `--loop-max-ticks` are clamped (`0.1..60.0`, `1..1000`).
+- `--loop-no-clear` prints one compact line per tick instead of in-place screen updates.
+- `--loop-allow-expression` allows structured Expression Gate recommendation display (no prose generation).
+- `--loop-stop-on-ask-user` stops early when Expression Gate recommends `ask_user`.
+- `--loop-json` emits `{ "continuous_loop": ... }`.
+- `--model` is rejected with `--loop` in v0.
+
+Interactive Loop v0 (foreground conversational loop + ticks):
+
+```bash
+python -m fullerene --full --interactive
+python -m fullerene --full --interactive --interactive-interval 0.5
+python -m fullerene --full --interactive --interactive-no-clear
+python -m fullerene --full --interactive --interactive-max-ticks 50
+python -m fullerene --full --interactive --interactive-show-ticks
+python -m fullerene --full --interactive --interactive-status-every 5
+python -m fullerene --full --interactive --session-id demo-session --working-memory-context-turns 8 --working-memory-turns 20
+python -m fullerene --full --interactive --interactive-allow-model --model ollama:gemma3:4b
+cmd /c "echo quit| python -m fullerene --full --interactive --interactive-max-ticks 20 --interactive-interval 0.5 --interactive-no-clear"
+```
+
+- `--interactive` alternates internal `SYSTEM_TICK` cycles and user input lines in one foreground CLI session.
+- Interactive defaults to transcript output (no per-tick redraw while typing).
+- User input is line-oriented; non-empty lines are processed as normal `USER_MESSAGE` events.
+- Built-in commands: `/status`, `/help`, `/quit`, optional `/ticks on` and `/ticks off`.
+- `--interactive-show-ticks` enables compact idle tick lines; `--interactive-status-every N` limits idle tick output cadence (`0` means every tick when enabled).
+- `--interactive-no-expression` keeps tick-time expression recommendations suppressed.
+- `--interactive-stop-on-ask-user` stops when Expression Gate recommends `ask_user`.
+- `--interactive-allow-model` allows existing CLI model realization for user-message output only.
+- `--session-id` sets the interactive working-memory session id (auto-generated when omitted).
+- `--working-memory-context-turns N` controls how many recent dialogue turns Context includes.
+- `--working-memory-turns N` controls per-session working-memory retention after pruning.
+- `--interactive-clear` enables experimental clear-screen behavior; transcript mode remains default.
+- `--json` is not supported with `--interactive` in v0.
 
 ## Tests
 

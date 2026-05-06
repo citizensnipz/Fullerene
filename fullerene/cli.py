@@ -9,7 +9,9 @@ import sys
 from pathlib import Path
 from typing import Any, Sequence
 
+from fullerene.continuous import ContinuousLoopConfig, run_continuous_loop
 from fullerene.context import ContextAssemblyConfig
+from fullerene.interactive import InteractiveLoopConfig, run_interactive_loop
 from fullerene.facets import (
     AffectFacet,
     AttentionFacet,
@@ -216,6 +218,126 @@ def build_parser() -> argparse.ArgumentParser:
             "Do not set metadata suppress_expression on manual ticks; Expression "
             "Gate may surface user-facing recommendation flags when scoring allows."
         ),
+    )
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="Run Interactive Loop v0 (foreground SYSTEM_TICK + USER_MESSAGE loop).",
+    )
+    parser.add_argument(
+        "--interactive-interval",
+        type=float,
+        default=1.0,
+        metavar="SECONDS",
+        help="With --interactive, tick interval (default 1.0; clamped).",
+    )
+    parser.add_argument(
+        "--interactive-max-ticks",
+        type=int,
+        default=1000,
+        metavar="N",
+        help="With --interactive, max SYSTEM_TICK cycles (default 1000; clamped).",
+    )
+    parser.add_argument(
+        "--interactive-no-clear",
+        action="store_true",
+        help=(
+            "Compatibility flag. Interactive mode defaults to transcript output "
+            "(no screen redraw)."
+        ),
+    )
+    parser.add_argument(
+        "--interactive-clear",
+        action="store_true",
+        help="With --interactive, enable experimental clear-screen redraw mode.",
+    )
+    parser.add_argument(
+        "--interactive-allow-model",
+        action="store_true",
+        help="With --interactive, allow --model for USER_MESSAGE output only.",
+    )
+    parser.add_argument(
+        "--interactive-no-expression",
+        action="store_true",
+        help="With --interactive, suppress expression recommendations on SYSTEM_TICK.",
+    )
+    parser.add_argument(
+        "--interactive-stop-on-ask-user",
+        action="store_true",
+        help="With --interactive, stop when expression mode asks user.",
+    )
+    parser.add_argument(
+        "--interactive-show-ticks",
+        action="store_true",
+        help="With --interactive, print compact tick status lines while idle.",
+    )
+    parser.add_argument(
+        "--interactive-status-every",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "With --interactive-show-ticks, print idle tick status every N ticks "
+            "(0 means every tick)."
+        ),
+    )
+    parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Session id used for interactive working-memory continuity.",
+    )
+    parser.add_argument(
+        "--working-memory-context-turns",
+        type=int,
+        default=8,
+        metavar="N",
+        help="Recent working-memory turns included in context (default 8).",
+    )
+    parser.add_argument(
+        "--working-memory-turns",
+        type=int,
+        default=20,
+        metavar="N",
+        help="Working-memory turns retained per session after pruning (default 20).",
+    )
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="Run Continuous Loop v0 (foreground, bounded SYSTEM_TICK loop).",
+    )
+    parser.add_argument(
+        "--loop-interval",
+        type=float,
+        default=1.0,
+        metavar="SECONDS",
+        help="With --loop, sleep interval between ticks (default 1.0; clamped).",
+    )
+    parser.add_argument(
+        "--loop-max-ticks",
+        type=int,
+        default=100,
+        metavar="N",
+        help="With --loop, maximum ticks before stopping (default 100; clamped).",
+    )
+    parser.add_argument(
+        "--loop-no-clear",
+        action="store_true",
+        help="With --loop, print one compact line per tick (no screen clear).",
+    )
+    parser.add_argument(
+        "--loop-allow-expression",
+        action="store_true",
+        help="With --loop, allow Expression Gate recommendations to be surfaced.",
+    )
+    parser.add_argument(
+        "--loop-stop-on-ask-user",
+        action="store_true",
+        help="With --loop, stop early when expression mode requests ask_user.",
+    )
+    parser.add_argument(
+        "--loop-json",
+        action="store_true",
+        help="With --loop, emit JSON result instead of live text rendering.",
     )
     parser.add_argument(
         "--watch",
@@ -581,6 +703,7 @@ def _cli_build_nexus_runtime(
             max_goals=args.context_max_goals,
             max_memories=context_max_memories,
             max_beliefs=args.context_max_beliefs,
+            max_working_turns=max(0, int(args.working_memory_context_turns)),
             salience_threshold=_clamp_unit(args.context_salience_threshold),
         )
         facets.append(
@@ -709,6 +832,27 @@ def _print_tick_run_cli(args: argparse.Namespace, result: TickRunResult) -> None
     print(" ".join(parts))
 
 
+def _interactive_user_text_output(
+    record,
+    *,
+    model_adapter: ModelAdapter | None = None,
+    debug: bool = False,
+) -> str:
+    output = _derive_response_output(
+        record,
+        model_adapter=model_adapter,
+        debug=debug,
+    )
+    response = output.get("response")
+    if isinstance(response, str) and response.strip():
+        return response.strip()
+    if response is not None:
+        return str(response)
+    if output.get("recorded"):
+        return "(recorded)"
+    return "(silent)"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -736,13 +880,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(f"--ticks must be at most {TICK_HARD_CAP}.")
 
     watch_mode_run = bool(getattr(args, "watch", False))
+    loop_mode_run = bool(getattr(args, "loop", False))
+    interactive_mode_run = bool(getattr(args, "interactive", False))
     manual_tick_run = bool(args.tick) or args.ticks > 1
+    if interactive_mode_run and loop_mode_run:
+        parser.error("--interactive is not compatible with --loop.")
+    if interactive_mode_run and watch_mode_run:
+        parser.error("--interactive is not compatible with --watch.")
+    if interactive_mode_run and manual_tick_run:
+        parser.error("--interactive is not compatible with --tick / --ticks.")
+    if loop_mode_run and watch_mode_run:
+        parser.error("--loop is not compatible with --watch.")
+    if loop_mode_run and manual_tick_run:
+        parser.error("--loop is not compatible with --tick / --ticks.")
     if watch_mode_run and (args.tick or args.ticks > 1):
         parser.error("--watch is not compatible with --tick / --ticks; use --watch-ticks instead.")
     if watch_mode_run and args.event_type != EventType.USER_MESSAGE.value:
         parser.error("--watch requires user_message event-type; omit --event-type for watch runs.")
     if watch_mode_run and args.model:
         parser.error("--model is not used with watch mode; remove --model for watch runs.")
+    if loop_mode_run and args.model:
+        parser.error("Continuous loop does not support --model in v0.")
+    if interactive_mode_run and args.json:
+        parser.error("--json is not supported with --interactive in v0.")
+    if interactive_mode_run and args.model and not args.interactive_allow_model:
+        parser.error(
+            "Interactive loop does not support --model in v0 unless --interactive-allow-model is set."
+        )
 
     if manual_tick_run and args.event_type != EventType.USER_MESSAGE.value:
         parser.error("--tick / --ticks runs SYSTEM_TICK; omit --event-type or keep user_message.")
@@ -763,8 +927,98 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--context-max-memories must be at least 0.")
     if args.context_window_size < 1:
         parser.error("--context-window-size must be at least 1.")
+    if args.interactive_status_every < 0:
+        parser.error("--interactive-status-every must be at least 0.")
+    if args.working_memory_context_turns < 0:
+        parser.error("--working-memory-context-turns must be at least 0.")
+    if args.working_memory_turns < 1:
+        parser.error("--working-memory-turns must be at least 1.")
 
     model_adapter = _build_model_adapter(parser, args.model)
+
+    if interactive_mode_run:
+        if args.event_type != EventType.USER_MESSAGE.value:
+            parser.error("--interactive manages SYSTEM_TICK and USER_MESSAGE events; omit --event-type.")
+        cfg = InteractiveLoopConfig(
+            interval_seconds=args.interactive_interval,
+            max_ticks=args.interactive_max_ticks,
+            clear_screen=bool(args.interactive_clear and not args.interactive_no_clear),
+            allow_expression=not bool(args.interactive_no_expression),
+            allow_model=bool(args.interactive_allow_model),
+            stop_on_ask_user=bool(args.interactive_stop_on_ask_user),
+            show_ticks=bool(args.interactive_show_ticks),
+            status_every=max(0, int(args.interactive_status_every or 0)),
+            session_id=args.session_id or "",
+            working_memory_context_turns=max(1, int(args.working_memory_context_turns or 8)),
+            working_memory_retain_turns=max(1, int(args.working_memory_turns or 20)),
+        ).clamped()
+        if not cfg.allow_model:
+            model_adapter = None
+        hook_meta = build_tick_event_metadata(
+            tick_index=1,
+            tick_count=cfg.max_ticks,
+            tick_reason="interactive_loop_v0",
+            suppress_expression=not cfg.allow_expression,
+            extra={**metadata, "interactive_loop": True},
+        )
+        hook_event = Event(
+            event_type=EventType.SYSTEM_TICK,
+            content="",
+            metadata=hook_meta,
+        )
+        runtime = _cli_build_nexus_runtime(parser, args, event=hook_event)
+        run_interactive_loop(
+            runtime,
+            cfg,
+            output_writer=sys.stdout,
+            extra_metadata=metadata,
+            user_output_builder=lambda record: _interactive_user_text_output(
+                record,
+                model_adapter=model_adapter if cfg.allow_model else None,
+                debug=args.debug,
+            ),
+        )
+        return 0
+
+    if loop_mode_run:
+        if args.event_type != EventType.USER_MESSAGE.value:
+            parser.error("--loop runs SYSTEM_TICK; omit --event-type or keep user_message.")
+        cfg = ContinuousLoopConfig(
+            interval_seconds=args.loop_interval,
+            max_ticks=args.loop_max_ticks,
+            clear_screen=not bool(args.loop_no_clear),
+            allow_tick_expression=bool(args.loop_allow_expression),
+            stop_on_ask_user=bool(args.loop_stop_on_ask_user),
+        ).clamped()
+        hook_meta = build_tick_event_metadata(
+            tick_index=1,
+            tick_count=cfg.max_ticks,
+            tick_reason="continuous_loop_v0",
+            suppress_expression=not cfg.allow_tick_expression,
+            extra=metadata,
+        )
+        hook_event = Event(
+            event_type=EventType.SYSTEM_TICK,
+            content="",
+            metadata=hook_meta,
+        )
+        runtime = _cli_build_nexus_runtime(parser, args, event=hook_event)
+        if args.loop_json:
+            result = run_continuous_loop(
+                runtime,
+                cfg,
+                output_writer=None,
+                extra_metadata=metadata,
+            )
+            print(json.dumps({"continuous_loop": result.to_dict()}, indent=2))
+            return 0
+        result = run_continuous_loop(
+            runtime,
+            cfg,
+            output_writer=sys.stdout,
+            extra_metadata=metadata,
+        )
+        return 0
 
     if watch_mode_run:
         cfg = WatchConfig(
@@ -1023,6 +1277,8 @@ def _build_model_prompt(record, metadata: dict[str, Any]) -> str:
         f"System decision: {decision}",
         "Current working context:",
         *_working_context_prompt_lines(record),
+        "Recent conversation:",
+        *_recent_conversation_prompt_lines(record),
         "Response grounding:",
         f"- query intent: {metadata.get('query_intent') or 'none'}",
         f"- planner summary: {_recent_planner_summary(record)}",
@@ -1068,6 +1324,33 @@ def _working_context_prompt_lines(record) -> list[str]:
     lines.append(f"- policy: {_context_policy_summary(items) or 'none'}")
     lines.append(f"- signals: {_context_signal_summary(items) or 'none'}")
     return lines
+
+
+def _recent_conversation_prompt_lines(record) -> list[str]:
+    context_window = _context_window_payload(record)
+    if not isinstance(context_window, dict):
+        return ["- none"]
+    raw_items = context_window.get("items", [])
+    if not isinstance(raw_items, list):
+        return ["- none"]
+    recent_items = [
+        item
+        for item in raw_items
+        if isinstance(item, dict) and item.get("item_type") == "working_memory"
+    ]
+    if not recent_items:
+        return ["- none"]
+    lines: list[str] = []
+    for item in recent_items:
+        metadata = item.get("metadata")
+        role = "turn"
+        if isinstance(metadata, dict):
+            role = str(metadata.get("dialogue_role") or "turn")
+        content = _coerce_prompt_string(item.get("content")) or ""
+        if not content:
+            continue
+        lines.append(f"- {role.title()}: {content}")
+    return lines or ["- none"]
 
 
 def _fallback_working_context_lines(record) -> list[str]:

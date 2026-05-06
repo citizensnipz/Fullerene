@@ -170,6 +170,10 @@ class DynamicContextAssembler:
         else:
             reasons.append("attention_broadcast_unavailable_or_duplicate")
 
+        working_memory_items, working_memory_meta = self._working_memory_items(event)
+        items.extend(working_memory_items)
+        reasons.append(f"included_working_memory_turns={len(working_memory_items)}")
+
         goal_items, goal_deduplication = self._goal_items()
         items.extend(goal_items)
         reasons.append(f"included_goals={len(goal_items)}")
@@ -243,6 +247,9 @@ class DynamicContextAssembler:
                 if attention_item is not None
                 else []
             ),
+            "working_memory_session_id": working_memory_meta["session_id"],
+            "working_memory_turn_count": len(working_memory_items),
+            "included_working_memory_turns": [item.id for item in working_memory_items],
             "included_goal_ids": [item.id for item in goal_items],
             "deduped_goal_count": goal_deduplication.deduped_goal_count,
             "deduped_goal_ids": list(goal_deduplication.deduped_goal_ids),
@@ -254,6 +261,7 @@ class DynamicContextAssembler:
                 "max_goals": self.config.max_goals,
                 "max_memories": self.config.max_memories,
                 "max_beliefs": self.config.max_beliefs,
+                "max_working_turns": self.config.max_working_turns,
             },
             "config": self.config.to_dict(),
             "reasons": reasons,
@@ -282,6 +290,35 @@ class DynamicContextAssembler:
             strategy=self.config.strategy,
             metadata=metadata,
         )
+
+    def _working_memory_items(self, event: Event) -> tuple[list[ContextItem], dict[str, Any]]:
+        if self.memory_store is None or self.config.max_working_turns == 0:
+            return [], {"session_id": None}
+        session_id = str(event.metadata.get("session_id") or "").strip()
+        if not session_id or not hasattr(self.memory_store, "list_working_turns"):
+            return [], {"session_id": None}
+        records = self.memory_store.list_working_turns(
+            session_id=session_id,
+            limit=self.config.max_working_turns,
+        )
+        items = [
+            ContextItem(
+                id=record.id,
+                item_type=ContextItemType.WORKING_MEMORY,
+                content=record.content,
+                source_id=record.source_event_id,
+                created_at=record.created_at,
+                metadata={
+                    "context_source": "recent_working_memory",
+                    "dialogue_role": record.metadata.get("dialogue_role"),
+                    "turn_index": record.metadata.get("turn_index"),
+                    "session_id": session_id,
+                    "reason": "recent_working_memory",
+                },
+            )
+            for record in records
+        ]
+        return items, {"session_id": session_id}
 
     def _event_item(self, event: Event) -> ContextItem:
         return ContextItem(

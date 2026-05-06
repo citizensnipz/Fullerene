@@ -47,6 +47,11 @@ class MemoryType(str, Enum):
     SEMANTIC = "semantic"
 
 
+class MemoryLayer(str, Enum):
+    WORKING = "working"
+    LONG_TERM = "long_term"
+
+
 @dataclass(slots=True)
 class MemoryRecord:
     id: str = field(default_factory=lambda: uuid4().hex)
@@ -63,6 +68,7 @@ class MemoryRecord:
     # Memory v2 still round-trip cleanly. ``domain`` is optional.
     role: str = "unknown"
     domain: str | None = None
+    memory_layer: MemoryLayer = MemoryLayer.LONG_TERM
 
     def __post_init__(self) -> None:
         self.salience = self._validate_score("salience", self.salience)
@@ -70,6 +76,8 @@ class MemoryRecord:
         self.tags = normalize_tags(self.tags)
         self.role = self._normalize_role(self.role)
         self.domain = self._normalize_domain(self.domain)
+        if not isinstance(self.memory_layer, MemoryLayer):
+            self.memory_layer = MemoryLayer(str(self.memory_layer).strip().lower())
 
     @staticmethod
     def _validate_score(field_name: str, value: float) -> float:
@@ -105,6 +113,7 @@ class MemoryRecord:
             "metadata": _serialize_value(self.metadata),
             "role": self.role,
             "domain": self.domain,
+            "memory_layer": self.memory_layer.value,
         }
 
     @classmethod
@@ -121,4 +130,5 @@ class MemoryRecord:
             metadata=data.get("metadata", {}),
             role=data.get("role", "unknown") or "unknown",
             domain=data.get("domain"),
+            memory_layer=data.get("memory_layer", MemoryLayer.LONG_TERM.value),
         )

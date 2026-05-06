@@ -120,7 +120,10 @@ def validate_behavior_decision_trace_v2(
     else:
         eid = event_obj.get("event_id") or event_obj.get("id")
         et = event_obj.get("event_type") or event_obj.get("type")
-        summary = event_obj.get("content_summary") or event_obj.get("content")
+        # Keep empty content_summary/content valid (SYSTEM_TICK often carries "").
+        summary = event_obj.get("content_summary")
+        if summary is None and "content_summary" not in event_obj:
+            summary = event_obj.get("content")
         if not eid or not et or summary is None:
             out.append(
                 artifact_result(

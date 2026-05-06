@@ -39,7 +39,7 @@ from fullerene.memory.inference import (
     infer_tags,
     merge_tags,
 )
-from fullerene.memory.models import MemoryRecord, MemoryType, normalize_tags
+from fullerene.memory.models import MemoryLayer, MemoryRecord, MemoryType, normalize_tags
 from fullerene.memory.roles import (
     MemoryRole,
     QueryIntent,
@@ -69,6 +69,7 @@ __all__ = [
     "HYBRID_TAG_WEIGHT",
     "MemoryEdge",
     "MemoryEdgeType",
+    "MemoryLayer",
     "MemoryRecord",
     "MemoryRole",
     "MemoryStore",

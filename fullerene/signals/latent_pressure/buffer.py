@@ -6,7 +6,7 @@ import hashlib
 from datetime import datetime
 from typing import Any
 
-from fullerene.nexus.models import Event, FacetResult, NexusState
+from fullerene.nexus.models import Event, EventType, FacetResult, NexusState
 from fullerene.signals.latent_pressure.models import (
     LatentPressureEntry,
     LatentPressureResult,
@@ -18,6 +18,8 @@ DEFAULT_ESCALATION_RATE = 0.08
 TOP_ENTRY_LIMIT = 5
 MAX_RESOLVED_ENTRIES = 20
 OVERLOAD_RATIO_THRESHOLD = 0.85
+IDLE_TICK_DECAY_MULTIPLIER = 2.0
+MIN_IDLE_DECAY = 0.05
 
 INITIAL_INTENSITIES = {
     "verifier_failure": 0.7,
@@ -69,16 +71,24 @@ def _merge_metadata(original: dict[str, Any], incoming: dict[str, Any]) -> dict[
 
 
 def _compute_total(active: list[LatentPressureEntry]) -> float:
-    weights = (1.0, 0.7, 0.5, 0.3, 0.2)
+    weights = (0.55, 0.30, 0.15, 0.08, 0.04)
     ranked = sorted(active, key=lambda item: item.intensity, reverse=True)[: len(weights)]
     total = 0.0
     for idx, entry in enumerate(ranked):
-        total += entry.intensity * weights[idx]
+        type_factor = 1.0
+        if idx > 0 and entry.entry_type == ranked[0].entry_type:
+            type_factor = 0.25
+        total += entry.intensity * weights[idx] * type_factor
     return _clamp01(total)
 
 
 def _ignition_info(
-    active: list[LatentPressureEntry], total: float
+    active: list[LatentPressureEntry],
+    total: float,
+    *,
+    is_system_tick: bool,
+    has_critical_signal: bool,
+    has_non_suppressed_signal: bool,
 ) -> tuple[bool, str | None, str | None, str | None]:
     if not active:
         return False, None, None, None
@@ -86,6 +96,14 @@ def _ignition_info(
     if top.intensity >= 0.75:
         return True, "top_entry_intensity_high", top.id, top.entry_type
     if total >= 0.85:
+        if is_system_tick:
+            if top.intensity >= 0.75:
+                return True, "latent_pressure_total_high_tick_top_intense", top.id, top.entry_type
+            if top.retrigger_count >= 3 and has_non_suppressed_signal:
+                return True, "latent_pressure_total_high_tick_retrigger", top.id, top.entry_type
+            if has_critical_signal:
+                return True, "latent_pressure_total_high_tick_critical", top.id, top.entry_type
+            return False, None, None, None
         return True, "latent_pressure_total_high", top.id, top.entry_type
     if top.retrigger_count >= 3 and top.intensity >= 0.55:
         return True, "retrigger_threshold", top.id, top.entry_type
@@ -389,6 +407,7 @@ def _resolve_entries(
     *,
     reactivated_ids: set[str],
     now: datetime,
+    is_system_tick: bool,
 ) -> list[dict[str, Any]]:
     resolved_entries: list[dict[str, Any]] = []
     event_resolve = event.metadata.get("resolve_latent_pressure")
@@ -405,12 +424,106 @@ def _resolve_entries(
             entry.last_decayed_at = now
             resolved_entries.append(entry.to_dict())
         elif entry.id not in reactivated_ids:
-            entry.intensity = _clamp01(entry.intensity - entry.decay_rate)
+            decay_amount = entry.decay_rate
+            if is_system_tick:
+                decay_amount = max(
+                    entry.decay_rate * IDLE_TICK_DECAY_MULTIPLIER, MIN_IDLE_DECAY
+                )
+            entry.intensity = _clamp01(entry.intensity - decay_amount)
             entry.last_decayed_at = now
             if entry.intensity <= 0.05:
                 entry.status = "resolved"
                 resolved_entries.append(entry.to_dict())
     return resolved_entries
+
+
+def should_ingest_signal_on_tick(
+    signal: dict[str, Any], event: Event, state: NexusState
+) -> tuple[bool, str]:
+    if bool(event.metadata.get("force_latent_pressure_ingest")):
+        return True, "force_latent_pressure_ingest"
+    if event.event_type != EventType.SYSTEM_TICK:
+        return True, "non_system_tick"
+
+    source = str(signal.get("source") or "unknown").strip().lower()
+    entry_type = str(signal.get("entry_type") or "unknown").strip().lower()
+    metadata = _dict(signal.get("metadata"))
+    source_id = (
+        str(signal.get("source_id")).strip()
+        if signal.get("source_id") is not None
+        else None
+    )
+
+    if source == "verifier" and entry_type == "verifier_failure":
+        severity = str(metadata.get("severity") or "").lower()
+        if severity in {"critical", "error"} or bool(metadata.get("escalation_recommended")):
+            return True, "critical_verifier"
+
+    if entry_type == "policy_block":
+        p = str(
+            metadata.get("policy_result")
+            or metadata.get("policy_status")
+            or ("denied" if metadata.get("policy_blocks_act") else "")
+        ).lower()
+        if p in {"denied", "approval_required"}:
+            existing = _dict(_dict(state.facet_state.get("signals")).get("latent_pressure"))
+            for row in existing.get("entries", []):
+                if not isinstance(row, dict) or row.get("status") != "active":
+                    continue
+                if (
+                    str(row.get("entry_type") or "") == "policy_block"
+                    and str(row.get("source") or "") == source
+                    and str(row.get("source_id") or "") == str(source_id or "")
+                ):
+                    return False, "policy_block_repeat_same_source"
+            return True, "policy_block_new_source"
+
+    if source == "nexus" and entry_type == "interrupt_recommendation":
+        reason = str(metadata.get("interrupt_reason") or "").lower()
+        if "latent_pressure" in reason or "lpb" in reason or "ignition" in reason:
+            return False, "nexus_lpb_interrupt_echo"
+
+    if source == "behavior" and entry_type == "interrupt_recommendation":
+        reason = str(metadata.get("interrupt_reason") or "").lower()
+        if any(tok in reason for tok in ("latent_pressure", "lpb", "ignition")):
+            return False, "behavior_lpb_interrupt_echo"
+        if str(metadata.get("severity") or "").lower() in {"high", "critical"}:
+            return True, "behavior_interrupt_high_severity"
+        last_source = _dict(state.facet_state.get("nexus")).get("last_interrupt_source_id")
+        if source_id and str(last_source or "") != source_id:
+            return True, "behavior_interrupt_new_source"
+        return False, "behavior_interrupt_echo"
+
+    if source == "learning":
+        route = _dict(metadata.get("route"))
+        sig = str(route.get("signal") or "")
+        if sig == "latent_pressure_interrupt":
+            if source_id and source_id != str(event.event_id):
+                return True, "learning_lpb_interrupt_new"
+            return False, "learning_lpb_interrupt_echo"
+
+    if entry_type == "context_overload":
+        ratio = _clamp01(metadata.get("context_load_ratio"))
+        if ratio >= 0.95:
+            return True, "context_overload_critical_ratio"
+        nstate = _dict(state.facet_state.get("nexus"))
+        if bool(nstate.get("last_context_overloaded_changed")):
+            return True, "context_overload_new_change"
+        return False, "context_overload_echo"
+
+    if source == "world_model" and entry_type == "uncertainty":
+        belief_id = str(metadata.get("belief_id") or "")
+        if belief_id:
+            return True, "uncertainty_new_belief"
+        return False, "uncertainty_echo"
+
+    if entry_type == "attention_conflict":
+        conflict_items = metadata.get("conflict_items")
+        if isinstance(conflict_items, list) and conflict_items:
+            return True, "attention_conflict_new"
+        return False, "attention_conflict_echo"
+
+    return False, "system_tick_routine_signal_suppressed"
 
 
 def update_latent_pressure(
@@ -441,6 +554,7 @@ def update_latent_pressure(
     learning_meta = _extract_facet_metadata(facet_results, "learning")
     signal_map = _dict(_dict(state.facet_state.get("nexus")).get("current_cycle_signal_map"))
 
+    is_system_tick = event.event_type == EventType.SYSTEM_TICK
     incoming = []
     incoming.extend(_signals_from_behavior(behavior_meta))
     incoming.extend(_signals_from_nexus(signal_map))
@@ -452,7 +566,21 @@ def update_latent_pressure(
     created_entries: list[dict[str, Any]] = []
     updated_entries: list[dict[str, Any]] = []
     reactivated_ids: set[str] = set()
+    skipped_signals: list[dict[str, Any]] = []
+    skip_reasons: list[str] = []
     reasons: list[str] = []
+
+    filtered_incoming: list[dict[str, Any]] = []
+    for signal in incoming:
+        allowed, why = should_ingest_signal_on_tick(signal, event, state)
+        if allowed:
+            filtered_incoming.append(signal)
+            continue
+        skipped = dict(signal)
+        skipped["skip_reason"] = why
+        skipped_signals.append(skipped)
+        skip_reasons.append(why)
+    incoming = filtered_incoming
 
     for signal in incoming:
         source = str(signal.get("source", "unknown"))
@@ -464,11 +592,26 @@ def update_latent_pressure(
         metadata = _dict(signal.get("metadata"))
         key = _stable_key(source, entry_type, source_id, description)
         source_boost = _clamp01(metadata.get("source_boost", 0.0))
+        event_source_id = (
+            str(signal.get("source_id")).strip()
+            if signal.get("source_id") is not None
+            else None
+        )
         if key in active_by_key:
             entry = active_by_key[key]
-            entry.intensity = _clamp01(entry.intensity + entry.escalation_rate + source_boost)
+            escalation = entry.escalation_rate
+            if is_system_tick and (
+                (event_source_id and entry.last_reactivation_source_id == event_source_id)
+                or entry.last_reactivation_event_type == event.event_type.value
+            ):
+                escalation = entry.escalation_rate * 0.25
+            entry.intensity = _clamp01(entry.intensity + escalation + source_boost)
             entry.retrigger_count += 1
             entry.last_activated_at = now
+            entry.last_reactivation_event_type = event.event_type.value
+            entry.last_reactivation_source_id = event_source_id
+            if is_system_tick:
+                entry.tick_reactivation_count += 1
             entry.metadata = _merge_metadata(entry.metadata, metadata)
             updated_entries.append(entry.to_dict())
             reactivated_ids.add(entry.id)
@@ -487,6 +630,9 @@ def update_latent_pressure(
                 created_at=now,
                 last_activated_at=now,
                 last_decayed_at=now,
+                last_reactivation_event_type=event.event_type.value,
+                last_reactivation_source_id=event_source_id,
+                tick_reactivation_count=1 if is_system_tick else 0,
                 status="active",
                 metadata=metadata,
             )
@@ -495,7 +641,13 @@ def update_latent_pressure(
             created_entries.append(entry.to_dict())
             reactivated_ids.add(entry.id)
 
-    resolved_entries = _resolve_entries(entries, event, reactivated_ids=reactivated_ids, now=now)
+    resolved_entries = _resolve_entries(
+        entries,
+        event,
+        reactivated_ids=reactivated_ids,
+        now=now,
+        is_system_tick=is_system_tick,
+    )
     decayed_entries = [
         entry.to_dict()
         for entry in entries
@@ -510,8 +662,23 @@ def update_latent_pressure(
     entries = active_entries + resolved
     top_entries = sorted(active_entries, key=lambda item: item.intensity, reverse=True)[:TOP_ENTRY_LIMIT]
     total = _compute_total(active_entries)
-    ign_rec, ign_reason, ign_id, ign_et = _ignition_info(active_entries, total)
+    has_critical = any(
+        e.entry_type in {"verifier_failure", "policy_block"}
+        and any(
+            str(_dict(e.metadata).get(k, "")).lower() in {"critical", "error", "denied"}
+            for k in ("severity", "policy_result", "policy_status")
+        )
+        for e in active_entries
+    )
+    ign_rec, ign_reason, ign_id, ign_et = _ignition_info(
+        active_entries,
+        total,
+        is_system_tick=is_system_tick,
+        has_critical_signal=has_critical,
+        has_non_suppressed_signal=bool(incoming),
+    )
     reasons.append(f"signals_ingested={len(incoming)}")
+    reasons.append(f"signals_skipped={len(skipped_signals)}")
     if ign_rec and ign_reason:
         reasons.append(f"ignition_reason={ign_reason}")
 
@@ -527,6 +694,9 @@ def update_latent_pressure(
         ignition_reason=ign_reason,
         ignition_entry_id=ign_id,
         ignition_entry_type=ign_et,
+        skipped_signals=skipped_signals,
+        skipped_signal_count=len(skipped_signals),
+        skip_reasons=sorted(set(skip_reasons)),
         reasons=reasons,
     )
     state_blob = {

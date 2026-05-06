@@ -390,6 +390,8 @@ class Nexus:
         nb["last_allowed_interrupt_candidate"] = allowed_interrupt_candidate
         nb["last_suppressed_interrupts"] = list(suppressed_interrupts_blob)
         nb["last_interrupt_processed"] = interrupt_processed_blob
+        if isinstance(allowed_interrupt_candidate, dict):
+            nb["last_interrupt_source_id"] = allowed_interrupt_candidate.get("source_id")
 
         ih = list(nb.get("interrupt_history") or [])
         if not isinstance(ih, list):

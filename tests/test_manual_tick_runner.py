@@ -242,10 +242,33 @@ class ManualTickCLIPTests(unittest.TestCase):
             )
         self.assertEqual(code, 0)
         tr = json.loads(stdout.getvalue())["tick_run"]
-        self.assertTrue(tr["stopped_early"])
-        self.assertEqual(tr["stop_reason"], "consecutive_high_system_pressure")
-        self.assertEqual(tr["stop_tick_index"], 5)
-        self.assertEqual(len(tr["summaries"]), 5)
+        self.assertFalse(tr["stopped_early"])
+        self.assertIsNone(tr["stop_reason"])
+        self.assertEqual(len(tr["summaries"]), 12)
+
+    def test_tick_summary_exposes_pressure_streaks(self) -> None:
+        root = _temp_state_dir()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            code = cli_main(
+                [
+                    "--memory",
+                    "--behavior",
+                    "--ticks",
+                    "2",
+                    "--pressure",
+                    "0.99",
+                    "--json",
+                    "--state-dir",
+                    str(root),
+                ]
+            )
+        self.assertEqual(code, 0)
+        s0 = json.loads(stdout.getvalue())["tick_run"]["summaries"][0]
+        self.assertIn("high_pressure_streak", s0)
+        self.assertIn("latent_saturation_streak", s0)
+        self.assertIn("stop_pressure_kind", s0)
 
 
 class ManualTickLPBTests(unittest.TestCase):

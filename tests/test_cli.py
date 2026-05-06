@@ -144,6 +144,7 @@ class CLIUsabilityTests(unittest.TestCase):
         self.assertIn("System decision: ACT", prompt)
         self.assertIn("Only generate text", prompt)
         self.assertIn("Current working context:", prompt)
+        self.assertIn("Recent conversation:", prompt)
         self.assertIn("- current event: What are you doing?", prompt)
         self.assertIn("- active goals: none", prompt)
         self.assertIn("- recent memories: none", prompt)

@@ -2,6 +2,7 @@
 
 from fullerene.tick.runner import (
     TICK_HARD_CAP,
+    TickStopTracker,
     TickRunResult,
     build_tick_event_metadata,
     run_manual_ticks,
@@ -10,6 +11,7 @@ from fullerene.tick.runner import (
 
 __all__ = [
     "TICK_HARD_CAP",
+    "TickStopTracker",
     "TickRunResult",
     "build_tick_event_metadata",
     "run_manual_ticks",

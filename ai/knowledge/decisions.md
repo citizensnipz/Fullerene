@@ -16,6 +16,41 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-05-06 - Memory v2.5 working memory remains inside Memory/Context
+
+- **Status:** accepted
+- **Context:** Memory v2 improved long-term relevance, but immediate pronoun/reference continuity in multi-turn interactive dialogue still needed exact recent turns (for example, resolving "one" to "a name") without introducing Memory v3 graph/compression or a new Dialogue subsystem.
+- **Decision:** Extend existing Memory/Context only. Add `memory_layer` (`working` | `long_term`) to memory rows with backward-compatible migration defaulting prior rows to `long_term`; add bounded session-scoped working-turn helpers (`add_working_turn`, `list_working_turns`, `prune_working_memory`) that store exact role/content/turn-index/session metadata; exclude working rows from long-term hybrid retrieval; include bounded working turns in context as `working_memory` items when `session_id` exists; add prompt `Recent conversation` grounding; wire interactive loop to maintain one stable `session_id`, store exact user/assistant visible turns, and prune per-session turns each cycle.
+- **Consequences:** Immediate conversational continuity improves deterministically while preserving Memory v2 boundaries and inspectability. No new facet/module, no LLM summarization/compression, no automatic working→long-term promotion, no graph/community retrieval-time work.
+
+## 2026-05-06 - Interactive Loop v0 transcript-first terminal UX
+
+- **Status:** accepted
+- **Context:** Interactive Loop v0 originally rendered every tick, which interleaved status redraws with in-progress typing and made line input difficult to use.
+- **Decision:** Make transcript output the default for interactive mode: idle ticks stay silent unless explicitly enabled, status is printed after user submissions and stop/warning conditions, and `/status`, `/help`, `/quit` commands provide in-loop control. Add optional idle tick visibility with `--interactive-show-ticks` and cadence control with `--interactive-status-every`.
+- **Consequences:** Interactive CLI becomes usable as a line-oriented conversation surface without introducing a full TUI dependency. Clear-screen redraw remains non-default/experimental and future renderer work stays out of scope.
+
+## 2026-05-06 - LPB v1.1 idle-tick stabilization and latent-only pressure stop nuance
+
+- **Status:** accepted
+- **Context:** LPB v1 could self-reinforce during idle `SYSTEM_TICK` loops by repeatedly ingesting routine interrupt/context/learning echoes, causing latent pressure saturation and repeated `latent_pressure_total_high` ignition despite no genuinely new danger signal. Shared tick stop logic also treated latent-only saturation the same as critical danger pressure.
+- **Decision:** Keep LPB and stop safety rails intact, but add conservative v1.1 controls: tick-aware LPB ingestion gating (`should_ingest_signal_on_tick`) with explicit allow-lists for critical verifier/policy/new signals and suppression for LPB/Nexus/Behavior/Learning echo loops on `SYSTEM_TICK`; faster idle decay for inactive entries; same-key tick reactivation dampening; damped bounded total-pressure aggregation weights; and stricter tick-time total ignition requirements. Update `TickStopTracker` so latent-only high pressure no longer trips the 5-tick danger stop, while verifier/policy/danger pressure still uses the short threshold.
+- **Consequences:** Interactive/continuous/manual tick loops remain bounded and safe while avoiding premature 5-tick stops from latent-only idle saturation. Critical verifier/policy danger paths still escalate/stop quickly. LPB remains deterministic, inspectable, and non-autonomous.
+
+## 2026-05-06 - Interactive Loop v0 (foreground conversational loop with bounded ticks)
+
+- **Status:** accepted
+- **Context:** Continuous Loop v0 supports repeated internal `SYSTEM_TICK` cycles, but operators also need to converse with Fullerene while the loop remains active in the same foreground CLI session.
+- **Decision:** Add `fullerene/interactive/` (`models.py`, `input.py`, `renderer.py`, `runner.py`, `__init__.py`) and CLI flags `--interactive`, `--interactive-interval`, `--interactive-max-ticks`, `--interactive-no-clear`, `--interactive-allow-model`, `--interactive-no-expression`, `--interactive-stop-on-ask-user`. Interactive Loop v0 alternates tick processing and line-oriented user input; non-empty user lines become `USER_MESSAGE` events with `interactive_input` metadata and go through normal Nexus processing. Tick events keep manual-tick metadata, remain quiet by default, and keep model calls disabled.
+- **Consequences:** Fullerene now stays active and conversational in a single foreground CLI loop without introducing daemon/background cognition, full TUI complexity, or autonomous tool execution. Model output in interactive mode is opt-in and restricted to user-message realization only; `SYSTEM_TICK` remains deterministic and model-free.
+
+## 2026-05-06 - Continuous Loop v0 (foreground bounded loop, minimal surface)
+
+- **Status:** accepted
+- **Context:** Manual Tick Runner and Watch Mode already provide bounded repeated internal cycles, but operators need a straightforward foreground loop for repeated `SYSTEM_TICK` execution with minimal non-scrolling output and explicit stop conditions.
+- **Decision:** Add `fullerene/continuous/` (`models.py`, `runner.py`, `renderer.py`) and CLI `--loop`, `--loop-interval`, `--loop-max-ticks`, `--loop-no-clear`, `--loop-allow-expression`, `--loop-stop-on-ask-user`, `--loop-json`. Continuous Loop v0 reuses tick summary + stop-rule plumbing, runs one `SYSTEM_TICK` per interval in foreground only, defaults to bounded runs (`max_ticks=100`), and shows only mode/pressure/text-status. Reject `--model` with `--loop` in v0.
+- **Consequences:** Fullerene now has a deterministic, inspectable, bounded foreground loop that preserves state between ticks and avoids trace spam. Daemon/background mode, autonomous tool execution, richer TUI/face rendering, and generated prose remain explicit future work.
+
 ## 2026-05-06 - Watch Mode v0 (controlled manual ticks + terminal snapshots)
 
 - **Status:** accepted

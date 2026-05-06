@@ -426,8 +426,25 @@ class NexusRuntimeTests(unittest.TestCase):
         self.assertEqual(record.metadata["internal_events_dropped"], 1)
 
     def test_behavior_interrupt_queues_at_most_one_internal_event(self) -> None:
+        class InterruptOnlyBehaviorFacet:
+            name = "behavior"
+
+            def process(self, event: Event, state: NexusState) -> FacetResult:
+                return FacetResult(
+                    facet_name=self.name,
+                    summary="Interrupt recommendation without policy denial.",
+                    metadata={
+                        "interrupt_recommended": True,
+                        "interrupt_reason": "pressure_spike",
+                        "latent_pressure": 0.9,
+                        "confidence": 0.9,
+                        "context_load": {"item_count": 1, "max_items": 10, "load_ratio": 0.1, "overloaded": False},
+                    },
+                    proposed_decision=DecisionAction.ASK,
+                )
+
         store = InMemoryStateStore()
-        runtime = NexusRuntime(facets=[BehaviorSignalFacet()], store=store)
+        runtime = NexusRuntime(facets=[InterruptOnlyBehaviorFacet()], store=store)
         record = runtime.process_event(
             Event(event_type=EventType.USER_MESSAGE, content="interrupt route")
         )

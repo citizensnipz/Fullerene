@@ -56,6 +56,9 @@ class LatentPressureEntry:
     created_at: datetime = field(default_factory=utcnow)
     last_activated_at: datetime = field(default_factory=utcnow)
     last_decayed_at: datetime = field(default_factory=utcnow)
+    last_reactivation_event_type: str | None = None
+    last_reactivation_source_id: str | None = None
+    tick_reactivation_count: int = 0
     status: str = "active"
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -67,6 +70,7 @@ class LatentPressureEntry:
         self.decay_rate = _clamp01(self.decay_rate)
         self.escalation_rate = _clamp01(self.escalation_rate)
         self.retrigger_count = _coerce_int(self.retrigger_count, minimum=0)
+        self.tick_reactivation_count = _coerce_int(self.tick_reactivation_count, minimum=0)
         self.status = str(self.status or "active").strip().lower() or "active"
         self.metadata = _json_dict(self.metadata)
 
@@ -84,6 +88,9 @@ class LatentPressureEntry:
             "created_at": self.created_at.isoformat(),
             "last_activated_at": self.last_activated_at.isoformat(),
             "last_decayed_at": self.last_decayed_at.isoformat(),
+            "last_reactivation_event_type": self.last_reactivation_event_type,
+            "last_reactivation_source_id": self.last_reactivation_source_id,
+            "tick_reactivation_count": _coerce_int(self.tick_reactivation_count, minimum=0),
             "status": self.status,
             "metadata": dict(self.metadata),
         }
@@ -103,6 +110,9 @@ class LatentPressureEntry:
             created_at=_parse_datetime(data.get("created_at")),
             last_activated_at=_parse_datetime(data.get("last_activated_at")),
             last_decayed_at=_parse_datetime(data.get("last_decayed_at")),
+            last_reactivation_event_type=data.get("last_reactivation_event_type"),
+            last_reactivation_source_id=data.get("last_reactivation_source_id"),
+            tick_reactivation_count=data.get("tick_reactivation_count", 0),
             status=data.get("status", "active"),
             metadata=data.get("metadata", {}),
         )
@@ -121,6 +131,9 @@ class LatentPressureResult:
     ignition_reason: str | None = None
     ignition_entry_id: str | None = None
     ignition_entry_type: str | None = None
+    skipped_signals: list[dict[str, Any]] = field(default_factory=list)
+    skipped_signal_count: int = 0
+    skip_reasons: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
@@ -141,6 +154,11 @@ class LatentPressureResult:
         self.ignition_entry_type = (
             str(self.ignition_entry_type).strip() if self.ignition_entry_type else None
         )
+        self.skipped_signals = _json_list_of_dicts(self.skipped_signals)
+        self.skipped_signal_count = _coerce_int(
+            self.skipped_signal_count or len(self.skipped_signals), minimum=0
+        )
+        self.skip_reasons = [str(item) for item in self.skip_reasons if str(item).strip()]
         self.reasons = [str(item) for item in self.reasons if str(item).strip()]
 
     def to_dict(self) -> dict[str, Any]:
@@ -156,6 +174,9 @@ class LatentPressureResult:
             "ignition_reason": self.ignition_reason,
             "ignition_entry_id": self.ignition_entry_id,
             "ignition_entry_type": self.ignition_entry_type,
+            "skipped_signals": list(self.skipped_signals),
+            "skipped_signal_count": _coerce_int(self.skipped_signal_count, minimum=0),
+            "skip_reasons": list(self.skip_reasons),
             "reasons": list(self.reasons),
             "active_count": len(self.active_entries),
             "total_count": len(self.active_entries) + len(self.resolved_entries),
@@ -175,6 +196,9 @@ class LatentPressureResult:
             ignition_reason=data.get("ignition_reason"),
             ignition_entry_id=data.get("ignition_entry_id"),
             ignition_entry_type=data.get("ignition_entry_type"),
+            skipped_signals=data.get("skipped_signals", []),
+            skipped_signal_count=data.get("skipped_signal_count", 0),
+            skip_reasons=data.get("skip_reasons", []),
             reasons=data.get("reasons", []),
         )
 
