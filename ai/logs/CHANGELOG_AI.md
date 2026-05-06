@@ -9,6 +9,13 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-06 (Manual Tick Runner v0)
+
+- Added `fullerene/tick/` (`runner.py`, `__init__.py`): `run_manual_ticks`, `TickRunResult`, `summarize_tick_record`, `build_tick_event_metadata`, hard cap **100**, conservative stop conditions (high `system_pressure` streak, repeated verifier critical, repeated `ask_user` expression same source, internal overflow, exceptions).
+- Updated `fullerene/cli.py`: `--tick`, `--ticks`, `--tick-reason`, `--tick-summary`, `--allow-tick-expression`; `_cli_build_nexus_runtime` refactor; manual tick path rejects `--model`; **`--json`**/**`--debug`** emit `{ "tick_run": … }` (records only with `--debug`, or `--json`+`--debug`); default concise tick summary line(s).
+- Added `tests/test_manual_tick_runner.py`; full suite green (`python -m unittest discover -s tests -p "test_*.py"`).
+- Harness: `architecture.md`, `glossary.md`, `decisions.md`, `commands.md`, `CHANGELOG_AI`, `SESSION_LOG`.
+
 ### 2026-05-06 (Expression Gate v0)
 
 - Added `fullerene/expression/` (`models.py`, `scoring.py`, `gate.py`, `__init__.py`): deterministic outbound-expression recommendations only (`ExpressionMode`, `ExpressionRecommendation`, `ExpressionBudgetState`); consumes Nexus/LPB/interrupt/policy/verifier/behavior/context/attention/learning signals; merges Verifier **`validate_expression_gate_v0`** rows after evaluation; persists under `facet_state["nexus"]["expression_gate"]` + `NexusRecord` / `cycle_trace` expression metadata (`expression_recommendation`, `expression_score`, `expression_mode`, suppressed flags, compact budget summaries, inspectable score components).

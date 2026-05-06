@@ -50,6 +50,7 @@ from fullerene.policy import (
     coerce_policy_source,
     coerce_policy_target_type,
 )
+from fullerene.tick.runner import TICK_HARD_CAP, TickRunResult, build_tick_event_metadata, run_manual_ticks
 from fullerene.workspace_state import DEFAULT_STATE_DIR
 from fullerene.state import FileStateStore
 from fullerene.world_model import Belief, BeliefSource, SQLiteWorldModelStore
@@ -179,6 +180,39 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Append compact Expression Gate v0 recommendation line to concise CLI "
             "output (--json/--debug already include full NexusRecord metadata)."
+        ),
+    )
+    parser.add_argument(
+        "--tick",
+        action="store_true",
+        help=(
+            "Run SYSTEM_TICK event(s) instead of a user message. Explicit manual "
+            "internal cycles only (not a daemon or scheduler)."
+        ),
+    )
+    parser.add_argument(
+        "--ticks",
+        type=int,
+        default=1,
+        metavar="N",
+        help=f"With --tick, process N SYSTEM_TICK events in sequence (default 1, max {TICK_HARD_CAP}).",
+    )
+    parser.add_argument(
+        "--tick-reason",
+        default=None,
+        help="Optional reason stored on each tick in metadata['tick_reason'].",
+    )
+    parser.add_argument(
+        "--tick-summary",
+        action="store_true",
+        help="After a multi-tick run, print one compact summary line per tick.",
+    )
+    parser.add_argument(
+        "--allow-tick-expression",
+        action="store_true",
+        help=(
+            "Do not set metadata suppress_expression on manual ticks; Expression "
+            "Gate may surface user-facing recommendation flags when scoring allows."
         ),
     )
     parser.add_argument(
@@ -447,51 +481,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    if args.full:
-        _apply_full_preset(args)
-    content = args.content if args.content is not None else args.prompt or ""
-    metadata = _parse_metadata(parser, args.metadata)
-    if args.feedback is not None:
-        metadata["feedback"] = args.feedback
-    if args.target_memory_id is not None:
-        metadata["target_memory_id"] = args.target_memory_id
-    if args.target_goal_id is not None:
-        metadata["target_goal_id"] = args.target_goal_id
-    if args.pressure is not None:
-        metadata["pressure"] = _clamp_unit(args.pressure)
-    if args.novelty is not None:
-        metadata["novelty"] = _clamp_unit(args.novelty)
-    if args.execute_plan:
-        metadata["execute_plan"] = True
-    if args.live and args.execute_plan:
-        metadata["dry_run"] = False
-    if args.attention_top_n < 1:
-        parser.error("--attention-top-n must be at least 1.")
-    if args.attention_history_size < 1:
-        parser.error("--attention-history-size must be at least 1.")
-    if args.affect_history_size < 1:
-        parser.error("--affect-history-size must be at least 1.")
-    if args.context_max_goals < 0:
-        parser.error("--context-max-goals must be at least 0.")
-    if args.context_max_beliefs < 0:
-        parser.error("--context-max-beliefs must be at least 0.")
-    if args.context_max_memories is not None and args.context_max_memories < 0:
-        parser.error("--context-max-memories must be at least 0.")
-    if args.context_window_size < 1:
-        parser.error("--context-window-size must be at least 1.")
-    model_adapter = _build_model_adapter(parser, args.model)
-
+def _cli_build_nexus_runtime(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    *,
+    event: Event,
+) -> NexusRuntime:
+    """Construct ``NexusRuntime`` from CLI flags; ``event`` seeds goal/world/policy hooks."""
     state_dir = Path(args.state_dir)
     store = FileStateStore(state_dir)
-    event = Event(
-        event_type=EventType(args.event_type),
-        content=content,
-        metadata=metadata,
-    )
-    facets = []
+    content = event.content
+    metadata = event.metadata if isinstance(event.metadata, dict) else {}
+    facets: list[Any] = []
     memory_store: SQLiteMemoryStore | None = None
     goal_store: SQLiteGoalStore | None = None
     world_store: SQLiteWorldModelStore | None = None
@@ -606,7 +607,132 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.verify:
         facets.append(VerifierFacet(state_dir=state_dir))
 
-    runtime = NexusRuntime(facets=facets, store=store)
+    return NexusRuntime(facets=facets, store=store)
+
+
+def _format_tick_summary_line(summary: dict[str, Any]) -> str:
+    idx = summary.get("tick_index")
+    return (
+        f"tick {idx}: decision={summary.get('decision')} "
+        f"system_pressure={float(summary.get('system_pressure') or 0):.3f} "
+        f"latent_pressure={float(summary.get('latent_pressure') or 0):.3f} "
+        f"expression_mode={summary.get('expression_mode')} "
+        f"expression_suppressed={summary.get('expression_suppressed')} "
+        f"interrupt_candidates={summary.get('interrupt_candidates_count')} "
+        f"suppressed_interrupts={summary.get('suppressed_interrupt_count')} "
+        f"internal_processed={summary.get('internal_event_processed')}"
+    )
+
+
+def _print_tick_run_cli(args: argparse.Namespace, result: TickRunResult) -> None:
+    if args.json or args.debug:
+        blob = result.to_dict()
+        if args.json and not args.debug:
+            blob = dict(blob)
+            blob.pop("records", None)
+        print(json.dumps({"tick_run": blob}, indent=2))
+        return
+    if args.tick_summary:
+        for row in result.summaries:
+            if "error" in row:
+                print(f"tick {row.get('tick_index')}: error={row.get('error')}")
+            else:
+                print(_format_tick_summary_line(row))
+    parts = [
+        f"tick_run: completed={result.tick_count}",
+        f"stopped_early={str(result.stopped_early).lower()}",
+    ]
+    if result.stop_reason:
+        parts.append(f"stop_reason={result.stop_reason}")
+    if result.stop_tick_index is not None:
+        parts.append(f"stop_tick_index={result.stop_tick_index}")
+    fs = result.final_state_summary
+    parts.append(f"event_count={fs.get('event_count')}")
+    parts.append(f"system_pressure={float(fs.get('system_pressure') or 0):.3f}")
+    print(" ".join(parts))
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.full:
+        _apply_full_preset(args)
+    content = args.content if args.content is not None else args.prompt or ""
+    metadata = _parse_metadata(parser, args.metadata)
+    if args.feedback is not None:
+        metadata["feedback"] = args.feedback
+    if args.target_memory_id is not None:
+        metadata["target_memory_id"] = args.target_memory_id
+    if args.target_goal_id is not None:
+        metadata["target_goal_id"] = args.target_goal_id
+    if args.pressure is not None:
+        metadata["pressure"] = _clamp_unit(args.pressure)
+    if args.novelty is not None:
+        metadata["novelty"] = _clamp_unit(args.novelty)
+    if args.execute_plan:
+        metadata["execute_plan"] = True
+    if args.live and args.execute_plan:
+        metadata["dry_run"] = False
+    if args.ticks < 1:
+        parser.error("--ticks must be at least 1.")
+    if args.ticks > TICK_HARD_CAP:
+        parser.error(f"--ticks must be at most {TICK_HARD_CAP}.")
+
+    manual_tick_run = bool(args.tick) or args.ticks > 1
+    if manual_tick_run and args.event_type != EventType.USER_MESSAGE.value:
+        parser.error("--tick / --ticks runs SYSTEM_TICK; omit --event-type or keep user_message.")
+    if manual_tick_run and args.model:
+        parser.error("--model is not used with manual ticks; remove --model for tick runs.")
+
+    if args.attention_top_n < 1:
+        parser.error("--attention-top-n must be at least 1.")
+    if args.attention_history_size < 1:
+        parser.error("--attention-history-size must be at least 1.")
+    if args.affect_history_size < 1:
+        parser.error("--affect-history-size must be at least 1.")
+    if args.context_max_goals < 0:
+        parser.error("--context-max-goals must be at least 0.")
+    if args.context_max_beliefs < 0:
+        parser.error("--context-max-beliefs must be at least 0.")
+    if args.context_max_memories is not None and args.context_max_memories < 0:
+        parser.error("--context-max-memories must be at least 0.")
+    if args.context_window_size < 1:
+        parser.error("--context-window-size must be at least 1.")
+
+    model_adapter = _build_model_adapter(parser, args.model)
+
+    if manual_tick_run:
+        hook_meta = build_tick_event_metadata(
+            tick_index=1,
+            tick_count=args.ticks,
+            tick_reason=args.tick_reason,
+            suppress_expression=not args.allow_tick_expression,
+            extra=metadata,
+        )
+        hook_event = Event(
+            event_type=EventType.SYSTEM_TICK,
+            content="",
+            metadata=hook_meta,
+        )
+        runtime = _cli_build_nexus_runtime(parser, args, event=hook_event)
+        tick_result = run_manual_ticks(
+            runtime,
+            total_ticks=args.ticks,
+            tick_reason=args.tick_reason,
+            suppress_expression=not args.allow_tick_expression,
+            extra_metadata=metadata,
+            include_full_records=bool(args.json or args.debug),
+        )
+        _print_tick_run_cli(args, tick_result)
+        return 0
+
+    state_dir = Path(args.state_dir)
+    event = Event(
+        event_type=EventType(args.event_type),
+        content=content,
+        metadata=metadata,
+    )
+    runtime = _cli_build_nexus_runtime(parser, args, event=event)
     record = runtime.process_event(event)
 
     if args.json or args.debug:

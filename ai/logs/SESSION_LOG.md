@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-05-06 - Manual Tick Runner v0 (explicit SYSTEM_TICK)
+
+- **Context:** Need bounded repeatable internal cycles without user prompts, daemons, or watch TUIs to validate LPB, interrupts, Expression Gate, verifier, and persistence.
+- **Done:** `fullerene/tick/runner.py` + CLI flags (`--tick`, `--ticks`, cap 100, `--tick-summary`, `--allow-tick-expression`, reject `--model` with ticks), `TickRunResult` / summaries / stop rules, `_cli_build_nexus_runtime` extraction, `tests/test_manual_tick_runner.py`, harness docs.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py" -q`; smoke `python -m fullerene --full --tick --debug`, `--full --ticks 5 --tick-summary`, `--full --ticks 3 --json` (state-dir isolated).
+- **Next:** Continuous loop / watch v1 only after manual tick observability is sufficient; optional slimmer `--full` tick presets if verifier stop conditions truncate operator runs unexpectedly.
+- **Blockers:** None.
+
 ### 2026-05-06 - Expression Gate v0 (recommendation-only)
 
 - **Context:** Separate internal interruption (Nexus v2 + LPB) from possible outward expression without prose generation or LLMs.

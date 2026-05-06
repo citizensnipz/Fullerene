@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-05-06 - Manual Tick Runner v0 (explicit SYSTEM_TICK sequences)
+
+- **Status:** accepted
+- **Context:** Operators need to observe whether Nexus/LPB/interrupts/expression/verifier state evolves across cycles without injecting user prompts, without adding an always-on daemon, watch UI, or LLM calls from the runner.
+- **Decision:** Implement **`fullerene/tick/runner.py`** with `run_manual_ticks`, compact per-tick **`summarize_tick_record`**, JSON-serializable **`TickRunResult`**, and CLI flags **`--tick`**, **`--ticks N`** (default 1, hard cap **100**), **`--tick-reason`**, **`--tick-summary`**, **`--allow-tick-expression`**. Each tick is **`EventType.SYSTEM_TICK`** with **`content=""`** and metadata **`manual_tick`**, **`tick_index`** (1-based), **`tick_count`**, optional **`tick_reason`**, and **`suppress_expression`** default **true** (opt out with **`--allow-tick-expression`**). Reject **`--model`** with manual ticks so CLI text generation is never implied. Apply conservative **stop early** rules (consecutive very high `system_pressure`, repeated verifier-critical cycles, repeated expression `ask_user` with same source, internal-event overflow, runtime exceptions). **`--json`** emits **`{ "tick_run": … }`**; omit heavy **`records`** from JSON unless **`--debug`**. Watch mode / continuous loop v0 stays out of scope here.
+- **Consequences:** Single-message CLI JSON shape unchanged when **not** using manual ticks. Full-facet tick runs may hit verifier-driven stop conditions sooner than requested tick counts; operators tune facets or state for longer runs.
+
 ## 2026-05-06 - Expression Gate v0 (recommend outbound expression only)
 
 - **Status:** accepted
