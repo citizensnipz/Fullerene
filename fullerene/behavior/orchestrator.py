@@ -121,6 +121,9 @@ QUERY_INTENTS_REQUIRING_RESPONSE = frozenset(
 LOW_BELIEF_CONFIDENCE_THRESHOLD = 0.4
 CONTRADICTION_ACT_PENALTY = 0.35
 CONTEXT_OVERLOAD_RATIO_THRESHOLD = 0.85
+REFERENCE_RESOLUTION_THRESHOLD = 0.45
+RESOLVED_REFERENCE_CONFIDENCE_WEIGHT = 0.10
+UNRESOLVED_REFERENCE_CONFIDENCE_PENALTY = -0.15
 FOLLOW_UP_REFERENCE_WORDS = frozenset(
     {
         "that",
@@ -255,10 +258,15 @@ class _BehaviorSignals:
     context_strategy: str | None
     reference_anchors: list[dict[str, Any]]
     reference_anchor_count: int
+    unresolved_reference_count: int
     unresolved_references: list[str]
     continuity_topic_hint: str | None
     continuity_topic_terms: list[str]
     context_continuity_confidence: float
+    reference_resolution_confidence: float
+    has_resolved_reference: bool
+    has_unresolved_reference: bool
+    reference_continuity_reasons: list[str]
     related_context_item_ids: list[str]
     related_memory_ids: list[str]
     related_belief_ids: list[str]
@@ -309,6 +317,16 @@ class BehaviorFacet:
         )
         confidence_breakdown["grounding_confidence"] = signals.grounding_confidence
         confidence_breakdown["continuity_confidence"] = signals.continuity_confidence
+        confidence_breakdown["reference_resolution_contribution"] = round(
+            signals.reference_resolution_confidence
+            * RESOLVED_REFERENCE_CONFIDENCE_WEIGHT,
+            3,
+        )
+        confidence_breakdown["unresolved_reference_penalty"] = (
+            UNRESOLVED_REFERENCE_CONFIDENCE_PENALTY
+            if signals.has_unresolved_reference
+            else 0.0
+        )
         confidence_breakdown["self_consistency_confidence"] = (
             signals.self_consistency_confidence
         )
@@ -320,6 +338,8 @@ class BehaviorFacet:
                 confidence_breakdown["total"]
                 + (signals.grounding_confidence * 0.15)
                 + (signals.continuity_confidence * 0.1)
+                + confidence_breakdown["reference_resolution_contribution"]
+                + confidence_breakdown["unresolved_reference_penalty"]
                 + (signals.self_consistency_confidence * 0.1)
                 - signals.challenge_confidence_penalty
             ),
@@ -350,6 +370,9 @@ class BehaviorFacet:
         interrupt_recommended, interrupt_reason = self._interrupt_recommendation(signals)
 
         response_metadata = self._response_metadata(selected_decision, signals)
+        compact_reference_anchors = self._compact_reference_anchors(
+            signals.reference_anchors
+        )
         trace = self._build_decision_trace(
             event=event,
             signals=signals,
@@ -404,11 +427,15 @@ class BehaviorFacet:
                 "last_latent_pressure": signals.latent_pressure,
                 "last_interrupt_recommended": interrupt_recommended,
                 "last_interrupt_reason": interrupt_reason,
-                "last_reference_anchors": list(signals.reference_anchors),
+                "last_reference_anchors": compact_reference_anchors,
                 "last_reference_anchor_count": signals.reference_anchor_count,
+                "last_unresolved_reference_count": signals.unresolved_reference_count,
                 "last_unresolved_references": list(signals.unresolved_references),
                 "last_current_topic_hint": signals.continuity_topic_hint,
                 "last_continuity_confidence_from_context": signals.context_continuity_confidence,
+                "last_reference_resolution_confidence": signals.reference_resolution_confidence,
+                "last_has_resolved_reference": signals.has_resolved_reference,
+                "last_has_unresolved_reference": signals.has_unresolved_reference,
                 "last_decision_trace": trace,
             },
             metadata={
@@ -460,9 +487,14 @@ class BehaviorFacet:
                 "grounding_available": signals.grounding_available,
                 "grounding_confidence": signals.grounding_confidence,
                 "continuity_confidence": signals.continuity_confidence,
-                "reference_anchors": list(signals.reference_anchors),
+                "reference_anchors": compact_reference_anchors,
                 "reference_anchor_count": signals.reference_anchor_count,
+                "unresolved_reference_count": signals.unresolved_reference_count,
                 "unresolved_references": list(signals.unresolved_references),
+                "reference_resolution_confidence": signals.reference_resolution_confidence,
+                "has_resolved_reference": signals.has_resolved_reference,
+                "has_unresolved_reference": signals.has_unresolved_reference,
+                "reference_continuity_reasons": list(signals.reference_continuity_reasons),
                 "current_topic_hint": signals.continuity_topic_hint,
                 "topic_terms": list(signals.continuity_topic_terms),
                 "self_consistency_confidence": signals.self_consistency_confidence,
@@ -504,6 +536,14 @@ class BehaviorFacet:
                     "event_type": "behavior_decision_trace_v2",
                     "trace": trace,
                     "signals": self._learning_signals(signals),
+                    "resolved_reference_follow_up": (
+                        signals.has_resolved_reference
+                        and signals.conversational_intent == "follow_up"
+                    ),
+                    "unresolved_reference": signals.has_unresolved_reference,
+                    "continuity_supported_decision": bool(
+                        signals.reference_continuity_reasons
+                    ),
                     "conversational_intent": signals.conversational_intent,
                     "grounding_need": signals.grounding_need,
                     "grounding_available": signals.grounding_available,
@@ -588,9 +628,22 @@ class BehaviorFacet:
         context_strategy = self._context_strategy(context_signal)
         reference_anchors = self._reference_anchors(context_signal)
         unresolved_references = self._unresolved_references(context_signal)
+        unresolved_reference_count = len(unresolved_references)
         continuity_topic_hint = self._continuity_topic_hint(context_signal)
         continuity_topic_terms = self._continuity_topic_terms(context_signal)
         context_continuity_confidence = self._context_continuity_confidence(context_signal)
+        reference_resolution_confidence = self._reference_resolution_confidence(
+            context_continuity_confidence=context_continuity_confidence,
+            reference_anchors=reference_anchors,
+        )
+        reference_anchor_count = len(reference_anchors)
+        has_resolved_reference = (
+            reference_anchor_count > 0
+            and reference_resolution_confidence >= REFERENCE_RESOLUTION_THRESHOLD
+        )
+        has_unresolved_reference = (
+            unresolved_reference_count > 0 and not has_resolved_reference
+        )
         included_memory_roles = self._included_memory_roles(
             context_signal=context_signal,
             memory_context=memory_context,
@@ -687,7 +740,12 @@ class BehaviorFacet:
             has_recent_assistant_output=working_memory_turn_count > 0,
             has_previous_user_turn=working_memory_turn_count > 1,
             has_context_items=context_item_count > 0,
+            has_resolved_reference=has_resolved_reference,
         )
+        if follow_up_reference_detected and has_resolved_reference:
+            ambiguity_score = _clamp_unit(ambiguity_score - 0.25)
+        if follow_up_reference_detected and has_unresolved_reference:
+            ambiguity_score = _clamp_unit(ambiguity_score + 0.2)
         grounding_need, grounding_need_reasons = self._classify_grounding_need(
             conversational_intent
         )
@@ -707,14 +765,30 @@ class BehaviorFacet:
             short_follow_up=short_follow_up,
             grounding_available=grounding_available,
             working_memory_turn_count=working_memory_turn_count,
+            has_resolved_reference=has_resolved_reference,
+            has_unresolved_reference=has_unresolved_reference,
         )
         repeated_dissatisfaction = conversational_intent == "repeated_dissatisfaction"
         continuity_confidence = self._continuity_confidence(
             follow_up_reference_detected=follow_up_reference_detected,
             working_memory_turn_count=working_memory_turn_count,
             short_follow_up=short_follow_up,
+            has_resolved_reference=has_resolved_reference,
         )
         continuity_confidence = max(continuity_confidence, context_continuity_confidence)
+        reference_continuity_reasons: list[str] = []
+        if has_resolved_reference and follow_up_reference_detected:
+            reference_continuity_reasons.extend(
+                [
+                    "context_continuity_supported_follow_up",
+                    "reference_anchor_available",
+                    "resolved_reference_lowered_ambiguity",
+                ]
+            )
+        elif has_unresolved_reference and follow_up_reference_detected:
+            reference_continuity_reasons.append(
+                "unresolved_reference_requires_targeted_clarification"
+            )
         self_consistency_confidence = self._self_consistency_confidence(
             belief_confidence=belief_confidence,
             belief_contradiction=belief_contradiction,
@@ -860,11 +934,16 @@ class BehaviorFacet:
             included_belief_ids=included_belief_ids,
             context_strategy=context_strategy,
             reference_anchors=reference_anchors,
-            reference_anchor_count=len(reference_anchors),
+            reference_anchor_count=reference_anchor_count,
+            unresolved_reference_count=unresolved_reference_count,
             unresolved_references=unresolved_references,
             continuity_topic_hint=continuity_topic_hint,
             continuity_topic_terms=continuity_topic_terms,
             context_continuity_confidence=context_continuity_confidence,
+            reference_resolution_confidence=reference_resolution_confidence,
+            has_resolved_reference=has_resolved_reference,
+            has_unresolved_reference=has_unresolved_reference,
+            reference_continuity_reasons=reference_continuity_reasons,
             related_context_item_ids=self._related_context_item_ids(context_signal),
             related_memory_ids=self._related_memory_ids(
                 context_signal,
@@ -1725,6 +1804,8 @@ class BehaviorFacet:
     def _reference_anchors(context_signal: dict[str, Any]) -> list[dict[str, Any]]:
         raw = context_signal.get("reference_anchors")
         if not isinstance(raw, list):
+            raw = context_signal.get("last_reference_anchors")
+        if not isinstance(raw, list):
             window = BehaviorFacet._context_window_from_signal(context_signal)
             metadata = window.get("metadata") if isinstance(window, dict) else {}
             raw = metadata.get("reference_anchors") if isinstance(metadata, dict) else []
@@ -1733,8 +1814,24 @@ class BehaviorFacet:
         return [row for row in raw if isinstance(row, dict)]
 
     @staticmethod
+    def _compact_reference_anchors(reference_anchors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        compact: list[dict[str, Any]] = []
+        for anchor in reference_anchors[:5]:
+            compact.append(
+                {
+                    "anchor_id": anchor.get("anchor_id"),
+                    "surface_form": anchor.get("surface_form"),
+                    "referent_text": anchor.get("referent_text"),
+                    "confidence": _coerce_unit(anchor.get("confidence")),
+                }
+            )
+        return compact
+
+    @staticmethod
     def _unresolved_references(context_signal: dict[str, Any]) -> list[str]:
         raw = context_signal.get("unresolved_references")
+        if not isinstance(raw, list):
+            raw = context_signal.get("last_unresolved_references")
         if not isinstance(raw, list):
             window = BehaviorFacet._context_window_from_signal(context_signal)
             metadata = window.get("metadata") if isinstance(window, dict) else {}
@@ -1744,6 +1841,8 @@ class BehaviorFacet:
     @staticmethod
     def _continuity_topic_hint(context_signal: dict[str, Any]) -> str | None:
         raw = context_signal.get("current_topic_hint")
+        if not (isinstance(raw, str) and raw.strip()):
+            raw = context_signal.get("last_current_topic_hint")
         if isinstance(raw, str) and raw.strip():
             return raw.strip()
         window = BehaviorFacet._context_window_from_signal(context_signal)
@@ -1776,6 +1875,26 @@ class BehaviorFacet:
         return 0.0
 
     @staticmethod
+    def _max_anchor_confidence(reference_anchors: list[dict[str, Any]]) -> float:
+        max_conf = 0.0
+        for anchor in reference_anchors:
+            raw = anchor.get("confidence")
+            if isinstance(raw, (int, float)):
+                max_conf = max(max_conf, _clamp_unit(float(raw)))
+        return max_conf
+
+    @staticmethod
+    def _reference_resolution_confidence(
+        *,
+        context_continuity_confidence: float,
+        reference_anchors: list[dict[str, Any]],
+    ) -> float:
+        return max(
+            _clamp_unit(context_continuity_confidence),
+            BehaviorFacet._max_anchor_confidence(reference_anchors),
+        )
+
+    @staticmethod
     def _classify_conversational_intent(
         event: Event,
         *,
@@ -1784,6 +1903,7 @@ class BehaviorFacet:
         has_recent_assistant_output: bool,
         has_previous_user_turn: bool,
         has_context_items: bool,
+        has_resolved_reference: bool,
     ) -> tuple[bool, bool, str, float, list[str]]:
         text = _normalize_content(event.content)
         tokens = tokenize(text)
@@ -1806,6 +1926,9 @@ class BehaviorFacet:
             return follow_up_reference_detected, short_follow_up, "memory_update", 0.75, ["memory_update_language"]
         if query_intent == "factual" and any(phrase in text for phrase in STATUS_RESPONSE_PHRASES):
             return follow_up_reference_detected, short_follow_up, "status_request", 0.7, ["status_request_language"]
+        if short_follow_up and follow_up_reference_detected and has_resolved_reference:
+            reasons.append("reference_anchor_available")
+            return follow_up_reference_detected, True, "follow_up", 0.85, reasons
         if short_follow_up and follow_up_reference_detected and (
             has_recent_assistant_output or has_previous_user_turn or has_context_items
         ):
@@ -1874,6 +1997,8 @@ class BehaviorFacet:
         short_follow_up: bool,
         grounding_available: bool,
         working_memory_turn_count: int,
+        has_resolved_reference: bool,
+        has_unresolved_reference: bool,
     ) -> tuple[str, list[str]]:
         reasons: list[str] = []
         if conversational_intent == "clarification_supplied":
@@ -1882,8 +2007,12 @@ class BehaviorFacet:
             return "missing_grounding", ["grounding_required_but_missing"]
         if conversational_intent == "repeated_dissatisfaction":
             return "repeated_unresolved", ["repeated_dissatisfaction_detected"]
+        if has_unresolved_reference:
+            return "unresolved_reference", [
+                "unresolved_reference_requires_targeted_clarification"
+            ]
         if follow_up_reference_detected and short_follow_up:
-            if working_memory_turn_count > 0:
+            if has_resolved_reference or working_memory_turn_count > 0:
                 return "referential", ["short_referential_with_continuity"]
             return "generic", ["short_referential_without_continuity"]
         if ambiguity_score >= HIGH_AMBIGUITY_THRESHOLD:
@@ -1897,7 +2026,10 @@ class BehaviorFacet:
         follow_up_reference_detected: bool,
         working_memory_turn_count: int,
         short_follow_up: bool,
+        has_resolved_reference: bool,
     ) -> float:
+        if follow_up_reference_detected and has_resolved_reference:
+            return 0.9
         if follow_up_reference_detected and working_memory_turn_count > 0:
             return 0.85
         if short_follow_up and working_memory_turn_count > 0:
@@ -2196,8 +2328,12 @@ class BehaviorFacet:
 
         if selected_decision == DecisionAction.ASK:
             response_needed = True
-            response_reason = response_reason or "clarification_needed"
-            response_template = response_template or "clarification_needed"
+            if signals.has_unresolved_reference:
+                response_reason = "unresolved_reference"
+                response_template = "missing_reference_clarification"
+            else:
+                response_reason = response_reason or "clarification_needed"
+                response_template = response_template or "clarification_needed"
         elif selected_decision == DecisionAction.ACT and response_needed:
             response_template = response_template or "clarification_needed"
         else:
@@ -2344,6 +2480,20 @@ class BehaviorFacet:
         if signals.requires_response:
             reasons.append("requires_response_metadata")
             add(DecisionAction.ASK, "requires_response_metadata", 0.25)
+
+        if signals.follow_up_reference_detected and signals.has_resolved_reference:
+            add(DecisionAction.ACT, "resolved_reference_follow_up_bias", 0.25)
+            add(DecisionAction.ASK, "resolved_reference_ask_relief", -0.1)
+            grounded = True
+            low_ambiguity = True
+            reasons.append("resolved_reference_lowered_ambiguity")
+            reasons.append("context_continuity_supported_follow_up")
+
+        if signals.follow_up_reference_detected and signals.has_unresolved_reference:
+            add(DecisionAction.ASK, "unresolved_reference_ask_bias", 0.25)
+            add(DecisionAction.ACT, "unresolved_reference_act_penalty", -0.15)
+            high_ambiguity = True
+            reasons.append("unresolved_reference_requires_targeted_clarification")
 
         if grounded and low_ambiguity and signals.query_intent in QUERY_INTENTS_REQUIRING_RESPONSE:
             reasons.append("grounded_low_ambiguity_act")
@@ -2513,6 +2663,13 @@ class BehaviorFacet:
             "ambiguity_score": signals.ambiguity_score,
             "ambiguity_reasons": list(signals.ambiguity_reasons),
             "continuity_confidence": signals.continuity_confidence,
+            "reference_anchor_count": signals.reference_anchor_count,
+            "unresolved_reference_count": signals.unresolved_reference_count,
+            "reference_resolution_confidence": signals.reference_resolution_confidence,
+            "has_resolved_reference": signals.has_resolved_reference,
+            "has_unresolved_reference": signals.has_unresolved_reference,
+            "current_topic_hint": signals.continuity_topic_hint,
+            "reference_continuity_reasons": list(signals.reference_continuity_reasons),
             "self_consistency_confidence": signals.self_consistency_confidence,
             "challenge_confidence_penalty": signals.challenge_confidence_penalty,
             "raw_candidate_scores": raw_candidate_scores,
@@ -2769,12 +2926,15 @@ class BehaviorFacet:
             adjusted["ask"] = _clamp_unit(adjusted["ask"] - 0.1)
             reasons.append("clarification_supplied reduced ASK bias")
         if signals.conversational_intent == "follow_up":
-            if signals.continuity_confidence >= 0.5:
+            if signals.has_resolved_reference:
                 adjusted["act"] = _clamp_unit(adjusted["act"] + 0.2)
-                reasons.append("follow_up continuity boosted ACT")
-            else:
-                adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.15)
-                reasons.append("follow_up unresolved reference boosted ASK")
+                adjusted["ask"] = _clamp_unit(adjusted["ask"] - 0.1)
+                reasons.append("context_continuity_supported_follow_up")
+                reasons.append("resolved_reference_lowered_ambiguity")
+            if signals.has_unresolved_reference:
+                adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.2)
+                adjusted["act"] = _clamp_unit(adjusted["act"] - 0.1)
+                reasons.append("unresolved_reference_requires_targeted_clarification")
         if signals.repeated_dissatisfaction:
             adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.1)
             adjusted["act"] = _clamp_unit(adjusted["act"] - 0.15)
@@ -2805,6 +2965,8 @@ class BehaviorFacet:
             reasons.append("belief contradiction lowers confidence")
         if signals.repeated_dissatisfaction:
             reasons.append("repeated dissatisfaction lowers confidence")
+        if signals.has_unresolved_reference:
+            reasons.append("unresolved reference lowers confidence")
         if signals.continuity_confidence >= 0.6:
             reasons.append("working memory continuity supports confidence")
         reasons.append(f"final_total={confidence_breakdown.get('total', 0.0):.3f}")
@@ -2823,6 +2985,12 @@ class BehaviorFacet:
             out.append("clarification_supplied")
         if signals.conversational_intent == "follow_up" and signals.continuity_confidence >= 0.6:
             out.append("follow_up_resolved_by_working_memory")
+        if signals.has_resolved_reference and signals.conversational_intent == "follow_up":
+            out.append("resolved_reference_follow_up")
+        if signals.has_unresolved_reference:
+            out.append("unresolved_reference")
+        if signals.reference_continuity_reasons:
+            out.append("continuity_supported_decision")
         if signals.grounding_confidence < 0.4:
             out.append("low_grounding_confidence")
         if signals.belief_contradiction:

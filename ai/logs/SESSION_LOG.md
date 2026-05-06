@@ -70,6 +70,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-05-06 - Behavior v2.3 reference-continuity consumption
+
+- **Context:** Behavior needed to stop treating all short referential turns as generic ambiguity when Context v2.1 already provides likely reference anchors.
+- **Done:** Added Behavior v2.3 continuity signals (`reference_resolution_confidence`, resolved/unresolved booleans/counts) with neutral defaults; wired Context continuity extraction with `last_*` fallback support; added score/ambiguity/confidence updates so resolved references boost follow-up/ACT confidence while unresolved references bias targeted ASK + `ambiguity_kind=unresolved_reference`; preserved policy/verifier/world-model/context-overload guardrails; added compact continuity trace fields and generic learning metadata flags (`resolved_reference_follow_up`, `unresolved_reference`, `continuity_supported_decision`).
+- **Verified:** `python -m unittest tests.test_behavior -q`; `python -m unittest tests.test_context tests.test_cli tests.test_interactive_loop tests.test_verifier -q`; `python -m unittest discover -s tests -p "test_*.py" -q`.
+- **Next:** Optional follow-up can continue reducing duplication between `fullerene/behavior/orchestrator.py` and the modular `fullerene/behavior/*.py` helpers while preserving runtime compatibility.
+- **Blockers:** None.
+
 ### 2026-05-06 - Executor v1 manifest + sandbox execution
 
 - **Context:** Implement Executor v1 with sandboxed file operations, explicit manifest registry, approval gate/timeout, planner feedback metadata, and stronger verifier-facing execution metadata while preserving v0 safety boundaries.

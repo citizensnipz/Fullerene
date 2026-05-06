@@ -297,12 +297,15 @@ def apply_v21_candidate_adjustments(
         adjusted["ask"] = _clamp_unit(adjusted["ask"] - 0.1)
         reasons.append("clarification_supplied reduced ASK bias")
     if signals.text.conversational_intent == "follow_up":
-        if signals.text.continuity_confidence >= 0.5:
+        if signals.text.has_resolved_reference:
             adjusted["act"] = _clamp_unit(adjusted["act"] + 0.2)
-            reasons.append("follow_up continuity boosted ACT")
+            adjusted["ask"] = _clamp_unit(adjusted["ask"] - 0.1)
+            reasons.append("context_continuity_supported_follow_up")
+            reasons.append("resolved_reference_lowered_ambiguity")
         else:
-            adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.15)
-            reasons.append("follow_up unresolved reference boosted ASK")
+            adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.2)
+            adjusted["act"] = _clamp_unit(adjusted["act"] - 0.1)
+            reasons.append("unresolved_reference_requires_targeted_clarification")
     if signals.text.repeated_dissatisfaction:
         adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.1)
         adjusted["act"] = _clamp_unit(adjusted["act"] - 0.15)

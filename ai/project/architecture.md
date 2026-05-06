@@ -257,14 +257,15 @@ score = (
 - **v2** - pressure/relevance-filtered deterministic assembly with protected working-memory continuity and LPB/attention-aware inclusion. **Current.**
 - **v3** - self-editing context, semantic consolidation, predictive loading, and pressure signaling when the context window overloads. **Future.**
 
-## Behavior v2.1 (current)
+## Behavior v2.3 (current)
 
 - **Deterministic and model-free** - `BehaviorFacet` does not call an LLM and does not generate final prose; it routes decisions only.
-- **Conversational intent routing** - Behavior v2.1 classifies inspectable conversational intents (for example follow-up, source request, challenge/correction, planning/action/memory update) and adjusts `WAIT` / `RECORD` / `ASK` / `ACT` candidate scores without changing the enum contract.
-- **Grounding and ambiguity signals** - Behavior v2.1 computes grounding need/availability/confidence plus ambiguity kind/score/reasons, using Context v2 metadata (working-memory continuity, included context/belief/LPB ids) and optional World Model/Policy signals when present.
-- **Confidence decomposition** - `confidence` remains deterministic and inspectable, now including grounding, continuity, self-consistency, and challenge penalties while preserving Behavior v2 trace compatibility for Verifier checks.
-- **Learning-event metadata** - Behavior emits richer deterministic `learning_event` metadata (intent/grounding/ambiguity/confidence + related ids + generic learning signals) for downstream Learning/World Model consumers.
-- **Safety compatibility** - Policy/Verifier constraints are still enforced (`denied` suppresses `ACT`, `approval_required` biases `ASK`); Behavior v2.1 is a tightening pass, not a new facet or Nexus rewrite.
+- **Reference-continuity consumption** - Behavior v2.3 consumes Context v2.1 continuity fields (`reference_anchors`, `reference_anchor_count`, `unresolved_references`, `continuity_confidence`, `current_topic_hint`, `topic_terms`) with neutral defaults when fields are absent.
+- **Conversational intent routing** - Behavior classifies inspectable conversational intents (for example follow-up, source request, challenge/correction, planning/action/memory update) and now treats short referential turns with resolved anchors as `follow_up` without generic ambiguity inflation.
+- **Grounding and ambiguity signals** - Behavior computes `reference_resolution_confidence`, `has_resolved_reference`, `has_unresolved_reference`, and `unresolved_reference_count`; resolved references lower ambiguity and unresolved references set `ambiguity_kind = unresolved_reference` with targeted ASK pressure.
+- **Confidence decomposition** - `confidence` remains deterministic and inspectable, with additive reference continuity terms (`reference_resolution_contribution`, `unresolved_reference_penalty`) while preserving Behavior trace compatibility for Verifier checks.
+- **Learning-event metadata** - Behavior emits generic continuity learning flags (`resolved_reference_follow_up`, `unresolved_reference`, `continuity_supported_decision`) plus existing intent/grounding/ambiguity/confidence metadata.
+- **Safety compatibility** - Policy/Verifier constraints are still enforced (`denied` suppresses `ACT`, `approval_required` biases `ASK`), and world-model contradiction/low-confidence/context-overload guardrails still override reference boosts.
 - **No execution** - `ACT` is only a typed proposal for a future executor; Nexus v0 still performs no autonomous tool execution or irreversible side effects.
 
 ## Learning v1 (current)

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from .models import DECISION_BASE_SCORES, BehaviorSignals
+from .models import (
+    DECISION_BASE_SCORES,
+    RESOLVED_REFERENCE_CONFIDENCE_WEIGHT,
+    UNRESOLVED_REFERENCE_CONFIDENCE_PENALTY,
+    BehaviorSignals,
+)
 
 
 def _clamp_unit(score: float) -> float:
@@ -32,6 +37,15 @@ def confidence_breakdown(action_key: str, signals: BehaviorSignals) -> dict[str,
         breakdown["world_alignment_signal"] = world_boost
     breakdown["grounding_confidence"] = signals.text.grounding_confidence
     breakdown["continuity_confidence"] = signals.text.continuity_confidence
+    breakdown["reference_resolution_contribution"] = round(
+        signals.text.reference_resolution_confidence * RESOLVED_REFERENCE_CONFIDENCE_WEIGHT,
+        3,
+    )
+    breakdown["unresolved_reference_penalty"] = (
+        UNRESOLVED_REFERENCE_CONFIDENCE_PENALTY
+        if signals.text.has_unresolved_reference
+        else 0.0
+    )
     breakdown["self_consistency_confidence"] = signals.text.self_consistency_confidence
     breakdown["challenge_confidence_penalty"] = -signals.text.challenge_confidence_penalty
     total = (
@@ -43,6 +57,8 @@ def confidence_breakdown(action_key: str, signals: BehaviorSignals) -> dict[str,
         + breakdown.get("world_alignment_signal", 0.0)
         + (signals.text.grounding_confidence * 0.15)
         + (signals.text.continuity_confidence * 0.1)
+        + breakdown["reference_resolution_contribution"]
+        + breakdown["unresolved_reference_penalty"]
         + (signals.text.self_consistency_confidence * 0.1)
         - signals.text.challenge_confidence_penalty
     )

@@ -34,6 +34,9 @@ GOAL_RELEVANCE_THRESHOLD = 0.35
 LOW_BELIEF_CONFIDENCE_THRESHOLD = 0.4
 CONTRADICTION_ACT_PENALTY = 0.35
 CONTEXT_OVERLOAD_RATIO_THRESHOLD = 0.85
+REFERENCE_RESOLUTION_THRESHOLD = 0.45
+RESOLVED_REFERENCE_CONFIDENCE_WEIGHT = 0.10
+UNRESOLVED_REFERENCE_CONFIDENCE_PENALTY = -0.15
 
 
 class ResponseIntent(StrEnum):
@@ -98,6 +101,11 @@ class BehaviorTextSignals:
     ambiguity_score: float
     ambiguity_reasons: list[str]
     repeated_dissatisfaction: bool
+    reference_resolution_confidence: float
+    has_resolved_reference: bool
+    has_unresolved_reference: bool
+    unresolved_reference_count: int
+    reference_continuity_reasons: list[str]
 
 
 @dataclass(slots=True)
@@ -163,6 +171,7 @@ class BehaviorSignals:
     context_strategy: str | None
     reference_anchors: list[dict[str, Any]]
     reference_anchor_count: int
+    unresolved_reference_count: int
     unresolved_references: list[str]
     continuity_topic_hint: str | None
     continuity_topic_terms: list[str]

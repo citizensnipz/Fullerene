@@ -88,6 +88,7 @@ def make_behavior_signals(*, text: BehaviorTextSignals) -> BehaviorSignals:
         context_strategy=None,
         reference_anchors=[],
         reference_anchor_count=0,
+        unresolved_reference_count=0,
         unresolved_references=[],
         continuity_topic_hint=None,
         continuity_topic_terms=[],
@@ -837,6 +838,177 @@ class BehaviorV2Tests(unittest.TestCase):
         self.assertIn(result.proposed_decision, {DecisionAction.ASK, DecisionAction.RECORD})
         self.assertLess(result.metadata["continuity_confidence"], 0.5)
 
+    def test_behavior_defaults_when_context_continuity_fields_absent(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="that one?"),
+            NexusState(facet_state={"context": {"last_context_item_count": 0}}),
+        )
+        self.assertEqual(result.metadata["reference_anchor_count"], 0)
+        self.assertEqual(result.metadata["unresolved_reference_count"], 0)
+        self.assertEqual(result.metadata["reference_resolution_confidence"], 0.0)
+        self.assertFalse(result.metadata["has_resolved_reference"])
+        self.assertFalse(result.metadata["has_unresolved_reference"])
+
+    def test_resolved_reference_anchor_lowers_ambiguity_for_short_follow_up(self) -> None:
+        with_anchor = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="where?"),
+            NexusState(
+                facet_state={
+                    "context": {
+                        "reference_anchors": [
+                            {
+                                "anchor_id": "a1",
+                                "surface_form": "that",
+                                "referent_text": "prior concept",
+                                "confidence": 0.8,
+                            }
+                        ],
+                        "reference_anchor_count": 1,
+                        "continuity_confidence": 0.7,
+                    }
+                }
+            ),
+        )
+        no_anchor = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="where?"),
+            NexusState(),
+        )
+        self.assertLess(with_anchor.metadata["ambiguity_score"], no_anchor.metadata["ambiguity_score"])
+        self.assertTrue(with_anchor.metadata["has_resolved_reference"])
+
+    def test_resolved_reference_anchor_increases_act_score(self) -> None:
+        with_anchor = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="where?"),
+            NexusState(
+                facet_state={
+                    "context": {
+                        "reference_anchors": [{"surface_form": "that", "referent_text": "prior concept", "confidence": 0.85}],
+                        "continuity_confidence": 0.75,
+                    }
+                }
+            ),
+        )
+        no_anchor = self.facet.process(Event(event_type=EventType.USER_MESSAGE, content="where?"), NexusState())
+        self.assertGreater(
+            with_anchor.metadata["decision_scores"]["act"],
+            no_anchor.metadata["decision_scores"]["act"],
+        )
+
+    def test_unresolved_reference_increases_ask_and_sets_kind(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="where?"),
+            NexusState(
+                facet_state={
+                    "context": {
+                        "unresolved_references": ["that"],
+                        "continuity_confidence": 0.2,
+                    }
+                }
+            ),
+        )
+        self.assertEqual(result.metadata["ambiguity_kind"], "unresolved_reference")
+        self.assertTrue(result.metadata["has_unresolved_reference"])
+        self.assertEqual(result.metadata["response_intent"], "clarify")
+        self.assertIn(result.metadata["response_reason"], {"unresolved_reference", "clarification_needed"})
+
+    def test_challenge_stays_stronger_than_follow_up_with_anchor(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="that's not right"),
+            NexusState(
+                facet_state={
+                    "context": {
+                        "reference_anchors": [{"surface_form": "that", "referent_text": "prior concept", "confidence": 0.9}],
+                        "continuity_confidence": 0.8,
+                    }
+                }
+            ),
+        )
+        self.assertEqual(result.metadata["conversational_intent"], "challenge")
+
+    def test_policy_denied_still_blocks_act_with_resolved_reference(self) -> None:
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="do that",
+                metadata={"explicit_action": True, "low_risk": True, "policy": {"policy_status": "denied"}},
+            ),
+            NexusState(
+                facet_state={
+                    "context": {
+                        "reference_anchors": [{"surface_form": "that", "referent_text": "prior concept", "confidence": 0.9}],
+                        "continuity_confidence": 0.8,
+                    }
+                }
+            ),
+        )
+        self.assertNotEqual(result.proposed_decision, DecisionAction.ACT)
+
+    def test_contradicted_world_model_still_suppresses_act_with_resolved_reference(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="do that"),
+            NexusState(
+                facet_state={
+                    "context": {
+                        "reference_anchors": [{"surface_form": "that", "referent_text": "prior concept", "confidence": 0.9}],
+                        "continuity_confidence": 0.8,
+                    },
+                    "world_model": {"last_relevant_beliefs": [{"id": "b1", "confidence": 0.2, "status": "contradicted"}]},
+                }
+            ),
+        )
+        self.assertNotEqual(result.proposed_decision, DecisionAction.ACT)
+
+    def test_confidence_breakdown_includes_reference_terms(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="where?"),
+            NexusState(
+                facet_state={
+                    "context": {
+                        "reference_anchors": [{"surface_form": "that", "referent_text": "prior concept", "confidence": 0.9}],
+                        "unresolved_references": ["it"],
+                        "continuity_confidence": 0.8,
+                    }
+                }
+            ),
+        )
+        self.assertIn("reference_resolution_contribution", result.metadata["confidence_breakdown"])
+        self.assertIn("unresolved_reference_penalty", result.metadata["confidence_breakdown"])
+
+    def test_learning_metadata_includes_reference_flags(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="where?"),
+            NexusState(
+                facet_state={
+                    "context": {
+                        "reference_anchors": [{"surface_form": "that", "referent_text": "prior concept", "confidence": 0.9}],
+                        "continuity_confidence": 0.8,
+                    }
+                }
+            ),
+        )
+        learning = result.metadata["learning_event"]
+        self.assertIn("resolved_reference_follow_up", learning)
+        self.assertIn("unresolved_reference", learning)
+        self.assertIn("continuity_supported_decision", learning)
+
+    def test_decision_trace_includes_reference_counts_and_confidence(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="where?"),
+            NexusState(
+                facet_state={
+                    "context": {
+                        "reference_anchors": [{"anchor_id": "a1", "surface_form": "that", "referent_text": "prior concept", "confidence": 0.8}],
+                        "continuity_confidence": 0.7,
+                    }
+                }
+            ),
+        )
+        trace = result.metadata["decision_trace"]
+        self.assertIn("reference_anchor_count", trace)
+        self.assertIn("reference_resolution_confidence", trace)
+        self.assertIn("has_resolved_reference", trace)
+        self.assertIn("reference_continuity_reasons", trace)
+
     def test_clarification_supplied_reduces_ambiguity(self) -> None:
         result = self.facet.process(
             Event(event_type=EventType.USER_MESSAGE, content="To clarify, I mean the API timeout case."),
@@ -959,6 +1131,11 @@ class BehaviorV2Tests(unittest.TestCase):
             ambiguity_score=0.1,
             ambiguity_reasons=[],
             repeated_dissatisfaction=False,
+            reference_resolution_confidence=0.0,
+            has_resolved_reference=False,
+            has_unresolved_reference=False,
+            unresolved_reference_count=0,
+            reference_continuity_reasons=[],
         )
         decision, _, _ = select_decision(
             Event(event_type=EventType.USER_MESSAGE, content="nonsense tokens only"),

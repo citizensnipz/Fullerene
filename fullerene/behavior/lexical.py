@@ -392,5 +392,10 @@ def extract_text_signals(
         ambiguity_score=ambiguity_score,
         ambiguity_reasons=ambiguity_reasons,
         repeated_dissatisfaction=conversational_intent == "repeated_dissatisfaction",
+        reference_resolution_confidence=0.0,
+        has_resolved_reference=False,
+        has_unresolved_reference=False,
+        unresolved_reference_count=0,
+        reference_continuity_reasons=[],
     )
 

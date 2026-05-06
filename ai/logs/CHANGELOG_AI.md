@@ -1,3 +1,11 @@
+### 2026-05-06 (Behavior v2.3 reference-continuity consumption)
+
+- Updated `fullerene/behavior/models.py` with reference-continuity signal fields and constants (`reference_resolution_confidence`, resolved/unresolved booleans/counts, confidence contribution/penalty constants).
+- Updated `fullerene/behavior/{scoring.py,confidence.py,trace.py,learning.py,lexical.py}` to consume/emit v2.3 continuity signals and preserve deterministic numeric architecture.
+- Updated runtime `BehaviorFacet` implementation in `fullerene/behavior/orchestrator.py` to extract Context continuity metadata/state fields (including `last_*` fallbacks), compute resolved/unresolved reference confidence signals, adjust ambiguity and candidate scoring, add targeted unresolved-reference ASK/clarify routing, and emit compact continuity trace/learning metadata without large raw anchor payloads.
+- Expanded `tests/test_behavior.py` with synthetic coverage for neutral defaults, resolved-reference ambiguity reduction + score uplift, unresolved-reference ASK/ambiguity behavior, policy/world-model guardrail precedence, confidence-breakdown additions, learning metadata continuity flags, and trace continuity fields.
+- Updated harness docs in `ai/project/architecture.md`, `ai/knowledge/glossary.md`, and `ai/knowledge/decisions.md` for Behavior v2.3 scope and constraints.
+
 ### 2026-05-06 (Context v2.1 working-memory reference anchors)
 
 - Added `fullerene/context/reference_anchors.py` with deterministic `derive_reference_anchors(...)` heuristics (referential-token detection, quoted/article/capitalized noun-like candidates, recency/repetition scoring, unresolved-reference reporting, topic-term extraction) and no LLM usage.

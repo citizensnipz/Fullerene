@@ -2,6 +2,13 @@
 
 Record decisions that matter later, not every small edit.
 
+## 2026-05-06 - Behavior v2.3 consumes Context v2.1 reference continuity
+
+- **Status:** accepted
+- **Context:** Context v2.1 now exposes deterministic reference anchors/unresolved references/topic hints, but Behavior still over-penalized short referential turns as generic ambiguity when plausible anchors existed.
+- **Decision:** Keep the existing Behavior facet/module boundaries and add deterministic reference-continuity consumption only: extract anchor/unresolved/continuity/topic fields from Context metadata/state with neutral defaults, compute `reference_resolution_confidence` and resolved/unresolved booleans, boost follow-up/ACT confidence when references resolve, bias ASK/clarify with `ambiguity_kind=unresolved_reference` when unresolved, and extend trace/learning metadata with compact continuity signals. Preserve `WAIT/RECORD/ASK/ACT`, Policy/Verifier/World Model guardrails, no LLM calls, no response generation, and no new facet.
+- **Consequences:** Short referential follow-ups become less ambiguously routed when Context already provides a referent, while unresolved references trigger targeted clarification pressure instead of generic vagueness handling. The change remains deterministic, inspectable, and compatible with existing Behavior/Verifier contracts.
+
 ## 2026-05-06 - Behavior v2.2 modularization keeps v2.1 semantics
 
 - **Status:** accepted

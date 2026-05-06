@@ -15,6 +15,12 @@ def learning_signals(signals: BehaviorSignals) -> list[str]:
         out.append("clarification_supplied")
     if signals.text.conversational_intent == "follow_up" and signals.text.continuity_confidence >= 0.6:
         out.append("follow_up_resolved_by_working_memory")
+    if signals.text.has_resolved_reference and signals.text.conversational_intent == "follow_up":
+        out.append("resolved_reference_follow_up")
+    if signals.text.has_unresolved_reference:
+        out.append("unresolved_reference")
+    if signals.text.reference_continuity_reasons:
+        out.append("continuity_supported_decision")
     if signals.text.grounding_confidence < 0.4:
         out.append("low_grounding_confidence")
     if signals.belief_contradiction:
