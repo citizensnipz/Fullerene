@@ -99,6 +99,12 @@ class ContextFacet:
         query_intent = window.metadata.get("query_intent")
         event_domain = window.metadata.get("event_domain")
         memory_score_breakdowns = window.metadata.get("memory_score_breakdowns", [])
+        reference_anchors = window.metadata.get("reference_anchors", [])
+        unresolved_references = window.metadata.get("unresolved_references", [])
+        continuity_confidence = float(window.metadata.get("continuity_confidence", 0.0) or 0.0)
+        current_topic_hint = window.metadata.get("current_topic_hint")
+        topic_terms = window.metadata.get("topic_terms", [])
+        reference_anchor_count = int(window.metadata.get("reference_anchor_count", len(reference_anchors)) or 0)
         item_count = len(window.items)
         max_items = window.max_items
         load_ratio = round(item_count / max(float(max_items), 1.0), 3)
@@ -139,6 +145,12 @@ class ContextFacet:
                 "last_retrieval_strategy": retrieval_strategy,
                 "last_query_intent": query_intent,
                 "last_event_domain": event_domain,
+                "last_reference_anchors": reference_anchors,
+                "last_unresolved_references": unresolved_references,
+                "last_continuity_confidence": continuity_confidence,
+                "last_current_topic_hint": current_topic_hint,
+                "last_topic_terms": topic_terms,
+                "last_reference_anchor_count": reference_anchor_count,
             },
             metadata={
                 "context_window": window.to_dict(),
@@ -160,6 +172,12 @@ class ContextFacet:
                 "query_intent": query_intent,
                 "event_domain": event_domain,
                 "memory_score_breakdowns": memory_score_breakdowns,
+                "reference_anchors": reference_anchors,
+                "reference_anchor_count": reference_anchor_count,
+                "unresolved_references": unresolved_references,
+                "continuity_confidence": continuity_confidence,
+                "current_topic_hint": current_topic_hint,
+                "topic_terms": topic_terms,
                 "salience_threshold": window.metadata.get("salience_threshold", 0.0),
                 "limits": window.metadata.get("limits", {}),
                 "reasons": window.metadata.get("reasons", []),

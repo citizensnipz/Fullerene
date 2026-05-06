@@ -386,6 +386,8 @@ class InteractiveWorkingMemoryTests(unittest.TestCase):
         self.assertIn("Recent conversation:", second_prompt)
         self.assertIn("User: Do you know your name?", second_prompt)
         self.assertIn("Assistant: I don't have a name.", second_prompt)
+        self.assertIn("Conversation continuity:", second_prompt)
+        self.assertNotIn("\"reference_anchors\"", second_prompt)
 
     def test_system_ticks_do_not_store_dialogue_turns(self) -> None:
         root = make_tempdir_path()

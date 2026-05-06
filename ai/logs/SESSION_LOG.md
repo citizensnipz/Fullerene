@@ -1,3 +1,11 @@
+### 2026-05-06 - Context v2.1 reference anchors from working memory
+
+- **Context:** Context v2 already included bounded working-memory turns, but referential follow-up grounding needed deterministic continuity structure beyond raw transcript snippets.
+- **Done:** Added deterministic `derive_reference_anchors` under `fullerene/context/reference_anchors.py`; introduced `ReferenceAnchor` + `ConversationContinuity` models; integrated continuity metadata and optional `conversation_continuity` context item into Context assembly/facet state/metadata; exposed behavior-facing continuity fields; added conditional `Conversation continuity` prompt-grounding section in CLI; expanded tests for anchor extraction, bounded sorting, unresolved references, session isolation, context metadata/state wiring, and prompt gating/no-JSON behavior.
+- **Verified:** `python -m unittest tests.test_context tests.test_interactive_loop tests.test_cli tests.test_memory_v2 -q`; `python -m unittest discover -s tests -p "test_*.py" -q`.
+- **Next:** Behavior v2.3 can consume anchor signals more deeply for scoring/decision adjustments without changing Context contracts.
+- **Blockers:** None.
+
 ### 2026-05-06 - Goals v1 reinforcement and lifecycle pass
 
 - **Context:** Implement Goals v1 dynamics while preserving explicit goal-store semantics and non-executing role boundaries.

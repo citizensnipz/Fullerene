@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 from fullerene.nexus.models import DecisionAction
 
@@ -160,6 +161,12 @@ class BehaviorSignals:
     included_lpb_entry_ids: list[str]
     included_belief_ids: list[str]
     context_strategy: str | None
+    reference_anchors: list[dict[str, Any]]
+    reference_anchor_count: int
+    unresolved_references: list[str]
+    continuity_topic_hint: str | None
+    continuity_topic_terms: list[str]
+    context_continuity_confidence: float
     related_context_item_ids: list[str]
     related_memory_ids: list[str]
     related_belief_ids: list[str]

@@ -1,3 +1,12 @@
+### 2026-05-06 (Context v2.1 working-memory reference anchors)
+
+- Added `fullerene/context/reference_anchors.py` with deterministic `derive_reference_anchors(...)` heuristics (referential-token detection, quoted/article/capitalized noun-like candidates, recency/repetition scoring, unresolved-reference reporting, topic-term extraction) and no LLM usage.
+- Updated `fullerene/context/models.py` with JSON-safe `ReferenceAnchor` and `ConversationContinuity` models plus `ContextItemType.CONVERSATION_CONTINUITY`.
+- Updated `fullerene/context/assembler.py` and `fullerene/facets/context.py` so Context strategies that include working memory surface continuity metadata (`reference_anchors`, `reference_anchor_count`, `unresolved_references`, `continuity_confidence`, `topic_terms`, `current_topic_hint`) and facet state updates (`last_reference_anchors`, `last_unresolved_references`, etc.); Context v2 can include/protect a compact `conversation_continuity` item for referential turns.
+- Updated `fullerene/cli.py` prompt grounding with a conditional `Conversation continuity` section (topic terms, likely references, unresolved references guidance) and no raw JSON dumping.
+- Updated Behavior compatibility surfaces (`fullerene/behavior/orchestrator.py`, `fullerene/behavior/models.py`) to read/pass through continuity anchor metadata in stable fields without behavior-policy rewrites.
+- Expanded tests in `tests/test_context.py`, `tests/test_interactive_loop.py`, `tests/test_cli.py`, and `tests/test_behavior.py` for anchor derivation, metadata/state plumbing, prompt section gating, and compatibility.
+
 ### 2026-05-06 (Goals v1 reinforcement + lifecycle metadata)
 
 - Updated `fullerene/goals/models.py` and `fullerene/goals/store.py` with additive Goals v1 fields (reinforcement/activation/completion/evidence/blocked/stale metadata), additive schema migration, and lifecycle helpers (`pause_goal`, `resume_goal`, `complete_goal`, `update_goal_status`) that return transition metadata.

@@ -241,6 +241,15 @@ score = (
 - **Traceability and decay metadata** - Context v2 surfaces included/excluded item IDs, score breakdowns, budget usage, stale/evicted counts, and compact exclusion reasons for inspectability.
 - **Out of scope (still)** - not Memory v3, not Leiden/community clustering, not retrieval-time graph traversal, not automatic memory promotion, not a new facet.
 
+## Context v2.1 (working-memory reference anchors)
+
+- **Deterministic continuity extraction** - Context now derives compact `ConversationContinuity` metadata from bounded same-session working-memory turns (no LLM calls, no summarization).
+- **Reference anchors** - referential tokens in the current user message (for example `one`, `it`, `that`, `this`, `they`, `there`) are mapped to conservative recent noun-like candidates with confidence and reasons in JSON-safe `reference_anchors`.
+- **Topic hints** - Context derives short `topic_terms` plus `current_topic_hint` from repeated recent noun-like terms across user/assistant turns.
+- **Unresolved references** - when referential tokens are present but no plausible candidate exists, Context emits `unresolved_references` for targeted clarification behavior downstream.
+- **Integration surface** - continuity metadata is exposed on `ContextWindow.metadata`, `ContextFacet` metadata/state updates, and prompt grounding (`Conversation continuity` section when useful). Behavior can consume the stable fields without a Behavior-side architecture change.
+- **Scope guardrails** - no new facet, no Dialogue subsystem, no Memory v3 graph work, no prompt-specific hardcoding, no model-assisted extraction.
+
 ## Context roadmap
 
 - **v0** - static working memory window from recent episodic records only. **Implemented for explicit compatibility.**

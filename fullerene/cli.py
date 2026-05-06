@@ -1366,6 +1366,7 @@ def _generate_or_render_text_response(
 
 def _build_model_prompt(record, metadata: dict[str, Any]) -> str:
     decision = record.decision.action.value.upper()
+    continuity_lines = _conversation_continuity_prompt_lines(record)
     lines = [
         "You are a local AI system.",
         "Only generate text; do not decide actions, modify state, or call tools.",
@@ -1375,13 +1376,19 @@ def _build_model_prompt(record, metadata: dict[str, Any]) -> str:
         *_working_context_prompt_lines(record),
         "Recent conversation:",
         *_recent_conversation_prompt_lines(record),
-        "Response grounding:",
-        f"- query intent: {metadata.get('query_intent') or 'none'}",
-        f"- planner summary: {_recent_planner_summary(record)}",
-        f"- missing context: {_missing_context_summary(metadata)}",
-        f"- response template: {metadata.get('response_template') or 'none'}",
-        "Respond concisely.",
     ]
+    if continuity_lines:
+        lines.extend(["Conversation continuity:", *continuity_lines])
+    lines.extend(
+        [
+            "Response grounding:",
+            f"- query intent: {metadata.get('query_intent') or 'none'}",
+            f"- planner summary: {_recent_planner_summary(record)}",
+            f"- missing context: {_missing_context_summary(metadata)}",
+            f"- response template: {metadata.get('response_template') or 'none'}",
+            "Respond concisely.",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -1448,6 +1455,46 @@ def _recent_conversation_prompt_lines(record) -> list[str]:
             continue
         lines.append(f"- {role.title()}: {content}")
     return lines or ["- none"]
+
+
+def _conversation_continuity_prompt_lines(record) -> list[str]:
+    window = _context_window_payload(record)
+    if not isinstance(window, dict):
+        return []
+    metadata = window.get("metadata")
+    if not isinstance(metadata, dict):
+        return []
+    raw_anchors = metadata.get("reference_anchors")
+    anchors = [row for row in raw_anchors if isinstance(row, dict)] if isinstance(raw_anchors, list) else []
+    topic_terms = metadata.get("topic_terms") if isinstance(metadata.get("topic_terms"), list) else []
+    unresolved = metadata.get("unresolved_references") if isinstance(metadata.get("unresolved_references"), list) else []
+    topic_hint = metadata.get("current_topic_hint")
+    lines: list[str] = []
+    if topic_terms:
+        terms = ", ".join(str(item) for item in topic_terms[:4] if str(item).strip())
+        if terms:
+            lines.append(f"- Current topic terms: {terms}")
+    elif isinstance(topic_hint, str) and topic_hint.strip():
+        lines.append(f"- Current topic: {topic_hint.strip()}")
+    if anchors:
+        lines.append("- Likely references:")
+        for anchor in anchors[:3]:
+            surface = _coerce_prompt_string(anchor.get("surface_form")) or "reference"
+            referent = _coerce_prompt_string(anchor.get("referent_text")) or "unknown"
+            confidence = anchor.get("confidence")
+            role = _coerce_prompt_string(anchor.get("referent_source_role"))
+            confidence_text = f"{float(confidence):.2f}" if isinstance(confidence, (int, float)) else "0.00"
+            source_text = f", from recent {role} turn" if role else ""
+            lines.append(f'- "{surface}" -> "{referent}" (confidence {confidence_text}{source_text})')
+    unresolved_tokens: list[str] = []
+    if unresolved:
+        unresolved_tokens = [str(item).strip() for item in unresolved if str(item).strip()]
+        if unresolved_tokens:
+            quoted = ", ".join(f'"{token}"' for token in unresolved_tokens[:4])
+            lines.append(f"- The current message contains unresolved reference(s): {quoted}.")
+            lines.append("- Ask a targeted clarification if recent conversation does not resolve them.")
+    has_useful = bool(anchors or unresolved_tokens or topic_terms or (isinstance(topic_hint, str) and topic_hint.strip()))
+    return lines if has_useful else []
 
 
 def _fallback_working_context_lines(record) -> list[str]:

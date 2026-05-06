@@ -12,8 +12,10 @@ from uuid import uuid4
 
 from fullerene.cli import _build_model_prompt, main as cli_main
 from fullerene.context import (
+    ConversationContinuity,
     DYNAMIC_ACTIVE_FACETS_V1,
     PRESSURE_RELEVANCE_V2,
+    ReferenceAnchor,
     STATIC_RECENT_EPISODIC_V0,
     ContextAssemblyConfig,
     ContextItem,
@@ -21,6 +23,7 @@ from fullerene.context import (
     ContextWindow,
     DynamicContextAssembler,
     StaticContextAssembler,
+    derive_reference_anchors,
 )
 from fullerene.attention import AttentionBroadcast, AttentionMode, AttentionSource
 from fullerene.facets import ContextFacet, EchoFacet, GoalsFacet, MemoryFacet, WorldModelFacet
@@ -252,6 +255,46 @@ class ContextModelTests(unittest.TestCase):
 
         self.assertEqual(round_tripped.strategy, DYNAMIC_ACTIVE_FACETS_V1)
         self.assertEqual(round_tripped.items[0].item_type, ContextItemType.EVENT)
+
+    def test_reference_anchor_round_trip(self) -> None:
+        anchor = ReferenceAnchor(
+            anchor_id="a1",
+            surface_form="that",
+            referent_text="release note",
+            referent_source_turn_id="t2",
+            referent_source_role="assistant",
+            confidence=0.72,
+            reason="recent_noun_phrase",
+            current_message_fragment="use that one",
+            metadata={"source": "working_memory"},
+        )
+        round_tripped = ReferenceAnchor.from_dict(anchor.to_dict())
+        self.assertEqual(round_tripped.surface_form, "that")
+        self.assertEqual(round_tripped.referent_text, "release note")
+        self.assertAlmostEqual(round_tripped.confidence, 0.72, places=2)
+
+    def test_conversation_continuity_round_trip(self) -> None:
+        continuity = ConversationContinuity(
+            current_topic_hint="recent discussion about release/note",
+            topic_terms=["release", "note"],
+            reference_anchors=[
+                ReferenceAnchor(
+                    anchor_id="a1",
+                    surface_form="that",
+                    referent_text="release note",
+                    confidence=0.7,
+                )
+            ],
+            unresolved_references=["it"],
+            continuity_confidence=0.65,
+            working_memory_turn_count=3,
+            source="working_memory",
+        )
+        parsed = ConversationContinuity.from_dict(continuity.to_dict())
+        self.assertEqual(parsed.current_topic_hint, continuity.current_topic_hint)
+        self.assertEqual(parsed.topic_terms, continuity.topic_terms)
+        self.assertEqual(len(parsed.reference_anchors), 1)
+        self.assertEqual(parsed.unresolved_references, ["it"])
 
 
 class ContextFacetExportTests(unittest.TestCase):
@@ -1049,6 +1092,177 @@ class DynamicContextAssemblerTests(unittest.TestCase):
         state = NexusState(facet_state={"nexus": {"policy_requires_approval": True}})
         window = assembler.assemble(event=self.make_event("Run command"), state=state)
         self.assertIn("policy-summary", window.metadata["included_policy_ids"])
+
+    def test_derive_reference_anchors_empty_working_memory(self) -> None:
+        continuity = derive_reference_anchors("what about that?", [])
+        self.assertEqual(continuity.reference_anchors, [])
+        self.assertIn("that", continuity.unresolved_references)
+
+    def test_derive_reference_anchors_referential_message_creates_anchor(self) -> None:
+        turns = [
+            {
+                "id": "u1",
+                "content": "Can you suggest a name for this helper?",
+                "metadata": {"dialogue_role": "user"},
+            },
+            {
+                "id": "a1",
+                "content": "A good option is \"context anchor\".",
+                "metadata": {"dialogue_role": "assistant"},
+            },
+        ]
+        continuity = derive_reference_anchors("Let's use that one.", turns)
+        self.assertGreaterEqual(len(continuity.reference_anchors), 1)
+        self.assertEqual(continuity.reference_anchors[0].surface_form, "that")
+
+    def test_derive_reference_anchors_recent_candidates_score_higher(self) -> None:
+        turns = [
+            {"id": "a-old", "content": "Try the task board.", "metadata": {"dialogue_role": "assistant"}},
+            {"id": "a-new", "content": "Try the release checklist.", "metadata": {"dialogue_role": "assistant"}},
+        ]
+        continuity = derive_reference_anchors("Let's do that.", turns)
+        anchors = continuity.reference_anchors
+        self.assertGreaterEqual(len(anchors), 1)
+        self.assertEqual(anchors[0].referent_source_turn_id, "a-new")
+
+    def test_derive_reference_anchors_quoted_phrase_scores_high(self) -> None:
+        turns = [
+            {"id": "a1", "content": 'Set the label to "final answer".', "metadata": {"dialogue_role": "assistant"}}
+        ]
+        continuity = derive_reference_anchors("Use that.", turns)
+        self.assertGreaterEqual(len(continuity.reference_anchors), 1)
+        self.assertGreaterEqual(continuity.reference_anchors[0].confidence, 0.8)
+
+    def test_derive_reference_anchors_bounded_and_sorted(self) -> None:
+        turns = [
+            {"id": f"t{i}", "content": f'Try "{i} item".', "metadata": {"dialogue_role": "assistant"}}
+            for i in range(10)
+        ]
+        continuity = derive_reference_anchors("Use that one there.", turns, max_anchors=3)
+        self.assertLessEqual(len(continuity.reference_anchors), 3)
+        confidences = [anchor.confidence for anchor in continuity.reference_anchors]
+        self.assertEqual(confidences, sorted(confidences, reverse=True))
+
+    def test_derive_reference_anchors_topic_terms_and_hint(self) -> None:
+        turns = [
+            {"id": "u1", "content": "Can we rename the helper label?", "metadata": {"dialogue_role": "user"}},
+            {"id": "a1", "content": "Yes, the helper label can be concise.", "metadata": {"dialogue_role": "assistant"}},
+        ]
+        continuity = derive_reference_anchors("that", turns)
+        self.assertTrue(continuity.topic_terms)
+        self.assertIsNotNone(continuity.current_topic_hint)
+
+    def test_pressure_relevance_v2_metadata_includes_reference_anchor_fields(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        memory_store = SQLiteMemoryStore(root / "memory.sqlite3")
+        memory_store.add_working_turn(
+            content='Use the label "release note".',
+            session_id="session-x",
+            turn_index=1,
+            dialogue_role="assistant",
+        )
+        assembler = DynamicContextAssembler(
+            memory_store=memory_store,
+            config=ContextAssemblyConfig(strategy=PRESSURE_RELEVANCE_V2, include_policy_summary=False),
+        )
+        window = assembler.assemble(
+            event=Event(
+                event_type=EventType.USER_MESSAGE,
+                content="Use that one.",
+                metadata={"session_id": "session-x"},
+            ),
+            state=NexusState(),
+        )
+        self.assertIn("reference_anchors", window.metadata)
+        self.assertIn("continuity_confidence", window.metadata)
+        self.assertIn("reference_anchor_count", window.metadata)
+
+    def test_context_facet_state_updates_include_last_reference_anchors(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        memory_store = SQLiteMemoryStore(root / "memory.sqlite3")
+        memory_store.add_working_turn(
+            content="Set a new branch name.",
+            session_id="session-y",
+            turn_index=1,
+            dialogue_role="assistant",
+        )
+        facet = ContextFacet(
+            memory_store,
+            config=ContextAssemblyConfig(strategy=PRESSURE_RELEVANCE_V2, include_policy_summary=False),
+        )
+        result = facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="Do that.",
+                metadata={"session_id": "session-y"},
+            ),
+            NexusState(),
+        )
+        self.assertIn("last_reference_anchors", result.state_updates)
+        self.assertIn("last_reference_anchor_count", result.state_updates)
+
+    def test_conversation_continuity_item_protected_for_referential_message(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        memory_store = SQLiteMemoryStore(root / "memory.sqlite3")
+        memory_store.add_working_turn(
+            content="I can call it a working anchor.",
+            session_id="session-z",
+            turn_index=1,
+            dialogue_role="assistant",
+        )
+        assembler = DynamicContextAssembler(
+            memory_store=memory_store,
+            config=ContextAssemblyConfig(
+                strategy=PRESSURE_RELEVANCE_V2,
+                max_items_total=3,
+                include_policy_summary=False,
+            ),
+        )
+        window = assembler.assemble(
+            event=Event(
+                event_type=EventType.USER_MESSAGE,
+                content="Let's use that.",
+                metadata={"session_id": "session-z"},
+            ),
+            state=NexusState(),
+        )
+        continuity_items = [item for item in window.items if item.item_type == ContextItemType.CONVERSATION_CONTINUITY]
+        self.assertTrue(continuity_items)
+
+    def test_reference_anchor_derivation_ignores_other_session_working_memory(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        memory_store = SQLiteMemoryStore(root / "memory.sqlite3")
+        memory_store.add_working_turn(
+            content="Use a session one label.",
+            session_id="session-one",
+            turn_index=1,
+            dialogue_role="assistant",
+        )
+        memory_store.add_working_turn(
+            content="Use another session label.",
+            session_id="session-two",
+            turn_index=1,
+            dialogue_role="assistant",
+        )
+        assembler = DynamicContextAssembler(
+            memory_store=memory_store,
+            config=ContextAssemblyConfig(strategy=PRESSURE_RELEVANCE_V2, include_policy_summary=False),
+        )
+        window = assembler.assemble(
+            event=Event(
+                event_type=EventType.USER_MESSAGE,
+                content="Use that.",
+                metadata={"session_id": "session-one"},
+            ),
+            state=NexusState(),
+        )
+        anchors = window.metadata.get("reference_anchors", [])
+        joined = " ".join(str(a.get("referent_text", "")) for a in anchors if isinstance(a, dict)).lower()
+        self.assertNotIn("another session label", joined)
 
 
 class ContextFacetTests(unittest.TestCase):

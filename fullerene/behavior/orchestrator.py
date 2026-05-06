@@ -253,6 +253,12 @@ class _BehaviorSignals:
     included_lpb_entry_ids: list[str]
     included_belief_ids: list[str]
     context_strategy: str | None
+    reference_anchors: list[dict[str, Any]]
+    reference_anchor_count: int
+    unresolved_references: list[str]
+    continuity_topic_hint: str | None
+    continuity_topic_terms: list[str]
+    context_continuity_confidence: float
     related_context_item_ids: list[str]
     related_memory_ids: list[str]
     related_belief_ids: list[str]
@@ -398,6 +404,11 @@ class BehaviorFacet:
                 "last_latent_pressure": signals.latent_pressure,
                 "last_interrupt_recommended": interrupt_recommended,
                 "last_interrupt_reason": interrupt_reason,
+                "last_reference_anchors": list(signals.reference_anchors),
+                "last_reference_anchor_count": signals.reference_anchor_count,
+                "last_unresolved_references": list(signals.unresolved_references),
+                "last_current_topic_hint": signals.continuity_topic_hint,
+                "last_continuity_confidence_from_context": signals.context_continuity_confidence,
                 "last_decision_trace": trace,
             },
             metadata={
@@ -449,6 +460,11 @@ class BehaviorFacet:
                 "grounding_available": signals.grounding_available,
                 "grounding_confidence": signals.grounding_confidence,
                 "continuity_confidence": signals.continuity_confidence,
+                "reference_anchors": list(signals.reference_anchors),
+                "reference_anchor_count": signals.reference_anchor_count,
+                "unresolved_references": list(signals.unresolved_references),
+                "current_topic_hint": signals.continuity_topic_hint,
+                "topic_terms": list(signals.continuity_topic_terms),
                 "self_consistency_confidence": signals.self_consistency_confidence,
                 "challenge_confidence_penalty": signals.challenge_confidence_penalty,
                 "final_confidence_reasons": self._final_confidence_reasons(
@@ -570,6 +586,11 @@ class BehaviorFacet:
         included_lpb_entry_ids = self._included_lpb_entry_ids(context_signal)
         included_belief_ids = self._included_belief_ids(context_signal)
         context_strategy = self._context_strategy(context_signal)
+        reference_anchors = self._reference_anchors(context_signal)
+        unresolved_references = self._unresolved_references(context_signal)
+        continuity_topic_hint = self._continuity_topic_hint(context_signal)
+        continuity_topic_terms = self._continuity_topic_terms(context_signal)
+        context_continuity_confidence = self._context_continuity_confidence(context_signal)
         included_memory_roles = self._included_memory_roles(
             context_signal=context_signal,
             memory_context=memory_context,
@@ -693,6 +714,7 @@ class BehaviorFacet:
             working_memory_turn_count=working_memory_turn_count,
             short_follow_up=short_follow_up,
         )
+        continuity_confidence = max(continuity_confidence, context_continuity_confidence)
         self_consistency_confidence = self._self_consistency_confidence(
             belief_confidence=belief_confidence,
             belief_contradiction=belief_contradiction,
@@ -837,6 +859,12 @@ class BehaviorFacet:
             included_lpb_entry_ids=included_lpb_entry_ids,
             included_belief_ids=included_belief_ids,
             context_strategy=context_strategy,
+            reference_anchors=reference_anchors,
+            reference_anchor_count=len(reference_anchors),
+            unresolved_references=unresolved_references,
+            continuity_topic_hint=continuity_topic_hint,
+            continuity_topic_terms=continuity_topic_terms,
+            context_continuity_confidence=context_continuity_confidence,
             related_context_item_ids=self._related_context_item_ids(context_signal),
             related_memory_ids=self._related_memory_ids(
                 context_signal,
@@ -1692,6 +1720,60 @@ class BehaviorFacet:
             if isinstance(raw, str) and raw.strip():
                 return raw.strip()
         return None
+
+    @staticmethod
+    def _reference_anchors(context_signal: dict[str, Any]) -> list[dict[str, Any]]:
+        raw = context_signal.get("reference_anchors")
+        if not isinstance(raw, list):
+            window = BehaviorFacet._context_window_from_signal(context_signal)
+            metadata = window.get("metadata") if isinstance(window, dict) else {}
+            raw = metadata.get("reference_anchors") if isinstance(metadata, dict) else []
+        if not isinstance(raw, list):
+            return []
+        return [row for row in raw if isinstance(row, dict)]
+
+    @staticmethod
+    def _unresolved_references(context_signal: dict[str, Any]) -> list[str]:
+        raw = context_signal.get("unresolved_references")
+        if not isinstance(raw, list):
+            window = BehaviorFacet._context_window_from_signal(context_signal)
+            metadata = window.get("metadata") if isinstance(window, dict) else {}
+            raw = metadata.get("unresolved_references") if isinstance(metadata, dict) else []
+        return [str(item) for item in raw] if isinstance(raw, list) else []
+
+    @staticmethod
+    def _continuity_topic_hint(context_signal: dict[str, Any]) -> str | None:
+        raw = context_signal.get("current_topic_hint")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+        window = BehaviorFacet._context_window_from_signal(context_signal)
+        metadata = window.get("metadata") if isinstance(window, dict) else {}
+        raw = metadata.get("current_topic_hint") if isinstance(metadata, dict) else None
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+        return None
+
+    @staticmethod
+    def _continuity_topic_terms(context_signal: dict[str, Any]) -> list[str]:
+        raw = context_signal.get("topic_terms")
+        if not isinstance(raw, list):
+            window = BehaviorFacet._context_window_from_signal(context_signal)
+            metadata = window.get("metadata") if isinstance(window, dict) else {}
+            raw = metadata.get("topic_terms") if isinstance(metadata, dict) else []
+        return [str(item) for item in raw] if isinstance(raw, list) else []
+
+    @staticmethod
+    def _context_continuity_confidence(context_signal: dict[str, Any]) -> float:
+        for key in ("continuity_confidence", "last_continuity_confidence"):
+            raw = context_signal.get(key)
+            if isinstance(raw, (int, float)):
+                return max(0.0, min(float(raw), 1.0))
+        window = BehaviorFacet._context_window_from_signal(context_signal)
+        metadata = window.get("metadata") if isinstance(window, dict) else {}
+        raw = metadata.get("continuity_confidence") if isinstance(metadata, dict) else 0.0
+        if isinstance(raw, (int, float)):
+            return max(0.0, min(float(raw), 1.0))
+        return 0.0
 
     @staticmethod
     def _classify_conversational_intent(

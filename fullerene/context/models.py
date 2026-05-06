@@ -39,6 +39,7 @@ def _parse_datetime(raw: str | None) -> datetime | None:
 class ContextItemType(str, Enum):
     EVENT = "event"
     WORKING_MEMORY = "working_memory"
+    CONVERSATION_CONTINUITY = "conversation_continuity"
     ATTENTION = "attention"
     MEMORY = "memory"
     GOAL = "goal"
@@ -46,6 +47,135 @@ class ContextItemType(str, Enum):
     POLICY = "policy"
     SIGNAL = "signal"
     SYSTEM = "system"
+
+
+@dataclass(slots=True)
+class ReferenceAnchor:
+    anchor_id: str
+    surface_form: str
+    referent_text: str
+    referent_source_turn_id: str | None = None
+    referent_source_role: str | None = None
+    confidence: float = 0.0
+    reason: str | None = None
+    current_message_fragment: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.anchor_id = str(self.anchor_id or uuid4().hex)
+        self.surface_form = str(self.surface_form or "").strip().lower()
+        self.referent_text = str(self.referent_text or "").strip()
+        self.referent_source_turn_id = (
+            str(self.referent_source_turn_id).strip()
+            if self.referent_source_turn_id is not None
+            else None
+        )
+        self.referent_source_role = (
+            str(self.referent_source_role).strip().lower()
+            if self.referent_source_role is not None
+            else None
+        )
+        try:
+            conf = float(self.confidence)
+        except (TypeError, ValueError):
+            conf = 0.0
+        self.confidence = max(0.0, min(conf, 1.0))
+        self.reason = str(self.reason).strip() if self.reason is not None else None
+        if self.current_message_fragment is not None:
+            self.current_message_fragment = str(self.current_message_fragment).strip()
+        self.metadata = dict(self.metadata or {})
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "anchor_id": self.anchor_id,
+            "surface_form": self.surface_form,
+            "referent_text": self.referent_text,
+            "referent_source_turn_id": self.referent_source_turn_id,
+            "referent_source_role": self.referent_source_role,
+            "confidence": self.confidence,
+            "reason": self.reason,
+            "current_message_fragment": self.current_message_fragment,
+            "metadata": _serialize_value(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ReferenceAnchor":
+        return cls(
+            anchor_id=str(data.get("anchor_id") or uuid4().hex),
+            surface_form=str(data.get("surface_form") or ""),
+            referent_text=str(data.get("referent_text") or ""),
+            referent_source_turn_id=data.get("referent_source_turn_id"),
+            referent_source_role=data.get("referent_source_role"),
+            confidence=float(data.get("confidence") or 0.0),
+            reason=data.get("reason"),
+            current_message_fragment=data.get("current_message_fragment"),
+            metadata=data.get("metadata", {}),
+        )
+
+
+@dataclass(slots=True)
+class ConversationContinuity:
+    current_topic_hint: str | None = None
+    topic_terms: list[str] = field(default_factory=list)
+    reference_anchors: list[ReferenceAnchor] = field(default_factory=list)
+    unresolved_references: list[str] = field(default_factory=list)
+    continuity_confidence: float = 0.0
+    working_memory_turn_count: int = 0
+    source: str = "working_memory"
+
+    def __post_init__(self) -> None:
+        self.current_topic_hint = (
+            str(self.current_topic_hint).strip()
+            if self.current_topic_hint is not None and str(self.current_topic_hint).strip()
+            else None
+        )
+        self.topic_terms = [
+            str(term).strip().lower()
+            for term in self.topic_terms
+            if str(term).strip()
+        ]
+        self.reference_anchors = list(self.reference_anchors or [])
+        self.unresolved_references = [
+            str(token).strip().lower()
+            for token in self.unresolved_references
+            if str(token).strip()
+        ]
+        try:
+            conf = float(self.continuity_confidence)
+        except (TypeError, ValueError):
+            conf = 0.0
+        self.continuity_confidence = max(0.0, min(conf, 1.0))
+        self.working_memory_turn_count = max(int(self.working_memory_turn_count or 0), 0)
+        self.source = str(self.source or "working_memory")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "current_topic_hint": self.current_topic_hint,
+            "topic_terms": list(self.topic_terms),
+            "reference_anchors": [anchor.to_dict() for anchor in self.reference_anchors],
+            "unresolved_references": list(self.unresolved_references),
+            "continuity_confidence": self.continuity_confidence,
+            "working_memory_turn_count": self.working_memory_turn_count,
+            "source": self.source,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ConversationContinuity":
+        raw_anchors = data.get("reference_anchors", [])
+        anchors: list[ReferenceAnchor] = []
+        if isinstance(raw_anchors, list):
+            for raw in raw_anchors:
+                if isinstance(raw, dict):
+                    anchors.append(ReferenceAnchor.from_dict(raw))
+        return cls(
+            current_topic_hint=data.get("current_topic_hint"),
+            topic_terms=data.get("topic_terms", []),
+            reference_anchors=anchors,
+            unresolved_references=data.get("unresolved_references", []),
+            continuity_confidence=float(data.get("continuity_confidence") or 0.0),
+            working_memory_turn_count=int(data.get("working_memory_turn_count") or 0),
+            source=str(data.get("source") or "working_memory"),
+        )
 
 
 @dataclass(slots=True)

@@ -50,6 +50,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-05-06 - Context v2.1 adds deterministic working-memory reference anchors
+
+- **Status:** accepted
+- **Context:** Context v2 preserved bounded same-session working-memory transcript turns, but generic referential follow-ups (`that`, `it`, `one`, `there`) still lacked compact continuity structure for downstream Behavior/prompt grounding.
+- **Decision:** Extend existing Context internals only (no new facet/subsystem) with deterministic bounded continuity extraction from working-memory turns: add JSON-safe `ReferenceAnchor` and `ConversationContinuity` metadata, derive conservative anchors/topic terms/unresolved references without LLM calls, expose continuity fields on `ContextWindow.metadata` + `ContextFacet` state/metadata, add optional bounded `conversation_continuity` context item, and render a concise prompt-grounding section only when useful.
+- **Consequences:** Referential continuity is now inspectable and available to Behavior/model grounding while preserving Context/Memory boundaries. No Dialogue subsystem, no Memory v3 graph traversal, and no summarization pipeline were introduced.
+
 ## 2026-05-06 - Context v2 uses pressure/relevance deterministic assembly (no Memory v3 scope)
 
 - **Status:** accepted

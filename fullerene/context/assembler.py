@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from typing import Any, Sequence
+import re
 
 from fullerene.attention import AttentionBroadcast
 from fullerene.context.models import (
+    ConversationContinuity,
     PRESSURE_RELEVANCE_V2,
     STATIC_RECENT_EPISODIC_V0,
     ContextAssemblyConfig,
@@ -13,6 +15,7 @@ from fullerene.context.models import (
     ContextItemType,
     ContextWindow,
 )
+from fullerene.context.reference_anchors import derive_reference_anchors
 from fullerene.goals import GoalStore
 from fullerene.goals.normalization import GoalDeduplicationResult, dedupe_active_goals
 from fullerene.memory import (
@@ -190,6 +193,7 @@ class DynamicContextAssembler:
         working_memory_items, working_memory_meta = self._working_memory_items(event)
         items.extend(working_memory_items)
         reasons.append(f"included_working_memory_turns={len(working_memory_items)}")
+        continuity = self._derive_conversation_continuity(event, working_memory_items)
 
         goal_items, goal_deduplication = self._goal_items()
         items.extend(goal_items)
@@ -267,6 +271,12 @@ class DynamicContextAssembler:
             "working_memory_session_id": working_memory_meta["session_id"],
             "working_memory_turn_count": len(working_memory_items),
             "included_working_memory_turns": [item.id for item in working_memory_items],
+            "current_topic_hint": continuity.current_topic_hint,
+            "topic_terms": continuity.topic_terms,
+            "reference_anchors": [anchor.to_dict() for anchor in continuity.reference_anchors],
+            "reference_anchor_count": len(continuity.reference_anchors),
+            "unresolved_references": continuity.unresolved_references,
+            "continuity_confidence": continuity.continuity_confidence,
             "included_goal_ids": [item.id for item in goal_items],
             "deduped_goal_count": goal_deduplication.deduped_goal_count,
             "deduped_goal_ids": list(goal_deduplication.deduped_goal_ids),
@@ -301,6 +311,29 @@ class DynamicContextAssembler:
                 >= 0.85,
             },
         }
+        continuity_item = self._conversation_continuity_item(
+            continuity=continuity,
+            event=event,
+        )
+        if continuity_item is not None and len(items) < self.config.max_items:
+            items.append(continuity_item)
+            metadata["source_types"] = self._source_types(items)
+            metadata["included_context_types"] = self._source_types(items)
+            metadata["item_count"] = len(items)
+            metadata["continuity_item_id"] = continuity_item.id
+            metadata["context_load"] = {
+                "item_count": len(items),
+                "max_items": self.config.max_items,
+                "load_ratio": round(
+                    len(items) / max(float(self.config.max_items), 1.0),
+                    3,
+                ),
+                "overloaded": (
+                    len(items) / max(float(self.config.max_items), 1.0)
+                )
+                >= 0.85,
+            }
+            reasons.append("included_conversation_continuity")
         return ContextWindow(
             items=items,
             max_items=self.config.max_items,
@@ -334,6 +367,7 @@ class DynamicContextAssembler:
 
         if self.config.include_working_memory:
             wm_items, wm_meta = self._working_memory_items(event)
+            continuity = self._derive_conversation_continuity(event, wm_items)
             for item in wm_items[: self.config.max_working_memory_turns]:
                 item.metadata["working_memory_protected"] = True
                 item.metadata["include_reason"] = "recent_working_memory_protected"
@@ -347,6 +381,7 @@ class DynamicContextAssembler:
             reasons.append(f"included_working_memory_turns={len(wm_items)}")
         else:
             wm_meta = {"session_id": None}
+            continuity = ConversationContinuity()
 
         candidates: list[dict[str, Any]] = []
         candidates.extend(self._build_lpb_candidates(working_state, facet_results))
@@ -377,6 +412,19 @@ class DynamicContextAssembler:
             reverse=True,
         )
         budget = max(self.config.max_items_total, 1)
+        continuity_item = self._conversation_continuity_item(
+            continuity=continuity,
+            event=event,
+        )
+        if continuity_item is not None and continuity.reference_anchors:
+            continuity_item.metadata["protected_inclusion"] = True
+            continuity_item.metadata["include_reason"] = "referential_continuity_protected"
+            continuity_item.metadata["final_score"] = 1.0
+            if continuity_item.id not in included_ids and len(included) < budget:
+                included.append(continuity_item)
+                included_ids.add(continuity_item.id)
+                protected_ids.add(continuity_item.id)
+                reasons.append("included_conversation_continuity_protected")
         for row in ranked:
             item = row["item"]
             if item.id in included_ids:
@@ -420,6 +468,12 @@ class DynamicContextAssembler:
             "included_working_memory_turns": [item.id for item in included if item.item_type == ContextItemType.WORKING_MEMORY],
             "working_memory_session_id": wm_meta.get("session_id"),
             "working_memory_turn_count": len([item for item in included if item.item_type == ContextItemType.WORKING_MEMORY]),
+            "current_topic_hint": continuity.current_topic_hint,
+            "topic_terms": continuity.topic_terms,
+            "reference_anchors": [anchor.to_dict() for anchor in continuity.reference_anchors],
+            "reference_anchor_count": len(continuity.reference_anchors),
+            "unresolved_references": continuity.unresolved_references,
+            "continuity_confidence": continuity.continuity_confidence,
             "included_lpb_entry_ids": [item.id for item in included if item.item_type == ContextItemType.SIGNAL and str(item.id).startswith("lpb:")],
             "included_attention_ids": [item.id for item in included if item.item_type == ContextItemType.ATTENTION],
             "included_memory_ids": [item.id for item in included if item.item_type == ContextItemType.MEMORY],
@@ -703,6 +757,68 @@ class DynamicContextAssembler:
             for record in records
         ]
         return items, {"session_id": session_id}
+
+    def _derive_conversation_continuity(
+        self,
+        event: Event,
+        working_memory_items: Sequence[ContextItem],
+    ) -> ConversationContinuity:
+        if event.event_type.value != "user_message":
+            return ConversationContinuity(
+                working_memory_turn_count=len(working_memory_items),
+            )
+        turns = [item.to_dict() for item in working_memory_items]
+        continuity = derive_reference_anchors(
+            event.content,
+            turns,
+            max_anchors=5,
+        )
+        continuity.working_memory_turn_count = len(working_memory_items)
+        return continuity
+
+    @staticmethod
+    def _conversation_continuity_item(
+        *,
+        continuity: ConversationContinuity,
+        event: Event,
+    ) -> ContextItem | None:
+        has_referential = bool(re.findall(r"\b(one|ones|it|that|this|those|them|they|there|again|he|she|him|her)\b", event.content, re.IGNORECASE))
+        useful = bool(
+            continuity.reference_anchors
+            or continuity.unresolved_references
+            or continuity.current_topic_hint
+        )
+        if not useful or continuity.working_memory_turn_count <= 0:
+            return None
+        if (not has_referential) and (not continuity.current_topic_hint):
+            return None
+        lines: list[str] = []
+        if continuity.current_topic_hint:
+            lines.append(f"Topic: {continuity.current_topic_hint}")
+        if continuity.reference_anchors:
+            anchor_bits = [
+                f'"{anchor.surface_form}" -> "{anchor.referent_text}" ({anchor.confidence:.2f})'
+                for anchor in continuity.reference_anchors[:3]
+            ]
+            lines.append("Likely references: " + "; ".join(anchor_bits))
+        if continuity.unresolved_references:
+            unresolved = ", ".join(continuity.unresolved_references[:4])
+            lines.append(f"Unresolved references: {unresolved}")
+        return ContextItem(
+            id=f"continuity:{event.event_id}",
+            item_type=ContextItemType.CONVERSATION_CONTINUITY,
+            content=" | ".join(lines),
+            source_id=event.event_id,
+            metadata={
+                "context_source": "working_memory",
+                "source": continuity.source,
+                "topic_terms": list(continuity.topic_terms),
+                "current_topic_hint": continuity.current_topic_hint,
+                "reference_anchors": [anchor.to_dict() for anchor in continuity.reference_anchors],
+                "continuity_confidence": continuity.continuity_confidence,
+                "unresolved_references": list(continuity.unresolved_references),
+            },
+        )
 
     def _event_item(self, event: Event) -> ContextItem:
         return ContextItem(
