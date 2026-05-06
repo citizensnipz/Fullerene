@@ -9,6 +9,13 @@ Record decisions that matter later, not every small edit.
 - **Decision:** Introduce `fullerene/behavior/` modules (`models`, `lexical`, `signals`, `scoring`, `confidence`, `trace`, `learning`) and preserve `BehaviorFacet` as the public contract in `fullerene/facets/behavior.py`. Keep decisions constrained to `WAIT/RECORD/ASK/ACT`, deterministic-only behavior, no in-facet LLM calls, and compatibility metadata including `response_template`.
 - **Consequences:** Behavior internals are now testable by module boundary while runtime contract remains stable for Nexus/CLI/tests. `response_intent` becomes explicit metadata while `response_template` remains compatibility output.
 
+## 2026-05-06 - Goals v1 remains explicit and non-executing
+
+- **Status:** accepted
+- **Context:** Needed richer goal dynamics (reinforcement/lifecycle/progress metadata) without introducing goal hierarchy, decomposition, conflict resolution, or autonomous execution behavior.
+- **Decision:** Extend the existing goal model/store/facet pipeline in place with additive schema fields (`reinforcement_score`, activation/completion/evidence/block/stale metadata), deterministic lifecycle helpers (`pause`, `resume`, `complete`, `update status`), and deterministic score formulas for ranking and pressure contribution. Keep goals as bias-only signals for Context/Behavior/Planner/LPB metadata.
+- **Consequences:** Goals remain inspectable persistent records that influence attention and planning pressure without executing actions or expanding into Goals v2/v3 scope.
+
 ## 2026-05-06 - Executor v1 uses explicit skill manifest + sandbox file ops
 
 - **Status:** accepted

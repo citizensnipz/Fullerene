@@ -487,6 +487,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable the SQLite-backed GoalsFacet for this run.",
     )
     parser.add_argument(
+        "--goal-pause",
+        default=None,
+        metavar="GOAL_ID",
+        help="Pause an existing goal by id.",
+    )
+    parser.add_argument(
+        "--goal-resume",
+        default=None,
+        metavar="GOAL_ID",
+        help="Resume a paused goal by id.",
+    )
+    parser.add_argument(
+        "--goal-complete",
+        default=None,
+        metavar="GOAL_ID",
+        help="Complete an existing goal by id.",
+    )
+    parser.add_argument(
+        "--goal-status",
+        default=None,
+        metavar="STATUS",
+        choices=[status.value for status in GoalStatus],
+        help="Directly set target goal status when --target-goal-id is provided.",
+    )
+    parser.add_argument(
+        "--goals-include-inactive",
+        action="store_true",
+        help="Allow paused/completed goals to be included in goals/context ranking metadata.",
+    )
+    parser.add_argument(
         "--world",
         action="store_true",
         help="Enable the SQLite-backed WorldModelFacet for this run.",
@@ -700,13 +730,17 @@ def _cli_build_nexus_runtime(
             Path(args.memory_db) if args.memory_db else state_dir / "memory.sqlite3"
         )
         memory_store = SQLiteMemoryStore(memory_db_path)
-    if args.goals:
+    if args.goals or args.goal_pause or args.goal_resume or args.goal_complete or args.goal_status:
         goals_db_path = (
             Path(args.goals_db) if args.goals_db else state_dir / "goals.sqlite3"
         )
         goal_store = SQLiteGoalStore(goals_db_path)
+    if goal_store is not None:
         _create_goal_from_metadata(goal_store, content=content, metadata=metadata)
         _create_goal_from_intent(goal_store, content=content, metadata=metadata)
+        _apply_goal_cli_updates(args=args, store=goal_store, metadata=metadata)
+    if args.goals_include_inactive:
+        metadata["goals_include_inactive"] = True
     if args.world:
         world_db_path = (
             Path(args.world_db) if args.world_db else state_dir / "world.sqlite3"
@@ -1779,6 +1813,42 @@ def _create_goal_from_metadata(
     )
     store.add_goal(goal)
     return goal
+
+
+def _apply_goal_cli_updates(
+    *,
+    args: argparse.Namespace,
+    store: SQLiteGoalStore,
+    metadata: dict[str, Any],
+) -> None:
+    transition_events: list[dict[str, Any]] = []
+    if args.goal_pause:
+        transition_events.append(
+            store.pause_goal(args.goal_pause, reason="cli_goal_pause")
+        )
+    if args.goal_resume:
+        transition_events.append(
+            store.resume_goal(args.goal_resume, reason="cli_goal_resume")
+        )
+    if args.goal_complete:
+        transition_events.append(
+            store.complete_goal(
+                args.goal_complete,
+                reason="cli_goal_complete",
+                evidence_event_id=metadata.get("event_id"),
+            )
+        )
+    if args.goal_status and args.target_goal_id:
+        transition_events.append(
+            store.update_goal_status(
+                args.target_goal_id,
+                GoalStatus(args.goal_status),
+                reason="cli_goal_status",
+                event_id=metadata.get("event_id"),
+            )
+        )
+    if transition_events:
+        metadata["goal_transition_events"] = transition_events
 
 
 def _create_goal_from_intent(

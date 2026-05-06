@@ -22,6 +22,11 @@ python -m fullerene --planner --executor --execute-plan --content "make a plan f
 python -m fullerene --planner --executor --execute-plan --executor-live --content "make a plan for this"
 python -m fullerene --executor-list-skills
 python -m fullerene --planner --executor --execute-plan --executor-sandbox-dir state/.fullerene-state/custom-sandbox --content "make a plan for this"
+python -m fullerene --goals --goal-pause goal-123 --state-dir state/.fullerene-state
+python -m fullerene --goals --goal-resume goal-123 --state-dir state/.fullerene-state
+python -m fullerene --goals --goal-complete goal-123 --state-dir state/.fullerene-state
+python -m fullerene --goals --target-goal-id goal-123 --goal-status paused --state-dir state/.fullerene-state
+python -m fullerene --goals --goals-include-inactive --content "status check"
 ```
 
 Manual Tick Runner v0 (explicit `SYSTEM_TICK` cycles — not a daemon or watch UI):

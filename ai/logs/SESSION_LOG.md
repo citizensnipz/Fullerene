@@ -1,3 +1,11 @@
+### 2026-05-06 - Goals v1 reinforcement and lifecycle pass
+
+- **Context:** Implement Goals v1 dynamics while preserving explicit goal-store semantics and non-executing role boundaries.
+- **Done:** Added additive Goals v1 model/store fields and schema migration; implemented deterministic lifecycle helpers (`pause/resume/complete/update status`) with transition metadata; added deterministic high-salience related-event reinforcement updates; exposed goal score/pressure metadata into Goals facet, Context, Planner, LPB, and CLI controls (`--goal-pause`, `--goal-resume`, `--goal-complete`, `--goal-status`, `--goals-include-inactive`); expanded goals tests for lifecycle/reinforcement/ranking metadata.
+- **Verified:** `python -m unittest tests.test_goals tests.test_context tests.test_planner tests.test_latent_pressure tests.test_cli`; `python -m unittest discover -s tests -p "test_*.py"`.
+- **Next:** Optional cleanup of remaining resource-warning DB handles and deeper behavior/learning explicit signal pass-through coverage for top-goal reinforcement/pressure fields.
+- **Blockers:** None.
+
 ### 2026-05-06 - Verifier v1.5 deterministic tightening pass
 
 - **Context:** Needed a v1.5 polish pass on Verifier v1 to tighten deterministic validation around Behavior v2.2 traces, Context v2 packets, World Model v1 artifacts, output metadata/source claims, executor skill results, and policy/planner/executor consistency without adding eval datasets or LLM judging.

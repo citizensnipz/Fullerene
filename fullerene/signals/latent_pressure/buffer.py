@@ -332,6 +332,30 @@ def _signals_from_planner(metadata: dict[str, Any], event_id: str) -> list[dict[
                 "metadata": {"blocked_steps": metadata.get("blocked_steps")},
             }
         )
+    blocked_goal_ids = metadata.get("blocked_goal_ids")
+    if isinstance(blocked_goal_ids, list) and blocked_goal_ids:
+        for goal_id in blocked_goal_ids[:5]:
+            out.append(
+                {
+                    "source": "planner",
+                    "entry_type": "goal_block",
+                    "source_id": event_id,
+                    "description": f"Planner reports blocked goal {goal_id}.",
+                    "metadata": {"goal_id": goal_id},
+                }
+            )
+    pressure_goal_ids = metadata.get("pressure_goal_ids")
+    if isinstance(pressure_goal_ids, list) and pressure_goal_ids:
+        for goal_id in pressure_goal_ids[:5]:
+            out.append(
+                {
+                    "source": "planner",
+                    "entry_type": "unresolved_goal",
+                    "source_id": event_id,
+                    "description": f"Planner reports unresolved goal {goal_id}.",
+                    "metadata": {"goal_id": goal_id},
+                }
+            )
     if metadata.get("approval_required_steps"):
         out.append(
             {

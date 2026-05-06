@@ -142,6 +142,51 @@ class SQLiteGoalStoreTests(unittest.TestCase):
         self.assertEqual([goal.id for goal in active_goals], ["goal-paused", "goal-active"])
         self.assertEqual(paused_goals, [])
 
+    def test_pause_resume_complete_helpers_apply_lifecycle_transitions(self) -> None:
+        goal = Goal(id="goal-lifecycle", description="Ship v1", priority=0.8, tags=["ship"])
+        self.store.add_goal(goal)
+
+        paused = self.store.pause_goal(goal.id, reason="waiting")
+        self.assertTrue(paused["ok"])
+        self.assertEqual(paused["previous_status"], GoalStatus.ACTIVE.value)
+        self.assertEqual(paused["new_status"], GoalStatus.PAUSED.value)
+        paused_goal = self.store.get_goal(goal.id)
+        self.assertIsNotNone(paused_goal)
+        self.assertEqual(paused_goal.status, GoalStatus.PAUSED)
+        self.assertEqual(paused_goal.paused_reason, "waiting")
+
+        resumed = self.store.resume_goal(goal.id, reason="unblocked")
+        self.assertTrue(resumed["ok"])
+        resumed_goal = self.store.get_goal(goal.id)
+        self.assertIsNotNone(resumed_goal)
+        self.assertEqual(resumed_goal.status, GoalStatus.ACTIVE)
+
+        completed = self.store.complete_goal(
+            goal.id, reason="done", evidence_event_id="evt-1"
+        )
+        self.assertTrue(completed["ok"])
+        completed_goal = self.store.get_goal(goal.id)
+        self.assertIsNotNone(completed_goal)
+        self.assertEqual(completed_goal.status, GoalStatus.COMPLETED)
+        self.assertEqual(completed_goal.completion_score, 1.0)
+        self.assertIsNotNone(completed_goal.completed_at)
+        self.assertIn("evt-1", completed_goal.evidence_event_ids)
+
+    def test_list_active_goals_excludes_inactive_unless_explicitly_requested(self) -> None:
+        self.store.add_goal(Goal(id="g-active", description="A", priority=0.5))
+        paused = Goal(id="g-paused", description="B", priority=0.5, status=GoalStatus.PAUSED)
+        completed = Goal(
+            id="g-completed", description="C", priority=0.5, status=GoalStatus.COMPLETED
+        )
+        self.store.add_goal(paused)
+        self.store.add_goal(completed)
+
+        active_only = self.store.list_active_goals(limit=10)
+        with_inactive = self.store.list_active_goals(limit=10, include_inactive=True)
+
+        self.assertEqual([goal.id for goal in active_only], ["g-active"])
+        self.assertEqual({goal.id for goal in with_inactive}, {"g-active", "g-paused", "g-completed"})
+
 
 class GoalsFacetTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -214,6 +259,49 @@ class GoalsFacetTests(unittest.TestCase):
         relevant_goals = result.metadata["relevant_goals"]
         self.assertEqual(relevant_goals[0]["id"], "goal-high")
         self.assertGreater(relevant_goals[0]["score"], relevant_goals[1]["score"])
+
+    def test_high_salience_related_events_reinforce_active_goals(self) -> None:
+        self.store.add_goal(
+            Goal(
+                id="goal-reinforce",
+                description="Track my tasks",
+                priority=0.7,
+                tags=["tasks"],
+            )
+        )
+        event = Event(
+            event_type=EventType.USER_MESSAGE,
+            content="track tasks now",
+            metadata={"tags": ["tasks"], "salience": 0.9},
+        )
+
+        result = self.facet.process(event, NexusState())
+        updated = self.store.get_goal("goal-reinforce")
+
+        self.assertIsNotNone(updated)
+        assert updated is not None
+        self.assertGreater(updated.reinforcement_score, 0.0)
+        self.assertEqual(updated.activation_count, 1)
+        self.assertEqual(updated.last_activated_event_id, event.event_id)
+        self.assertTrue(result.metadata["goal_reinforcement_updates"])
+
+    def test_goal_ranking_includes_score_breakdown_metadata(self) -> None:
+        self.store.add_goal(
+            Goal(id="goal-rank", description="Do tasks", priority=0.8, tags=["tasks"])
+        )
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="tasks",
+                metadata={"tags": ["tasks"], "salience": 0.8},
+            ),
+            NexusState(),
+        )
+        ranked = result.metadata["relevant_goals"][0]
+        self.assertIn("priority_component", ranked)
+        self.assertIn("reinforcement_component", ranked)
+        self.assertIn("recency_component", ranked)
+        self.assertIn("final_score", ranked)
 
 
 class GoalsBehaviorIntegrationTests(unittest.TestCase):

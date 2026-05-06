@@ -8,6 +8,13 @@ This file gives shared names and intent from the product description so the harn
 - `fullerene/facets/behavior.py` remains the public facet contract (`BehaviorFacet`, facet name `behavior`, `FacetResult` metadata) and preserves `WAIT/RECORD/ASK/ACT`.
 - Lexical phrase heuristics remain isolated to `fullerene/behavior/lexical.py`; scoring consumes structured numeric signals and does not do raw phrase matching.
 
+## Goals v1 (dynamic but explicit)
+
+- Goals remain explicit persistent records in SQLite and continue to bias behavior/planning/context only.
+- Goals v1 adds deterministic reinforcement from repeated high-salience related events, lifecycle transitions (`active`/`paused`/`completed`), completion evidence metadata, and bounded blocked/stale metadata.
+- Paused and completed goals are retained for provenance but excluded from active ranking by default unless explicitly included.
+- No hierarchy, decomposition, conflict-resolution engine, adaptive preference shaping, or autonomous execution was introduced in v1.
+
 ## High-level shape
 
 | Pillar | Meaning |

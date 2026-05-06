@@ -109,6 +109,9 @@ class _GoalCandidate:
     id: str
     description: str
     priority: float
+    reinforcement_score: float
+    status: str
+    blocked_reason: str | None
     updated_at: datetime
     tags: list[str]
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -162,6 +165,9 @@ class _GoalMatch:
             "item_type": "goal",
             "description": self.goal.description,
             "priority": round(self.goal.priority, 3),
+            "reinforcement_score": round(self.goal.reinforcement_score, 3),
+            "status": self.goal.status,
+            "blocked_reason": self.goal.blocked_reason,
             "score": round(self.score, 3),
             "shared_tags": list(self.shared_tags),
             "shared_keywords": list(self.shared_keywords),
@@ -398,6 +404,19 @@ class DeterministicPlanBuilder:
                 "plan_template_key": plan_template_key,
                 "context_item_ids": list(planning_context.context_item_ids),
                 "relevant_goal_ids": relevant_goal_ids,
+                "planner_candidate_goal_ids": [match.goal.id for match in ranked_goals],
+                "excluded_completed_goal_ids": [
+                    goal.id
+                    for goal in planning_context.goals
+                    if goal.status == "completed"
+                ],
+                "blocked_goal_ids": [
+                    goal.id for goal in planning_context.goals if goal.blocked_reason
+                ],
+                "goal_reinforcement_scores": {
+                    goal.id: round(goal.reinforcement_score, 3)
+                    for goal in planning_context.goals
+                },
                 "secondary_goal_ids": [
                     match.goal.id for match in ranked_goals[1:self.relevant_limit]
                 ],
@@ -598,6 +617,9 @@ class DeterministicPlanBuilder:
             id=goal.id,
             description=goal.description,
             priority=goal.priority,
+            reinforcement_score=goal.reinforcement_score,
+            status=goal.status.value,
+            blocked_reason=goal.blocked_reason,
             updated_at=goal.updated_at,
             tags=list(goal.tags),
             metadata=dict(goal.metadata),
@@ -615,6 +637,15 @@ class DeterministicPlanBuilder:
             id=item.id,
             description=item.content,
             priority=float(priority) if isinstance(priority, (int, float)) else 0.5,
+            reinforcement_score=(
+                self._numeric_unit_value(metadata.get("reinforcement_score")) or 0.0
+            ),
+            status=str(metadata.get("status") or "active"),
+            blocked_reason=(
+                str(metadata.get("blocked_reason"))
+                if metadata.get("blocked_reason") is not None
+                else None
+            ),
             updated_at=item.created_at or fallback_time,
             tags=self._metadata_tags(metadata),
             metadata=dict(metadata),
@@ -685,6 +716,8 @@ class DeterministicPlanBuilder:
         event_keywords = tokenize(event.content)
         matches: list[_GoalMatch] = []
         for goal in planning_context.goals:
+            if goal.status == "completed":
+                continue
             goal_tags = set(goal.tags)
             goal_keywords = tokenize(goal.description)
             shared_tags = sorted(event_tags & goal_tags)
@@ -693,7 +726,14 @@ class DeterministicPlanBuilder:
             keyword_overlap = (
                 len(shared_keywords) / len(goal_keywords) if goal_keywords else 0.0
             )
-            score = tag_overlap + keyword_overlap + goal.priority
+            relevance_score = min(1.0, (tag_overlap * 0.55) + (keyword_overlap * 0.45))
+            score = min(
+                1.0,
+                (goal.priority * 0.45)
+                + (relevance_score * 0.30)
+                + (goal.reinforcement_score * 0.15)
+                + 0.10,
+            )
             reasons: list[str] = []
             if shared_tags:
                 reasons.append("shared_tags:" + ",".join(shared_tags))

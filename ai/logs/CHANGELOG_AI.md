@@ -1,3 +1,12 @@
+### 2026-05-06 (Goals v1 reinforcement + lifecycle metadata)
+
+- Updated `fullerene/goals/models.py` and `fullerene/goals/store.py` with additive Goals v1 fields (reinforcement/activation/completion/evidence/blocked/stale metadata), additive schema migration, and lifecycle helpers (`pause_goal`, `resume_goal`, `complete_goal`, `update_goal_status`) that return transition metadata.
+- Updated `fullerene/facets/goals.py` with deterministic reinforcement from high-salience related events, ranking formula components (`priority/relevance/reinforcement/recency`), inactive-goal inclusion toggle support, and goal-pressure metadata (`goal_pressure_contribution`, blocked/pressure ids).
+- Updated `fullerene/context/assembler.py` and `fullerene/planner/builder.py` to propagate richer goal metadata (reinforcement/completion/blocked/stale/status breakdown), planner candidate/exclusion metadata, and completed-goal exclusion from planner candidate selection.
+- Updated `fullerene/signals/latent_pressure/buffer.py` to ingest planner goal block/unresolved goal metadata into LPB signals.
+- Updated `fullerene/cli.py` with minimal goal lifecycle controls (`--goal-pause`, `--goal-resume`, `--goal-complete`, `--goal-status`, `--goals-include-inactive`) and goal transition metadata injection.
+- Expanded `tests/test_goals.py` with Goals v1 lifecycle/reinforcement/inactive-filter/score-breakdown coverage; full `test_*.py` suite passes.
+
 - 2026-05-06: Implemented Executor v1 core in `fullerene/executor/` with explicit manifest-backed skill registry (`registry.py`, `skills.py`, `SkillManifestEntry`), sandbox resolver (`sandbox.py`), sandboxed file skills (`file_ops.py`), stronger execution record metadata, approval pending/timeout statuses, fail-closed live-policy preflight, and bounded file operation audit logging.
 - 2026-05-06: Updated `fullerene/facets/executor.py` and `fullerene/cli.py` for Executor v1 planner feedback metadata (`last_step_results`, `failed_step_ids`, `requires_plan_reevaluation`), pending approvals exposure, file-op logs, and new CLI flags (`--executor-live`, `--executor-sandbox-dir`, `--executor-list-skills`).
 - 2026-05-06: Tightened verifier executor hooks in `fullerene/verifier/artifacts.py` to validate skill metadata presence and sandbox metadata on file-operation success rows.

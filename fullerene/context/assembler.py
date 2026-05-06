@@ -586,9 +586,13 @@ class DynamicContextAssembler:
         out: list[dict[str, Any]] = []
         for item in items[: self.config.max_goals]:
             priority = float(item.metadata.get("priority", 0.0))
+            reinforcement = float(item.metadata.get("reinforcement_score", 0.0))
+            pressure = float(item.metadata.get("goal_pressure_contribution", 0.0))
+            relevance = min(1.0, (priority * 0.75) + (reinforcement * 0.25))
             score = self._score_candidate(
-                relevance_score=priority,
-                salience_score=priority,
+                relevance_score=relevance,
+                pressure_score=pressure,
+                salience_score=max(priority, reinforcement),
                 recency_score=0.7,
                 confidence_score=0.9,
                 priority_score=priority,
@@ -774,6 +778,37 @@ class DynamicContextAssembler:
                         "status": goal.status.value,
                         "tags": list(goal.tags),
                         "source": goal.source.value,
+                        "reinforcement_score": goal.reinforcement_score,
+                        "activation_count": goal.activation_count,
+                        "last_activated_at": goal.last_activated_at.isoformat()
+                        if goal.last_activated_at
+                        else None,
+                        "last_activated_event_id": goal.last_activated_event_id,
+                        "completion_score": goal.completion_score,
+                        "blocked_reason": goal.blocked_reason,
+                        "stale_score": goal.stale_score,
+                        "goal_score_breakdown": {
+                            "priority_component": round(goal.priority * 0.45, 4),
+                            "relevance_component": 0.0,
+                            "reinforcement_component": round(
+                                goal.reinforcement_score * 0.15, 4
+                            ),
+                            "recency_component": 0.0,
+                            "final_score": round(
+                                min(
+                                    1.0,
+                                    (goal.priority * 0.45)
+                                    + (goal.reinforcement_score * 0.15),
+                                ),
+                                4,
+                            ),
+                        },
+                        "goal_pressure_contribution": min(
+                            1.0,
+                            (goal.priority * (1.0 - goal.completion_score) * 0.5)
+                            + (goal.reinforcement_score * 0.25)
+                            + (0.25 if goal.blocked_reason else 0.0),
+                        ),
                         "goal_metadata": dict(goal.metadata),
                     },
                 )
