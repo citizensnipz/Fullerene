@@ -2,6 +2,13 @@
 
 Record decisions that matter later, not every small edit.
 
+## 2026-05-06 - Behavior v2.2 modularization keeps v2.1 semantics
+
+- **Status:** accepted
+- **Context:** Behavior v2.1 concentrated lexical extraction, adapter extraction, scoring, confidence, trace, and learning helpers inside `fullerene/facets/behavior.py`, which made evolution and focused tests harder.
+- **Decision:** Introduce `fullerene/behavior/` modules (`models`, `lexical`, `signals`, `scoring`, `confidence`, `trace`, `learning`) and preserve `BehaviorFacet` as the public contract in `fullerene/facets/behavior.py`. Keep decisions constrained to `WAIT/RECORD/ASK/ACT`, deterministic-only behavior, no in-facet LLM calls, and compatibility metadata including `response_template`.
+- **Consequences:** Behavior internals are now testable by module boundary while runtime contract remains stable for Nexus/CLI/tests. `response_intent` becomes explicit metadata while `response_template` remains compatibility output.
+
 ## 2026-05-06 - World Model v1 adds deterministic belief lifecycle and contradiction pressure
 
 - **Context:** World Model v0 only supported explicit belief rows/relevance lookup, which was insufficient for tracking evolving confidence, contradictions, provenance, and unresolved pressure signals from conflicting claims.

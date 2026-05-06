@@ -1,3 +1,11 @@
+### 2026-05-06 - Behavior v2.2 modular architecture pass
+
+- **Context:** Behavior v2.1 logic lived mostly in `fullerene/facets/behavior.py`; requested refactor split lexical/signals/scoring/confidence/trace/learning modules while preserving deterministic `WAIT/RECORD/ASK/ACT` contract.
+- **Done:** Added `fullerene/behavior` module boundaries (`__init__.py`, `signals.py`, `scoring.py`, `confidence.py`, `trace.py`, `learning.py`) alongside existing `models.py` and `lexical.py`; added explicit `response_intent` compatibility metadata in `BehaviorFacet`; expanded behavior tests for lexical numeric output, non-decision lexical contract, scoring from structured signals, and response-intent/template compatibility.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py"` (run in current workspace after refactor).
+- **Next:** Continue reducing `fullerene/facets/behavior.py` to orchestration-only by routing remaining helper logic through `fullerene/behavior/signals.py` and module-level compatibility mappers.
+- **Blockers:** None.
+
 ### 2026-05-06 - Behavior v2.1 deterministic routing polish
 
 - **Context:** Behavior v2 needed tighter conversational routing and confidence handling for follow-up/challenge/source-request turns while preserving deterministic inspectability, policy/verifier compatibility, and existing decision enums.

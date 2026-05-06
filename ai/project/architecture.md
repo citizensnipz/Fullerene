@@ -2,6 +2,12 @@
 
 This file gives shared names and intent from the product description so the harness stays consistent. It is not the only source of truth; keep it aligned with the implemented runtime as code lands.
 
+## Behavior v2.2 modular architecture
+
+- `fullerene/behavior/` now hosts deterministic Behavior v2.2 modules: `models.py`, `lexical.py`, `signals.py`, `scoring.py`, `confidence.py`, `trace.py`, and `learning.py`.
+- `fullerene/facets/behavior.py` remains the public facet contract (`BehaviorFacet`, facet name `behavior`, `FacetResult` metadata) and preserves `WAIT/RECORD/ASK/ACT`.
+- Lexical phrase heuristics remain isolated to `fullerene/behavior/lexical.py`; scoring consumes structured numeric signals and does not do raw phrase matching.
+
 ## High-level shape
 
 | Pillar | Meaning |

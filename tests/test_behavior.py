@@ -10,6 +10,9 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from fullerene.cli import main as cli_main
+from fullerene.behavior.lexical import extract_text_signals
+from fullerene.behavior.models import BehaviorSignals, BehaviorTextSignals, TextIntentScores
+from fullerene.behavior.scoring import select_decision
 from fullerene.facets import BehaviorFacet, EchoFacet, MemoryFacet
 from fullerene.facets.behavior import HIGH_AMBIGUITY_THRESHOLD, LOW_AMBIGUITY_THRESHOLD
 from fullerene.workspace_state import workspace_state_root
@@ -20,6 +23,74 @@ from fullerene.state import FileStateStore, InMemoryStateStore
 
 def make_tempdir_path() -> Path:
     return workspace_state_root() / f".test-behavior-{uuid4().hex}"
+
+
+def make_behavior_signals(*, text: BehaviorTextSignals) -> BehaviorSignals:
+    return BehaviorSignals(
+        tags=[],
+        salience=0.5,
+        salience_source="metadata",
+        meaningful_content=True,
+        has_metadata_signal=False,
+        question_like=text.response_needed,
+        requires_response=False,
+        explicit_action=False,
+        low_risk=False,
+        uncertainty=False,
+        high_priority=False,
+        pressure=0.0,
+        latent_pressure=0.0,
+        retrieval_strength=0.0,
+        relevant_memory_strength=0.0,
+        has_relevant_memory=False,
+        has_preference_memory=False,
+        has_goal=False,
+        top_goal_priority=0.0,
+        goal_signal_strength=0.0,
+        goal_relevance=0.0,
+        goal_alignment_score=0.0,
+        goal_alignment_priority=0.0,
+        aligned_goal_ids=[],
+        world_signal_available=False,
+        world_alignment_score=0.0,
+        world_alignment_confidence=0.0,
+        aligned_belief_ids=[],
+        belief_confidence=0.0,
+        belief_contradiction=False,
+        belief_reason=None,
+        policy_result="allow",
+        policy_requires_approval=False,
+        policy_blocks_act=False,
+        policy_reason=None,
+        context_item_count_signal=0,
+        context_max_items_signal=0,
+        context_load_ratio=0.0,
+        context_overloaded=False,
+        memory_signal_available=False,
+        goal_signal_available=False,
+        domain_match=False,
+        event_domain=None,
+        included_memory_roles=[],
+        included_memory_domains=[],
+        active_goal_count=0,
+        relevant_goal_count=0,
+        relevant_memory_count=0,
+        relevant_belief_count=0,
+        context_item_count=0,
+        planner_available=False,
+        context_sufficiency=0.0,
+        missing_context=[],
+        included_working_memory_turns=[],
+        working_memory_turn_count=0,
+        included_context_types=[],
+        included_lpb_entry_ids=[],
+        included_belief_ids=[],
+        context_strategy=None,
+        related_context_item_ids=[],
+        related_memory_ids=[],
+        related_belief_ids=[],
+        text=text,
+    )
 
 
 class BehaviorFacetRuleTests(unittest.TestCase):
@@ -831,6 +902,71 @@ class BehaviorV2Tests(unittest.TestCase):
             "challenge_confidence_penalty",
         ):
             self.assertIn(key, trace)
+
+    def test_lexical_numeric_scoring_and_no_decision_output(self) -> None:
+        lexical = extract_text_signals(
+            "What should I do next?",
+            query_intent="planning",
+            ambiguity_score=0.3,
+            context_sufficiency=1.0,
+            missing_context=[],
+            working_memory_turn_count=1,
+            has_context_items=True,
+            grounding_available=True,
+            grounding_confidence=0.9,
+            self_consistency_confidence=0.9,
+        )
+        self.assertIsInstance(lexical.intents, TextIntentScores)
+        self.assertGreaterEqual(lexical.question_score, 0.0)
+        self.assertFalse(hasattr(lexical, "decision"))
+
+    def test_scoring_decision_uses_behavior_signals_without_text_matching(self) -> None:
+        text = BehaviorTextSignals(
+            intents=TextIntentScores(unknown=1.0),
+            question_score=0.0,
+            shortness_score=0.0,
+            referential_score=0.0,
+            imperative_score=0.0,
+            vague_score=0.0,
+            challenge_score=0.0,
+            source_request_score=0.0,
+            clarification_score=0.0,
+            correction_score=0.0,
+            query_intent="unknown",
+            response_template=None,
+            deterministic_response_available=False,
+            response_needed=False,
+            response_reason=None,
+            conversational_intent="unknown",
+            conversational_intent_score=0.3,
+            conversational_intent_reasons=[],
+            follow_up_reference_detected=False,
+            short_follow_up=False,
+            grounding_need="none",
+            grounding_need_reasons=[],
+            grounding_available=False,
+            grounding_confidence=0.0,
+            continuity_confidence=0.0,
+            self_consistency_confidence=0.8,
+            challenge_confidence_penalty=0.0,
+            ambiguity_kind="none",
+            ambiguity_score=0.1,
+            ambiguity_reasons=[],
+            repeated_dissatisfaction=False,
+        )
+        decision, _, _ = select_decision(
+            Event(event_type=EventType.USER_MESSAGE, content="nonsense tokens only"),
+            make_behavior_signals(text=text),
+        )
+        self.assertEqual(decision, DecisionAction.RECORD)
+
+    def test_response_intent_and_template_compatibility_present(self) -> None:
+        result = self.facet.process(
+            Event(event_type=EventType.USER_MESSAGE, content="What are you doing right now?"),
+            NexusState(),
+        )
+        self.assertIn("response_intent", result.metadata)
+        self.assertIn("response_template", result.metadata)
 
 
 class CLIBehaviorIntegrationTests(unittest.TestCase):
