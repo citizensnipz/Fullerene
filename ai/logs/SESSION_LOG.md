@@ -1,3 +1,11 @@
+### 2026-05-06 - World Model v1 belief lifecycle integration
+
+- **Context:** World Model v0 explicit beliefs were not enough to track confidence shifts, contradictions, provenance, or contradiction-driven latent pressure.
+- **Done:** Implemented World Model v1 belief lifecycle: expanded belief schema/storage, deterministic normalized-key belief formation, support/contradiction confidence updates, contradiction/redundancy detection, provenance updates, lightweight belief-edge writes, LPB contradiction/uncertainty signal ingestion, and context belief metadata enrichment.
+- **Fixes:** Resolved SQL placeholder/schema mismatch in world-model store writes, aligned context test world-store helper with `list_beliefs`, and corrected world-model contradiction signal flow into LPB metadata.
+- **Verified:** `python -m unittest tests.test_world_model tests.test_context tests.test_latent_pressure tests.test_memory_v2 -v`; `python -m unittest discover -s tests -p "test_*.py" -v`.
+- **Next:** Run manual interactive CLI validation with model-enabled session and challenge a generated claim to observe belief confidence drop + contradiction pressure entry.
+
 # Session log
 
 Cheap handoff between AI sessions or humans: what happened, what is next.

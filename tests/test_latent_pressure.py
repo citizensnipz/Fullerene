@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from fullerene.facets import BehaviorFacet
+from fullerene.facets import BehaviorFacet, WorldModelFacet
 from fullerene.nexus import Event, EventType, FacetResult, NexusRuntime, NexusState
 from fullerene.signals.latent_pressure import (
     LatentPressureEntry,
@@ -10,6 +10,10 @@ from fullerene.signals.latent_pressure import (
     update_latent_pressure,
 )
 from fullerene.state import InMemoryStateStore
+from fullerene.world_model import SQLiteWorldModelStore
+from fullerene.workspace_state import workspace_state_root
+from uuid import uuid4
+import shutil
 
 
 class LatentPressureModelTests(unittest.TestCase):
@@ -296,6 +300,26 @@ class LatentPressureRuntimeTests(unittest.TestCase):
         )
         behavior = next(r for r in second.facet_results if r.facet_name == "behavior")
         self.assertGreaterEqual(float(behavior.metadata.get("latent_pressure", 0.0)), 0.0)
+
+    def test_lpb_receives_world_model_contradiction_signals(self) -> None:
+        root = workspace_state_root() / f".test-lpb-world-{uuid4().hex}"
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        store = SQLiteWorldModelStore(root / "world.sqlite3")
+        runtime = NexusRuntime(
+            facets=[WorldModelFacet(store), BehaviorFacet()],
+            store=InMemoryStateStore(),
+        )
+        runtime.process_event(Event(event_type=EventType.USER_MESSAGE, content="Service is available"))
+        record = runtime.process_event(
+            Event(event_type=EventType.USER_MESSAGE, content="Service is not available")
+        )
+        lpb = record.metadata.get("latent_pressure_result", {})
+        self.assertTrue(
+            any(
+                row.get("entry_type") in {"contradiction", "uncertainty"}
+                for row in lpb.get("active_entries", [])
+            )
+        )
 
 
 if __name__ == "__main__":

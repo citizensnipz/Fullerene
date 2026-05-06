@@ -401,6 +401,24 @@ def _signals_from_learning(metadata: dict[str, Any], event_id: str) -> list[dict
     return out
 
 
+def _signals_from_world_model(metadata: dict[str, Any], event_id: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    rows = metadata.get("contradiction_signals")
+    if not isinstance(rows, list):
+        return out
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        payload = dict(row)
+        payload.setdefault("source", "world_model")
+        payload.setdefault("source_id", event_id)
+        payload.setdefault("entry_type", "uncertainty")
+        payload.setdefault("description", "World model signal.")
+        payload.setdefault("metadata", {})
+        out.append(payload)
+    return out
+
+
 def _resolve_entries(
     entries: list[LatentPressureEntry],
     event: Event,
@@ -552,6 +570,7 @@ def update_latent_pressure(
     planner_meta = _extract_facet_metadata(facet_results, "planner")
     verifier_meta = _extract_facet_metadata(facet_results, "verifier")
     learning_meta = _extract_facet_metadata(facet_results, "learning")
+    world_model_meta = _extract_facet_metadata(facet_results, "world_model")
     signal_map = _dict(_dict(state.facet_state.get("nexus")).get("current_cycle_signal_map"))
 
     is_system_tick = event.event_type == EventType.SYSTEM_TICK
@@ -562,6 +581,7 @@ def update_latent_pressure(
     incoming.extend(_signals_from_planner(planner_meta, event.event_id))
     incoming.extend(_signals_from_verifier(verifier_meta, event.event_id))
     incoming.extend(_signals_from_learning(learning_meta, event.event_id))
+    incoming.extend(_signals_from_world_model(world_model_meta, event.event_id))
 
     created_entries: list[dict[str, Any]] = []
     updated_entries: list[dict[str, Any]] = []

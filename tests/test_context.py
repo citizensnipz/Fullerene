@@ -120,6 +120,12 @@ class TrackingWorldModelStore:
         )
         return beliefs[:limit]
 
+    def list_beliefs(self, limit: int, status: BeliefStatus | None = None) -> list[Belief]:
+        beliefs = self.list_active_beliefs(limit)
+        if status is None:
+            return beliefs
+        return [belief for belief in beliefs if belief.status == status]
+
 
 class TrackingPolicyStore:
     def __init__(self, policies: list[PolicyRule] | None = None) -> None:
@@ -997,6 +1003,31 @@ class DynamicContextAssemblerTests(unittest.TestCase):
             state=NexusState(),
         )
         self.assertIn("belief-risk", window.metadata["included_belief_ids"])
+
+    def test_context_belief_metadata_includes_contradiction_counts(self) -> None:
+        world_store = TrackingWorldModelStore(
+            [
+                Belief(
+                    id="belief-ctr",
+                    claim="The endpoint is stable",
+                    confidence=0.25,
+                    status=BeliefStatus.CONTRADICTED,
+                    source=BeliefSource.SYSTEM,
+                    metadata={"note": "test"},
+                )
+            ]
+        )
+        # mimic v1 counters present on model instance
+        world_store.beliefs[0].contradiction_count = 3  # type: ignore[attr-defined]
+        world_store.beliefs[0].support_count = 2  # type: ignore[attr-defined]
+        assembler = DynamicContextAssembler(
+            world_model_store=world_store,
+            config=ContextAssemblyConfig(include_policy_summary=False, include_signal_summaries=False),
+        )
+        window = assembler.assemble(event=self.make_event("Is endpoint stable?"), state=NexusState())
+        belief_items = [item for item in window.items if item.item_type == ContextItemType.BELIEF]
+        self.assertEqual(len(belief_items), 1)
+        self.assertEqual(belief_items[0].metadata.get("contradiction_count"), 3)
 
     def test_pressure_relevance_v2_includes_policy_summary_for_approval_required(self) -> None:
         policy_store = TrackingPolicyStore(

@@ -414,5 +414,83 @@ class WorldRuntimeIntegrationTests(unittest.TestCase):
         self.assertGreater(behavior_result.metadata["world_alignment_score"], 0.0)
 
 
+class WorldModelV1BeliefLifecycleTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(self.root, ignore_errors=True))
+        self.store = SQLiteWorldModelStore(self.root / "world.sqlite3")
+        self.facet = WorldModelFacet(self.store)
+
+    def _event(self, content: str) -> Event:
+        return Event(event_type=EventType.USER_MESSAGE, content=content)
+
+    def test_belief_creation_from_memory_pattern(self) -> None:
+        self.facet.process(self._event("SQLite is canonical memory storage"), NexusState())
+        beliefs = self.store.list_beliefs(limit=10)
+        self.assertEqual(len(beliefs), 1)
+        self.assertEqual(beliefs[0].support_count, 1)
+        self.assertEqual(beliefs[0].status, BeliefStatus.VALID)
+
+    def test_repeated_support_increases_confidence(self) -> None:
+        self.facet.process(self._event("SQLite is canonical memory storage"), NexusState())
+        first = self.store.list_beliefs(limit=1)[0].confidence
+        self.facet.process(self._event("SQLite is canonical memory storage"), NexusState())
+        second = self.store.list_beliefs(limit=1)[0].confidence
+        self.assertGreater(second, first)
+
+    def test_repeated_contradiction_decreases_confidence_and_sets_status(self) -> None:
+        self.facet.process(self._event("The service is available"), NexusState())
+        self.facet.process(self._event("The service is not available"), NexusState())
+        self.facet.process(self._event("The service is not available"), NexusState())
+        belief = self.store.list_beliefs(limit=1)[0]
+        self.assertGreaterEqual(belief.contradiction_count, 2)
+        self.assertEqual(belief.status, BeliefStatus.CONTRADICTED)
+        self.assertLess(belief.confidence, 0.6)
+
+    def test_contradicted_belief_is_not_deleted(self) -> None:
+        self.facet.process(self._event("Feature has 3 steps"), NexusState())
+        self.facet.process(self._event("Feature has 4 steps"), NexusState())
+        beliefs = self.store.list_beliefs(limit=10)
+        self.assertEqual(len(beliefs), 1)
+
+    def test_provenance_updates_are_recorded(self) -> None:
+        event = self._event("User prefers short answers")
+        self.facet.process(event, NexusState())
+        belief = self.store.list_beliefs(limit=1)[0]
+        self.assertEqual(belief.last_support_event_id, event.event_id)
+        self.assertEqual(belief.last_updated_event_id, event.event_id)
+        self.assertIn(event.event_id, belief.sources)
+
+    def test_pressure_signal_emitted_for_contradiction(self) -> None:
+        self.facet.process(self._event("The API is stable"), NexusState())
+        result = self.facet.process(self._event("The API is not stable"), NexusState())
+        signals = result.metadata.get("contradiction_signals", [])
+        self.assertTrue(any(s.get("entry_type") == "uncertainty" or s.get("entry_type") == "contradiction" for s in signals))
+
+    def test_redundant_updates_do_not_create_duplicate_beliefs(self) -> None:
+        self.facet.process(self._event("SQLite is canonical"), NexusState())
+        self.facet.process(self._event("sqlite is canonical"), NexusState())
+        beliefs = self.store.list_beliefs(limit=10)
+        self.assertEqual(len(beliefs), 1)
+        self.assertEqual(beliefs[0].status, BeliefStatus.REDUNDANT)
+
+    def test_confidence_clamping(self) -> None:
+        for _ in range(20):
+            self.facet.process(self._event("A is true"), NexusState())
+        belief = self.store.list_beliefs(limit=1)[0]
+        self.assertLessEqual(belief.confidence, 1.0)
+        for _ in range(20):
+            self.facet.process(self._event("A is not true"), NexusState())
+        belief = self.store.list_beliefs(limit=1)[0]
+        self.assertGreaterEqual(belief.confidence, 0.0)
+
+    def test_edge_creation_links_related_beliefs(self) -> None:
+        self.facet.process(self._event("Python has strong typing support"), NexusState())
+        self.facet.process(self._event("Python has rich typing tools"), NexusState())
+        beliefs = self.store.list_beliefs(limit=10)
+        edges = self.store.list_belief_edges(beliefs[0].id, limit=10)
+        self.assertGreaterEqual(len(edges), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

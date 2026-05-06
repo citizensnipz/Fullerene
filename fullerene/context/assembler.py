@@ -890,7 +890,7 @@ class DynamicContextAssembler:
     def _belief_items(self, event: Event) -> list[ContextItem]:
         if self.world_model_store is None or self.config.max_beliefs == 0:
             return []
-        beliefs = self.world_model_store.list_active_beliefs(
+        beliefs = self.world_model_store.list_beliefs(
             limit=max(self.config.max_beliefs * 2, self.config.max_beliefs)
         )
         ranked_beliefs = sorted(
@@ -909,6 +909,8 @@ class DynamicContextAssembler:
                     "context_source": "active_belief",
                     "confidence": belief.confidence,
                     "status": belief.status.value,
+                    "contradiction_count": getattr(belief, "contradiction_count", 0),
+                    "support_count": getattr(belief, "support_count", 0),
                     "tags": list(belief.tags),
                     "source": belief.source.value,
                     "belief_metadata": dict(belief.metadata),

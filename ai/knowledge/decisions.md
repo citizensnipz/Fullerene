@@ -2,6 +2,12 @@
 
 Record decisions that matter later, not every small edit.
 
+## 2026-05-06 - World Model v1 adds deterministic belief lifecycle and contradiction pressure
+
+- **Context:** World Model v0 only supported explicit belief rows/relevance lookup, which was insufficient for tracking evolving confidence, contradictions, provenance, and unresolved pressure signals from conflicting claims.
+- **Decision:** Upgrade to World Model v1 in-place (same facet/runtime boundary): expand `Belief`/SQLite schema with lifecycle/provenance fields (`sources`, normalized key, belief type, support/contradiction counts, last support/contradiction/update event IDs, priority, metadata), add deterministic formation/update logic in `WorldModelFacet`, implement contradiction/redundancy heuristics, emit contradiction/uncertainty pressure signal payloads for LPB ingestion, and persist lightweight write-time belief edges.
+- **Consequences:** Fullerene can now represent what it believes, how confident it is, and when claims conflict without deleting historical beliefs. Context and behavior receive richer belief metadata/signals while staying deterministic and inspectable. No new facet, no LLM extraction, no clustering, and no graph traversal were introduced in v1.
+
 ## Entry format
 
 ```markdown

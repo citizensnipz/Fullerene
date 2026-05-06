@@ -353,14 +353,14 @@ score = (
 - **Behavior signal only** - goals do not execute actions or generate plans; they provide deterministic relevance signals that can raise `BehaviorFacet` confidence when the current event aligns with active goals.
 - **Explicit creation only** - v0 supports explicit goal creation, including the CLI `create_goal` metadata hook. Automatic goal inference is not implemented.
 
-## World Model v0 (current)
+## World Model v1 (current)
 
-- **Explicit and persistent only** - beliefs are stored as inspectable records with `id`, `claim`, `confidence`, `status`, `tags`, `source`, optional source links, timestamps, and metadata.
-- **Canonical store** - `SQLiteWorldModelStore` persists beliefs in `world.sqlite3`; SQLite is the source of truth.
-- **Deterministic retrieval** - `WorldModelFacet` loads active beliefs only and scores relevance from tag overlap, keyword overlap, and belief confidence. No embeddings, vector DB, graph structure, inference engine, or model calls.
-- **Behavior signal only** - beliefs do not plan, reason, or execute actions; they provide deterministic relevance signals that can raise `BehaviorFacet` confidence when the current event aligns with high-confidence beliefs.
-- **Explicit creation only** - v0 supports explicit belief creation, including the CLI `create_belief` metadata hook. Automatic belief inference is not implemented.
-- **Inspectable boundary** - World Model v0 is explicit and deterministic. It separates "what happened" (memory/event log) from "what is believed" (belief rows).
+- **Belief lifecycle in SQLite** - `SQLiteWorldModelStore` now persists expanded belief rows (`sources`, `normalized_key`, `belief_type`, support/contradiction counters, last support/contradiction event IDs, last updated event ID, priority, metadata) and lightweight `belief_edges`.
+- **Deterministic formation and updates** - `WorldModelFacet` derives candidate beliefs from deterministic event/memory-like statements (no LLM extraction), normalizes with `normalized_key`, creates with base confidence, and applies bounded Bayesian-style confidence updates on support/contradiction.
+- **Contradiction and redundancy handling** - contradictions (direct negation, numeric conflict, keyword negation) reduce confidence and can set `CONTRADICTED`; exact normalized matches count support and may set `REDUNDANT`; contradicted beliefs are retained and inspectable.
+- **Pressure integration** - world-model updates emit contradiction/uncertainty pressure signal payloads that the latent-pressure buffer ingests as sustained pressure sources.
+- **Context and behavior plumbing** - context assembly exposes belief confidence/status/support/contradiction metadata; behavior continues consuming belief relevance/confidence signals without a behavior rewrite.
+- **v1 boundary** - still deterministic and inspectable: no clustering, no graph traversal/reasoning engine, no LLM-generated beliefs, no new facet, and no broad Nexus rewrite.
 
 ## Model integration (current v0)
 
@@ -393,7 +393,7 @@ flowchart LR
 | Behavior facet | `fullerene/facets/behavior.py` | Deterministic, inspectable decision policy for `WAIT` / `RECORD` / `ASK` / `ACT` |
 | Context facet | `fullerene/facets/context.py` | Static recent-episodic working-context assembly; deterministic, inspectable, and read-only |
 | Goals facet | `fullerene/facets/goals.py` | Deterministic active-goal lookup and relevance scoring; no planning or execution |
-| World model facet | `fullerene/facets/world_model.py` | Deterministic active-belief lookup and relevance scoring; no inference or reasoning |
+| World model facet | `fullerene/facets/world_model.py` | Deterministic belief lifecycle, contradiction/redundancy updates, relevance scoring, and pressure-signal emission |
 | Policy facet | `fullerene/facets/policy.py` | Deterministic permission/approval evaluation plus built-in internal-sandbox allowance and external-approval fallback |
 | Planner facet | `fullerene/facets/planner.py` | Deterministic plan proposal layer with pressure-aware step shaping, policy filtering, and no execution |
 | Executor facet | `fullerene/facets/executor.py` | Deterministic internal-only execution layer with dry-run default, preflight refusal rules, and inspectable execution records |
@@ -411,7 +411,7 @@ flowchart LR
 | Planner models and builder | `fullerene/planner/` | `Plan`, `PlanStep`, `RiskLevel`, and deterministic `DeterministicPlanBuilder` for inspectable plan generation |
 | Policy models and store | `fullerene/policy/` | `PolicyRule`, policy enums, and SQLite-backed canonical policy rule storage |
 | Verifier models and checks | `fullerene/verifier/` | `VerificationResult` / `VerificationSummary`, v0 structural/policy/plan/act checks, v1 `artifacts.py` schema validators + `ArtifactSchemaCheck` |
-| World model models and store | `fullerene/world_model/` | `Belief`, `BeliefStatus`, `BeliefSource`, and SQLite-backed canonical world model |
+| World model models and store | `fullerene/world_model/` | `Belief` + v1 lifecycle fields, `BeliefType`, `BeliefStatus`, `BeliefSource`, canonical SQLite store, and lightweight belief edges |
 | State store | `fullerene/state/store.py` | In-memory or file-backed JSON persistence |
 | CLI | `fullerene/cli.py`, `fullerene/__main__.py` | `python -m fullerene` (includes Manual Tick Runner v0: `--tick`, `--ticks`, `--tick-summary`, …) |
 | Manual Tick Runner v0 | `fullerene/tick/runner.py` | Bounded explicit `SYSTEM_TICK` sequences; no LLM/network/background threads |
