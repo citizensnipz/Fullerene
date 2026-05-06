@@ -22,6 +22,14 @@ Cheap handoff between AI sessions or humans: what happened, what is next.
 
 ## Log
 
+### 2026-05-06 - Watch Mode v0 (controlled terminal snapshots)
+
+- **Context:** Operators needed a compact, terminal-facing view of repeated Manual Tick Runner cycles (pressure/latent pressure/expression/interrupt/presentation) without continuous loop or autonomous expression.
+- **Done:** Added `fullerene/watch/` (WatchConfig/WatchSnapshot/renderer/runner) + CLI `--watch*` flags; watch mode reuses `run_manual_ticks` and embeds Presentation Vector; renderer prints plain one-line snapshots and optional `trace:` fragments; watch-json outputs `{ "watch_run": ... }` JSON.
+- **Verified:** `python -m unittest tests.test_watch_mode -v`.
+- **Next:** Full suite green and optional UI/continuous watch enhancements remain separate.
+- **Blockers:** None.
+
 ### 2026-05-06 - Presentation Vector v0 (read-only UI projection)
 
 - **Context:** UI-adjacent consumers need renderer-neutral animation hints without a new facet or feedback into Nexus.

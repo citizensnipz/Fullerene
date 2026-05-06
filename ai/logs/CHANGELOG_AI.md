@@ -9,6 +9,12 @@ Changes that matter for future AI coding sessions (layout, commands, invariants)
 
 ## Changelog
 
+### 2026-05-06 (Watch Mode v0)
+
+- Added `fullerene/watch/` (`models.py`, `renderer.py`, `runner.py`, `__init__.py`): `WatchConfig`, JSON-safe `WatchSnapshot`, terminal renderer, and `run_watch_mode()` that reuses `run_manual_ticks` + embeds Presentation Vector state.
+- Added CLI flags in `fullerene/cli.py`: `--watch`, `--watch-ticks`, `--watch-interval`, `--watch-clear`, `--watch-trace`, `--watch-json`; watch mode rejects `--model` and renders plain stdout snapshots by default.
+- Added `tests/test_watch_mode.py`; watch JSON output shape is `{ "watch_run": { ... snapshots: [...] } }`.
+
 ### 2026-05-06 (Presentation Vector v0)
 
 - Added **`fullerene/presentation/`** (`models.py`, `mapping.py`, `vector.py`, `__init__.py`): deterministic read-only **`PresentationVector`** derivation from **`NexusRecord`** + optional **`NexusState`**, **`derive_presentation_vector_from_summary`**; no runtime mutation.

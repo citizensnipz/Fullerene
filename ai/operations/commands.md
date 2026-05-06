@@ -36,6 +36,23 @@ python -m fullerene --full --ticks 3 --json --presentation --state-dir state/.sm
 
 `--json` / `--debug` emit the full `NexusRecord`, including Nexus v2 `interrupt_candidates`, `suppression_decisions`, Expression Gate recommendation fields (`expression_recommendation`, `expression_score`, `expression_mode`, etc.), and related `cycle_trace` fields when present.
 
+Watch Mode v0 (bounded, terminal snapshots):
+
+```bash
+python -m fullerene --full --watch
+python -m fullerene --full --watch --watch-ticks 20 --watch-interval 0.5
+python -m fullerene --full --watch --watch-json
+python -m fullerene --full --watch --watch-clear
+```
+
+- `--watch` runs bounded manual `SYSTEM_TICK` cycles and renders compact snapshots (no `--tick` required).
+- `--watch-ticks N` controls the number of ticks (clamped).
+- `--watch-interval SECONDS` sleeps between rendered ticks; `0` disables sleeping.
+- `--watch-clear` clears the screen between renders.
+- `--watch-trace` adds compact `trace:` fragments when available.
+- `--watch-json` emits `{ "watch_run": ... }` JSON output only.
+- Watch Mode v0 stops when the Manual Tick Runner stop conditions trigger, and reports the `stop_reason`.
+
 ## Tests
 
 ```bash

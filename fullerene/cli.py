@@ -55,6 +55,7 @@ from fullerene.tick.runner import TICK_HARD_CAP, TickRunResult, build_tick_event
 from fullerene.workspace_state import DEFAULT_STATE_DIR
 from fullerene.state import FileStateStore
 from fullerene.world_model import Belief, BeliefSource, SQLiteWorldModelStore
+from fullerene.watch import WatchConfig, run_watch_mode
 
 
 FULL_PRESET_FLAGS = (
@@ -215,6 +216,40 @@ def build_parser() -> argparse.ArgumentParser:
             "Do not set metadata suppress_expression on manual ticks; Expression "
             "Gate may surface user-facing recommendation flags when scoring allows."
         ),
+    )
+    parser.add_argument(
+        "--watch",
+        action="store_true",
+        help="Run bounded manual SYSTEM_TICK cycles and render compact watch snapshots.",
+    )
+    parser.add_argument(
+        "--watch-ticks",
+        type=int,
+        default=10,
+        metavar="N",
+        help="With --watch, process N SYSTEM_TICK cycles (default 10, clamped).",
+    )
+    parser.add_argument(
+        "--watch-interval",
+        type=float,
+        default=1.0,
+        metavar="SECONDS",
+        help="With --watch, sleep SECONDS between rendered ticks (0 disables).",
+    )
+    parser.add_argument(
+        "--watch-clear",
+        action="store_true",
+        help="With --watch, clear screen between rendered ticks.",
+    )
+    parser.add_argument(
+        "--watch-trace",
+        action="store_true",
+        help="With --watch, include compact trace fragments when available.",
+    )
+    parser.add_argument(
+        "--watch-json",
+        action="store_true",
+        help="With --watch, emit JSON watch_run output instead of text.",
     )
     parser.add_argument(
         "--presentation",
@@ -700,7 +735,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.ticks > TICK_HARD_CAP:
         parser.error(f"--ticks must be at most {TICK_HARD_CAP}.")
 
+    watch_mode_run = bool(getattr(args, "watch", False))
     manual_tick_run = bool(args.tick) or args.ticks > 1
+    if watch_mode_run and (args.tick or args.ticks > 1):
+        parser.error("--watch is not compatible with --tick / --ticks; use --watch-ticks instead.")
+    if watch_mode_run and args.event_type != EventType.USER_MESSAGE.value:
+        parser.error("--watch requires user_message event-type; omit --event-type for watch runs.")
+    if watch_mode_run and args.model:
+        parser.error("--model is not used with watch mode; remove --model for watch runs.")
+
     if manual_tick_run and args.event_type != EventType.USER_MESSAGE.value:
         parser.error("--tick / --ticks runs SYSTEM_TICK; omit --event-type or keep user_message.")
     if manual_tick_run and args.model:
@@ -722,6 +765,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--context-window-size must be at least 1.")
 
     model_adapter = _build_model_adapter(parser, args.model)
+
+    if watch_mode_run:
+        cfg = WatchConfig(
+            ticks=args.watch_ticks,
+            interval_seconds=args.watch_interval,
+            clear_screen=args.watch_clear,
+            show_trace=args.watch_trace,
+            show_json=args.watch_json,
+        ).clamped()
+        hook_meta = build_tick_event_metadata(
+            tick_index=1,
+            tick_count=cfg.ticks,
+            tick_reason=None,
+            suppress_expression=True,
+            extra=metadata,
+        )
+        hook_event = Event(
+            event_type=EventType.SYSTEM_TICK,
+            content="",
+            metadata=hook_meta,
+        )
+        runtime = _cli_build_nexus_runtime(parser, args, event=hook_event)
+        run_watch_mode(
+            runtime,
+            cfg,
+            tick_run_extra_metadata=metadata,
+        )
+        return 0
 
     if manual_tick_run:
         hook_meta = build_tick_event_metadata(

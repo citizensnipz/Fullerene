@@ -16,6 +16,13 @@ Record decisions that matter later, not every small edit.
 
 ## Decisions
 
+## 2026-05-06 - Watch Mode v0 (controlled manual ticks + terminal snapshots)
+
+- **Status:** accepted
+- **Context:** Operators need a human-readable, terminal-facing view of how Fullerene's pressure/latent pressure/expression/interrupt/presentation signals evolve across bounded `SYSTEM_TICK` cycles, without adding an always-on daemon, TUI/watch framework, or autonomous expression.
+- **Decision:** Implement **`fullerene/watch/`** (`models.py`, `runner.py`, `renderer.py`) with `WatchConfig`, a JSON-serializable `WatchSnapshot`, and `run_watch_mode()` that reuses `fullerene/tick/runner.py` (`run_manual_ticks`) plus Presentation Vector v0. Add CLI flags `--watch`, `--watch-ticks`, `--watch-interval`, `--watch-clear`, `--watch-trace`, `--watch-json`. Render plain stdout text by default and JSON when requested. Never dump LLM/prose and never bypass Expression Gate.
+- **Consequences:** Watch Mode v0 provides deterministic, inspectable terminal snapshots suitable for manual debugging and state inspection. Continuous-loop/watch daemon behavior and richer UI renderers remain future work.
+
 ## 2026-05-06 - Presentation Vector v0 (read-only UI projection)
 
 - **Status:** accepted
