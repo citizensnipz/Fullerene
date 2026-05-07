@@ -149,7 +149,7 @@ class CLIUsabilityTests(unittest.TestCase):
         self.assertIn("- current event: What are you doing?", prompt)
         self.assertIn("- active goals: none", prompt)
         self.assertIn("- recent memories: none", prompt)
-        self.assertIn("- active beliefs: none", prompt)
+        self.assertIn("- belief consistency / contradiction clusters: none", prompt)
         self.assertIn("- query intent: factual", prompt)
         self.assertIn("- missing context: none", prompt)
 
@@ -362,6 +362,33 @@ class CLIUsabilityTests(unittest.TestCase):
         )
         self.assertEqual(exit_code, 0)
         self.assertEqual(context_result["metadata"]["strategy"], "pressure_relevance_v2")
+
+    def test_cli_accepts_self_editing_v3_context_strategy(self) -> None:
+        root = make_tempdir_path()
+        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            exit_code = cli_main(
+                [
+                    "--context",
+                    "--context-strategy",
+                    "self_editing_v3",
+                    "--context-self-edit",
+                    "--context-consolidate",
+                    "--context-predictive",
+                    "--json",
+                    "--content",
+                    "test v3 context",
+                    "--state-dir",
+                    str(root),
+                ]
+            )
+        payload = json.loads(stdout.getvalue())
+        context_result = next(
+            result for result in payload["facet_results"] if result["facet_name"] == "context"
+        )
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(context_result["metadata"]["strategy"], "self_editing_v3")
 
     def test_cli_executor_skill_listing_flag_outputs_manifest(self) -> None:
         stdout = io.StringIO()

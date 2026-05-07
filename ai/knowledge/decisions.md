@@ -2,6 +2,13 @@
 
 Record decisions that matter later, not every small edit.
 
+## 2026-05-07 - Context v3 extends Context strategy (not a new facet)
+
+- **Status:** accepted
+- **Context:** Needed self-editing context lifecycle, deterministic non-canonical consolidation, bounded predictive loading, and context-overload pressure signaling without changing Memory/World Model source-of-truth boundaries.
+- **Decision:** Implement Context v3 as `ContextAssemblyConfig.strategy="self_editing_v3"` layered over existing pressure-relevance selection, adding inspectable lifecycle metadata, bounded low-pressure pruning, deterministic consolidation records (`canonical=false`, source ids required), bounded predictive context labels, and computed context-pressure components with LPB-compatible signal payloads. Keep behavior deterministic and bounded (no LLM summarization, no model training, no unbounded traversal, no source record mutation).
+- **Consequences:** Context becomes adaptive/inspectable under pressure while v2/v2.1 behavior remains stable when v3 strategy is not selected; Memory and World Model remain canonical stores.
+
 ## 2026-05-06 - Behavior v2.3 consumes Context v2.1 reference continuity
 
 - **Status:** accepted

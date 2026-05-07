@@ -1,3 +1,13 @@
+### 2026-05-07 (Context v3 self-editing, consolidation, predictive, pressure)
+
+- Added `SELF_EDITING_V3` context strategy and extended `ContextAssemblyConfig` with v3 toggles/thresholds/bounds (`enable_self_editing`, consolidation/predictive flags, pressure thresholds, stale decay, consolidation/predictive limits).
+- Added context models: `ContextItemType.CONSOLIDATED`, `ContextItemType.PREDICTIVE`, and `ContextConsolidation` (deterministic non-canonical consolidation record with source ids).
+- Extended `DynamicContextAssembler` with `self_editing_v3` path layered on v2 selection: lifecycle metadata tracking, deterministic low-pressure pruning, bounded deterministic consolidation, bounded predictive loading, and context-pressure computation with LPB-compatible `context_overload` signal payload.
+- Updated `ContextFacet` metadata/state updates for v3 fields (`context_pressure`, pruning/protection counts, consolidation/predictive payloads, lifecycle rows, learning events, LPB signal payloads).
+- Updated CLI: `--context-strategy self_editing_v3` + `--context-self-edit` + `--context-consolidate` + `--context-predictive`; prompt grounding now includes continuity/safety/unresolved/belief consistency/consolidated/predictive/system-status sections.
+- Updated Verifier artifact checks to accept `self_editing_v3` and validate v3 consolidation/predictive/context-pressure metadata with warnings for missing source ids, missing predictive score/reason, and overloaded-without-pressure.
+- Added v3 coverage in tests (`tests/test_context.py`, `tests/test_cli.py`, `tests/test_verifier.py`) while keeping v2/v2.1 paths intact.
+
 ### 2026-05-07 (World Model v2 integration: LPB, Context, Policy, Verifier, Behavior)
 
 - LPB: `belief_contradiction_cluster` intensity + idle-tick ingestion gating aligned with cluster `pressure_score` (suppress low-pressure system ticks).

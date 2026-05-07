@@ -396,7 +396,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--context-strategy",
-        choices=("static", "dynamic", "pressure_relevance_v2"),
+        choices=("static", "dynamic", "pressure_relevance_v2", "self_editing_v3"),
         default="dynamic",
         help="Context strategy used when --context is enabled.",
     )
@@ -447,6 +447,21 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=0.20,
         help="Minimum pressure score for LPB pressure-based inclusion.",
+    )
+    parser.add_argument(
+        "--context-self-edit",
+        action="store_true",
+        help="Enable Context v3 self-editing lifecycle metadata.",
+    )
+    parser.add_argument(
+        "--context-consolidate",
+        action="store_true",
+        help="Enable Context v3 deterministic consolidation records.",
+    )
+    parser.add_argument(
+        "--context-predictive",
+        action="store_true",
+        help="Enable Context v3 bounded predictive context loading.",
     )
     parser.add_argument(
         "--affect",
@@ -784,6 +799,9 @@ def _cli_build_nexus_runtime(
             max_working_turns=max(0, int(args.working_memory_context_turns)),
             max_working_memory_turns=max(0, int(args.working_memory_context_turns)),
             salience_threshold=_clamp_unit(args.context_salience_threshold),
+            enable_self_editing=bool(args.context_self_edit or args.context_strategy == "self_editing_v3"),
+            enable_context_consolidation=bool(args.context_consolidate or args.context_strategy == "self_editing_v3"),
+            enable_predictive_loading=bool(args.context_predictive or args.context_strategy == "self_editing_v3"),
             strategy=args.context_strategy,
         )
         facets.append(
@@ -1415,18 +1433,19 @@ def _working_context_prompt_lines(record) -> list[str]:
         _prompt_line(record.event.content) if record.event.content.strip() else "none",
     )
     lines.append(f"- current event: {current_event}")
-    lines.append(f"- active unresolved signals: {_context_signal_summary(items) or 'none'}")
-    lines.append(f"- attention broadcast: {_context_attention_summary(items) or 'none'}")
+    lines.append(f"- recent conversation / continuity: {_context_continuity_summary(context_window) or 'none'}")
+    lines.append(f"- safety / policy constraints: {_context_policy_summary(items) or 'none'}")
+    lines.append(f"- active unresolved signals / LPB: {_context_signal_summary(items) or 'none'}")
+    lines.append(f"- belief consistency / contradiction clusters: {_context_belief_consistency_summary(context_window) or _context_belief_summary(items) or 'none'}")
     lines.append(f"- active goals: {_context_goal_summary(items) or 'none'}")
-    lines.append(f"- active beliefs: {_context_belief_summary(items) or 'none'}")
-    lines.append(
-        f"- relevant memories: {_context_memory_summary(items, context_source='relevant') or 'none'}"
-    )
+    lines.append(f"- planner trajectory: {_recent_planner_summary(record)}")
+    lines.append(f"- relevant memories / communities: {_context_memory_summary(items, context_source='relevant') or _context_memory_community_summary(items) or 'none'}")
     lines.append(
         f"- recent memories: {_context_memory_summary(items, context_source='recent') or 'none'}"
     )
-    lines.append(f"- policy: {_context_policy_summary(items) or 'none'}")
-    lines.append(f"- system status signals: {_context_signal_summary(items) or 'none'}")
+    lines.append(f"- consolidated context (non-canonical): {_context_consolidated_summary(context_window) or 'none'}")
+    lines.append(f"- predictive context (potentially relevant soon): {_context_predictive_summary(context_window) or 'none'}")
+    lines.append(f"- system/context status: {_context_status_summary(context_window) or 'none'}")
     return lines
 
 
@@ -1640,6 +1659,87 @@ def _context_signal_summary(items: list[dict[str, Any]]) -> str | None:
         summaries.append(content)
     if summaries:
         return "; ".join(summaries[:5])
+    return None
+
+
+def _context_consolidated_summary(context_window: dict[str, Any]) -> str | None:
+    metadata = context_window.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    rows = metadata.get("consolidated_context_items")
+    if not isinstance(rows, list) or not rows:
+        return None
+    snippets: list[str] = []
+    for row in rows[:2]:
+        if not isinstance(row, dict):
+            continue
+        top_terms = row.get("top_terms")
+        terms = ", ".join(str(x) for x in top_terms[:4]) if isinstance(top_terms, list) else ""
+        source_ids = row.get("source_item_ids")
+        source_text = ", ".join(str(x) for x in source_ids[:4]) if isinstance(source_ids, list) else ""
+        snippets.append(f"top terms [{terms or 'none'}], source ids [{source_text or 'none'}]")
+    return "; ".join(snippets) if snippets else None
+
+
+def _context_predictive_summary(context_window: dict[str, Any]) -> str | None:
+    metadata = context_window.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    rows = metadata.get("predictive_context_items")
+    if not isinstance(rows, list) or not rows:
+        return None
+    snippets: list[str] = []
+    for row in rows[:3]:
+        if not isinstance(row, dict):
+            continue
+        content = _coerce_prompt_string(row.get("content"))
+        if content:
+            snippets.append(content)
+    return "; ".join(snippets) if snippets else None
+
+
+def _context_status_summary(context_window: dict[str, Any]) -> str | None:
+    metadata = context_window.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    pressure = metadata.get("context_pressure")
+    overloaded = metadata.get("context_overloaded")
+    if not isinstance(pressure, (int, float)):
+        return None
+    return f"context_pressure={float(pressure):.2f}, overloaded={str(bool(overloaded)).lower()}"
+
+
+def _context_memory_community_summary(items: list[dict[str, Any]]) -> str | None:
+    summaries = [
+        _coerce_prompt_string(item.get("content"))
+        for item in items
+        if item.get("item_type") == "memory_community"
+    ]
+    cleaned = [item for item in summaries if item]
+    return "; ".join(cleaned[:2]) if cleaned else None
+
+
+def _context_continuity_summary(context_window: dict[str, Any]) -> str | None:
+    metadata = context_window.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    hint = _coerce_prompt_string(metadata.get("current_topic_hint"))
+    unresolved = metadata.get("unresolved_references")
+    unresolved_text = ""
+    if isinstance(unresolved, list) and unresolved:
+        unresolved_text = ", ".join(str(x) for x in unresolved[:3])
+    if hint and unresolved_text:
+        return f"{hint}; unresolved: {unresolved_text}"
+    return hint or (f"unresolved: {unresolved_text}" if unresolved_text else None)
+
+
+def _context_belief_consistency_summary(context_window: dict[str, Any]) -> str | None:
+    metadata = context_window.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    cluster_ids = metadata.get("included_wm_v2_contradiction_cluster_ids")
+    if isinstance(cluster_ids, list) and cluster_ids:
+        return "contradiction clusters: " + ", ".join(str(x) for x in cluster_ids[:4])
     return None
 
 

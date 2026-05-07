@@ -1,3 +1,11 @@
+## 2026-05-07 - Context v3 implementation
+
+- **Context:** Implement Context v3 (self-editing lifecycle, deterministic non-canonical consolidation, bounded predictive loading, context pressure signal) while preserving Context v2/v2.1 behavior and invariants.
+- **Done:** Added `self_editing_v3` strategy/config, v3 assembler flow, lifecycle/pruning metadata, consolidation records with source ids, predictive context items with score/reason labels, context pressure + components + LPB-compatible signal payload, facet metadata/state plumbing, verifier v3 checks, CLI flags + prompt-order updates, and targeted tests.
+- **Verified:** Targeted tests updated (`test_context`, `test_cli`, `test_verifier`); full-suite run pending after this entry.
+- **Next:** Run full `python -m unittest discover -s tests -p "test_*.py"` and address any regressions from v3 additions.
+- **Blockers:** None.
+
 ### 2026-05-07 - World Model v2 cross-facet polish
 
 - **Context:** Finish WM v2 harness integration (LPB, Context, Policy, Verifier tweaks, Behavior regressions from empty aligned beliefs / unresolved refs, partner-belief ingest accounting).

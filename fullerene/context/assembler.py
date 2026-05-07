@@ -9,8 +9,10 @@ from fullerene.attention import AttentionBroadcast
 from fullerene.context.models import (
     ConversationContinuity,
     PRESSURE_RELEVANCE_V2,
+    SELF_EDITING_V3,
     STATIC_RECENT_EPISODIC_V0,
     ContextAssemblyConfig,
+    ContextConsolidation,
     ContextItem,
     ContextItemType,
     ContextWindow,
@@ -169,6 +171,12 @@ class DynamicContextAssembler:
     ) -> ContextWindow:
         if self.config.strategy == PRESSURE_RELEVANCE_V2:
             return self._assemble_pressure_relevance_v2(
+                event=event,
+                state=state,
+                facet_results=facet_results,
+            )
+        if self.config.strategy == SELF_EDITING_V3:
+            return self._assemble_self_editing_v3(
                 event=event,
                 state=state,
                 facet_results=facet_results,
@@ -544,6 +552,449 @@ class DynamicContextAssembler:
             strategy=PRESSURE_RELEVANCE_V2,
             metadata=metadata,
         )
+
+    def _assemble_self_editing_v3(
+        self,
+        *,
+        event: Event,
+        state: NexusState | None = None,
+        facet_results: Sequence[FacetResult] | None = None,
+    ) -> ContextWindow:
+        base = self._assemble_pressure_relevance_v2(
+            event=event,
+            state=state,
+            facet_results=facet_results,
+        )
+        working_state = state or NexusState()
+        system_pressure = self._resolve_system_pressure(working_state, facet_results)
+        low_pressure_mode = system_pressure < self.config.low_pressure_threshold
+        protected_ids = {
+            str(item.id)
+            for item in base.items
+            if bool(item.metadata.get("protected_inclusion"))
+            or item.item_type
+            in {
+                ContextItemType.EVENT,
+                ContextItemType.WORKING_MEMORY,
+                ContextItemType.CONVERSATION_CONTINUITY,
+                ContextItemType.POLICY,
+                ContextItemType.BELIEF_CONSISTENCY,
+            }
+        }
+
+        prior_lifecycle = self._prior_context_lifecycle(working_state)
+        now_iso = utcnow().isoformat()
+        lifecycle_entries: list[dict[str, Any]] = []
+        retained_ids: list[str] = []
+        stale_count = 0
+        for item in base.items:
+            item_id = str(item.id)
+            prev = prior_lifecycle.get(item_id, {})
+            score = item.metadata.get("score_breakdown", {}) if isinstance(item.metadata, dict) else {}
+            stale_score_prev = self._clamp01(prev.get("stale_score", 0.0))
+            stale_score = self._clamp01(stale_score_prev * (1.0 - self.config.stale_decay_rate))
+            if stale_score > 0.0:
+                stale_count += 1
+            entry = {
+                "item_id": item_id,
+                "item_type": item.item_type.value,
+                "source_id": item.source_id,
+                "source_ids": [item.source_id] if item.source_id else [],
+                "source_facet": str(item.metadata.get("context_source") or "context"),
+                "salience_score": self._clamp01(score.get("salience_score", item.metadata.get("salience", 0.0))),
+                "relevance_score": self._clamp01(score.get("relevance_score", item.metadata.get("hybrid_score", 0.0))),
+                "pressure_score": self._clamp01(score.get("pressure_score", item.metadata.get("intensity", 0.0))),
+                "recency_score": self._clamp01(score.get("recency_score", 0.5)),
+                "final_score": self._clamp01(item.metadata.get("final_score", score.get("final_score", 0.0))),
+                "stale_score": stale_score,
+                "retained_count": int(prev.get("retained_count", 0) or 0) + 1,
+                "evicted_count": int(prev.get("evicted_count", 0) or 0),
+                "last_included_at": now_iso,
+                "include_reason": str(item.metadata.get("include_reason") or "included"),
+                "evict_reason": None,
+                "consolidation_group_id": None,
+            }
+            lifecycle_entries.append(entry)
+            retained_ids.append(item_id)
+
+        consolidations: list[ContextConsolidation] = []
+        consolidation_source_ids: list[str] = []
+        consolidation_candidates = self._consolidation_candidate_groups(base.items, protected_ids)
+        if self.config.enable_context_consolidation:
+            for idx, group in enumerate(consolidation_candidates[: self.config.max_consolidated_items]):
+                consolidation = self._build_consolidation(group, idx)
+                if consolidation is None:
+                    continue
+                consolidations.append(consolidation)
+                consolidation_source_ids.extend(consolidation.source_item_ids)
+
+        predictive_items = []
+        if self.config.enable_predictive_loading:
+            predictive_items = self._build_predictive_items(
+                state=working_state,
+                base_items=base.items,
+                protected_ids=protected_ids,
+            )
+
+        pruned_ids: list[str] = []
+        evict_reasons: dict[str, str] = {}
+        if self.config.enable_self_editing and low_pressure_mode:
+            for entry in lifecycle_entries:
+                item_id = str(entry["item_id"])
+                if item_id in protected_ids:
+                    continue
+                if entry["final_score"] <= self.config.min_relevance_score and entry["stale_score"] >= self.config.stale_decay_rate:
+                    pruned_ids.append(item_id)
+                    evict_reasons[item_id] = "low_pressure_stale_prune"
+                    entry["evict_reason"] = "low_pressure_stale_prune"
+                    entry["evicted_count"] = int(entry.get("evicted_count", 0) or 0) + 1
+
+        keep_pruned = set(pruned_ids)
+        final_items: list[ContextItem] = []
+        for item in base.items:
+            if item.id in keep_pruned:
+                continue
+            final_items.append(item)
+        final_items.extend(predictive_items[: self.config.predictive_max_items])
+        for consolidation in consolidations:
+            c_item = ContextItem(
+                id=f"consolidated:{consolidation.consolidation_id}",
+                item_type=ContextItemType.CONSOLIDATED,
+                content=consolidation.consolidated_text,
+                source_id=consolidation.consolidation_id,
+                created_at=consolidation.created_at,
+                metadata={
+                    "canonical": False,
+                    "method": consolidation.method,
+                    "source_item_ids": list(consolidation.source_item_ids),
+                    "top_terms": list(consolidation.top_terms),
+                    "confidence": consolidation.confidence,
+                },
+            )
+            final_items.append(c_item)
+
+        budget = max(self.config.max_items_total, 1)
+        final_items = final_items[:budget]
+        item_count = len(final_items)
+        load_ratio = self._clamp01(item_count / max(float(budget), 1.0))
+        contested_item_count = max(0, (len(base.items) + len(predictive_items)) - budget)
+        evicted_high_score_count = sum(
+            1
+            for entry in lifecycle_entries
+            if str(entry["item_id"]) in pruned_ids and float(entry.get("final_score", 0.0)) >= 0.6
+        )
+        evicted_high_score_ratio = self._clamp01(
+            evicted_high_score_count / max(float(len(pruned_ids) or 1), 1.0),
+        )
+        unresolved_reference_count = len(base.metadata.get("unresolved_references", []))
+        consolidation_candidate_factor = self._clamp01(
+            len(consolidation_candidates) / max(float(self.config.max_consolidated_items or 1), 1.0),
+        )
+        stale_factor = self._clamp01(stale_count / max(float(len(lifecycle_entries) or 1), 1.0))
+        overload_flag = 1.0 if load_ratio >= self.config.overload_pressure_threshold else 0.0
+        context_pressure = self._clamp01(
+            (load_ratio * 0.30)
+            + (overload_flag * 0.20)
+            + (evicted_high_score_ratio * 0.20)
+            + (self._clamp01(unresolved_reference_count / 5.0) * 0.10)
+            + (consolidation_candidate_factor * 0.10)
+            + (stale_factor * 0.10),
+        )
+
+        base.metadata.update(
+            {
+                "context_strategy": SELF_EDITING_V3,
+                "self_editing_applied": bool(self.config.enable_self_editing),
+                "pruned_context_item_ids": pruned_ids,
+                "retained_context_item_ids": retained_ids,
+                "protected_context_item_ids": sorted(protected_ids),
+                "stale_context_item_count": stale_count,
+                "consolidation_candidate_count": len(consolidation_candidates),
+                "evict_reasons": evict_reasons,
+                "context_item_lifecycle": lifecycle_entries[:128],
+                "consolidated_context_items": [c.to_dict() for c in consolidations],
+                "consolidation_source_ids": consolidation_source_ids[:256],
+                "consolidation_count": len(consolidations),
+                "noncanonical_consolidation": bool(consolidations),
+                "predictive_context_items": [item.to_dict() for item in predictive_items],
+                "predictive_item_ids": [item.id for item in predictive_items],
+                "predictive_scores": {
+                    item.id: float(item.metadata.get("predictive_score", 0.0))
+                    for item in predictive_items
+                },
+                "predictive_reasons": {
+                    item.id: str(item.metadata.get("predictive_reason") or "predictive")
+                    for item in predictive_items
+                },
+                "predictive_evicted_unused_count": max(0, len(predictive_items) - self.config.predictive_max_items),
+                "context_pressure": context_pressure,
+                "context_pressure_components": {
+                    "context_load_ratio": load_ratio,
+                    "contested_item_count": contested_item_count,
+                    "evicted_high_score_count": evicted_high_score_count,
+                    "stale_item_count": stale_count,
+                    "consolidation_candidate_count": len(consolidation_candidates),
+                    "unresolved_reference_count": unresolved_reference_count,
+                    "overload_flag": overload_flag,
+                    "compression_needed_score": consolidation_candidate_factor,
+                },
+                "context_pressure_reason": (
+                    "unresolved_references_dominate"
+                    if unresolved_reference_count >= 2
+                    else "context_overload"
+                    if context_pressure >= self.config.overload_pressure_threshold
+                    else "normal"
+                ),
+                "consolidation_recommended": bool(
+                    len(consolidation_candidates) >= self.config.consolidation_min_items
+                    or context_pressure >= self.config.overload_pressure_threshold
+                ),
+                "context_overloaded": bool(load_ratio >= self.config.overload_pressure_threshold),
+                "learning_events": self._context_v3_learning_events(
+                    pruned_ids=pruned_ids,
+                    consolidation_count=len(consolidations),
+                    predictive_count=len(predictive_items),
+                    stale_count=stale_count,
+                    protected_count=len(protected_ids),
+                    context_pressure=context_pressure,
+                ),
+                "context_load": {
+                    "item_count": item_count,
+                    "max_items": budget,
+                    "load_ratio": round(load_ratio, 3),
+                    "overloaded": load_ratio >= self.config.overload_pressure_threshold,
+                },
+                "lpb_signals": self._context_pressure_signal_payload(
+                    context_pressure=context_pressure,
+                    item_count=item_count,
+                    max_items=budget,
+                    unresolved_reference_count=unresolved_reference_count,
+                ),
+                "item_count": item_count,
+            }
+        )
+        return ContextWindow(
+            items=final_items,
+            max_items=budget,
+            strategy=SELF_EDITING_V3,
+            metadata=base.metadata,
+        )
+
+    def _context_v3_learning_events(
+        self,
+        *,
+        pruned_ids: list[str],
+        consolidation_count: int,
+        predictive_count: int,
+        stale_count: int,
+        protected_count: int,
+        context_pressure: float,
+    ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        if pruned_ids:
+            events.append({"event_type": "context_pruned", "count": len(pruned_ids), "item_ids": pruned_ids[:32]})
+        if consolidation_count:
+            events.append({"event_type": "context_consolidated", "count": consolidation_count})
+        if predictive_count:
+            events.append({"event_type": "predictive_context_loaded", "count": predictive_count})
+        if stale_count:
+            events.append({"event_type": "stale_context_decayed", "count": stale_count})
+        if protected_count:
+            events.append({"event_type": "protected_context_retained", "count": protected_count})
+        if context_pressure >= self.config.overload_pressure_threshold:
+            events.append({"event_type": "context_pressure_emitted", "intensity": round(context_pressure, 3)})
+        return events
+
+    def _context_pressure_signal_payload(
+        self,
+        *,
+        context_pressure: float,
+        item_count: int,
+        max_items: int,
+        unresolved_reference_count: int,
+    ) -> list[dict[str, Any]]:
+        if (not self.config.enable_context_pressure) or context_pressure < self.config.overload_pressure_threshold:
+            return []
+        return [
+            {
+                "entry_type": "context_overload",
+                "source": "context",
+                "intensity": round(context_pressure, 3),
+                "reason": "working_context_pressure",
+                "item_count": item_count,
+                "max_items": max_items,
+                "unresolved_reference_count": unresolved_reference_count,
+            }
+        ]
+
+    def _resolve_system_pressure(
+        self,
+        state: NexusState,
+        facet_results: Sequence[FacetResult] | None,
+    ) -> float:
+        signals = self._facet_bucket("signals", state, facet_results)
+        if isinstance(signals, dict):
+            value = signals.get("latent_pressure_total")
+            if isinstance(value, (int, float)):
+                return self._clamp01(value)
+        nexus = self._facet_bucket("nexus", state, facet_results)
+        if isinstance(nexus, dict):
+            value = nexus.get("system_pressure")
+            if isinstance(value, (int, float)):
+                return self._clamp01(value)
+        return 0.0
+
+    def _prior_context_lifecycle(self, state: NexusState) -> dict[str, dict[str, Any]]:
+        context_state = state.facet_state.get("context")
+        if not isinstance(context_state, dict):
+            return {}
+        raw_rows = context_state.get("last_context_item_lifecycle")
+        if not isinstance(raw_rows, list):
+            return {}
+        out: dict[str, dict[str, Any]] = {}
+        for row in raw_rows:
+            if not isinstance(row, dict):
+                continue
+            item_id = str(row.get("item_id") or "").strip()
+            if item_id:
+                out[item_id] = dict(row)
+        return out
+
+    def _consolidation_candidate_groups(
+        self,
+        items: Sequence[ContextItem],
+        protected_ids: set[str],
+    ) -> list[list[ContextItem]]:
+        groups: dict[str, list[ContextItem]] = {}
+        for item in items:
+            if item.id in protected_ids:
+                continue
+            key = None
+            if isinstance(item.metadata, dict):
+                key = (
+                    item.metadata.get("community_id")
+                    or item.metadata.get("belief_cluster_id")
+                    or item.metadata.get("goal_id")
+                )
+            if not key:
+                tags = []
+                if isinstance(item.metadata, dict):
+                    raw_tags = item.metadata.get("tags")
+                    if isinstance(raw_tags, list):
+                        tags = [str(tag).strip().lower() for tag in raw_tags if str(tag).strip()]
+                key = f"{item.item_type.value}:{','.join(sorted(tags)[:2])}" if tags else f"{item.item_type.value}:default"
+            groups.setdefault(str(key), []).append(item)
+        rows = [group for group in groups.values() if len(group) >= self.config.consolidation_min_items]
+        rows.sort(key=lambda group: len(group), reverse=True)
+        return rows
+
+    def _build_consolidation(
+        self,
+        group: Sequence[ContextItem],
+        idx: int,
+    ) -> ContextConsolidation | None:
+        source_items = list(group)[: self.config.consolidation_max_source_items]
+        if len(source_items) < self.config.consolidation_min_items:
+            return None
+        source_ids = [item.id for item in source_items]
+        source_types = sorted({item.item_type.value for item in source_items})
+        terms: dict[str, int] = {}
+        for item in source_items:
+            tokens = tokenize(item.content or "")
+            for token in tokens:
+                if len(token) < 3:
+                    continue
+                terms[token] = terms.get(token, 0) + 1
+        top_terms = [term for term, _count in sorted(terms.items(), key=lambda row: (-row[1], row[0]))[:5]]
+        counts_by_type: dict[str, int] = {}
+        for item in source_items:
+            key = item.item_type.value
+            counts_by_type[key] = counts_by_type.get(key, 0) + 1
+        type_summary = ", ".join(f"{count} {kind}" for kind, count in sorted(counts_by_type.items()))
+        text = (
+            f"Related context group: {', '.join(top_terms) or 'mixed terms'}. "
+            f"Sources include {type_summary}. Source ids: {', '.join(source_ids)}"
+        )
+        return ContextConsolidation(
+            consolidation_id=f"ctxc-{idx + 1}",
+            source_item_ids=source_ids,
+            source_types=source_types,
+            consolidated_text=text,
+            top_terms=top_terms,
+            confidence=self._clamp01(len(source_items) / max(float(self.config.consolidation_max_source_items), 1.0)),
+            metadata={"group_size": len(group)},
+        )
+
+    def _build_predictive_items(
+        self,
+        *,
+        state: NexusState,
+        base_items: Sequence[ContextItem],
+        protected_ids: set[str],
+    ) -> list[ContextItem]:
+        base_ids = {item.id for item in base_items}
+        memory_bucket = state.facet_state.get("memory")
+        communities = []
+        if isinstance(memory_bucket, dict):
+            raw = memory_bucket.get("last_context_memory_communities")
+            if isinstance(raw, list):
+                communities = [row for row in raw if isinstance(row, dict)]
+        planner_bucket = state.facet_state.get("planner")
+        relevant_goal_ids = []
+        if isinstance(planner_bucket, dict):
+            rg = planner_bucket.get("last_relevant_goal_ids")
+            if isinstance(rg, list):
+                relevant_goal_ids = [str(item) for item in rg if str(item).strip()]
+        attention_bucket = state.facet_state.get("attention")
+        attention_score = 0.0
+        if isinstance(attention_bucket, dict):
+            attention_score = self._clamp01(float(attention_bucket.get("last_pressure_contribution") or 0.0))
+        items: list[ContextItem] = []
+        for row in communities[: max(self.config.predictive_max_items * 2, 4)]:
+            cid = str(row.get("community_id") or "").strip()
+            if not cid:
+                continue
+            activation = self._clamp01(row.get("activation_score", 0.0))
+            community_pressure = self._clamp01(row.get("pressure_score", 0.0))
+            goal_relevance = 1.0 if relevant_goal_ids else 0.4
+            planner_score = 0.7 if relevant_goal_ids else 0.3
+            working_overlap = 0.0
+            score = self._clamp01(
+                (goal_relevance * 0.30)
+                + (planner_score * 0.20)
+                + (activation * 0.20)
+                + (community_pressure * 0.15)
+                + (attention_score * 0.10)
+                + (working_overlap * 0.05)
+            )
+            if score < self.config.predictive_min_score:
+                continue
+            item_id = f"predictive:memory_community:{cid}"
+            if item_id in base_ids or item_id in protected_ids:
+                continue
+            items.append(
+                ContextItem(
+                    id=item_id,
+                    item_type=ContextItemType.PREDICTIVE,
+                    content=f"Potentially relevant soon: memory community {cid} (activation {activation:.2f}).",
+                    source_id=cid,
+                    created_at=utcnow(),
+                    metadata={
+                        "predictive": True,
+                        "predictive_score": score,
+                        "predictive_reason": "goal_planner_memory_community",
+                    },
+                )
+            )
+        items.sort(key=lambda item: float(item.metadata.get("predictive_score", 0.0)), reverse=True)
+        return items[: self.config.predictive_max_items]
+
+    @staticmethod
+    def _clamp01(value: Any) -> float:
+        try:
+            return max(0.0, min(float(value), 1.0))
+        except (TypeError, ValueError):
+            return 0.0
 
     def _prior_context_item_ids(self, state: NexusState) -> list[str]:
         context_state = state.facet_state.get("context")

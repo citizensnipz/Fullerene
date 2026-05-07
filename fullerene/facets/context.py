@@ -7,6 +7,7 @@ from pathlib import Path
 from fullerene.context import (
     DYNAMIC_ACTIVE_FACETS_V1,
     PRESSURE_RELEVANCE_V2,
+    SELF_EDITING_V3,
     STATIC_RECENT_EPISODIC_V0,
     ContextAssemblyConfig,
     ContextWindow,
@@ -24,6 +25,8 @@ CONTEXT_STRATEGIES = {
     DYNAMIC_ACTIVE_FACETS_V1: DYNAMIC_ACTIVE_FACETS_V1,
     "pressure_relevance_v2": PRESSURE_RELEVANCE_V2,
     PRESSURE_RELEVANCE_V2: PRESSURE_RELEVANCE_V2,
+    "self_editing_v3": SELF_EDITING_V3,
+    SELF_EDITING_V3: SELF_EDITING_V3,
     "static": STATIC_RECENT_EPISODIC_V0,
     STATIC_RECENT_EPISODIC_V0: STATIC_RECENT_EPISODIC_V0,
 }
@@ -52,6 +55,7 @@ class ContextFacet:
         self.window_size = max(int(window_size), 1)
         self.config = config or ContextAssemblyConfig(max_memories=self.window_size)
         self.strategy = self._resolve_strategy(strategy)
+        self.config.strategy = self.strategy
         self.static_assembler = StaticContextAssembler(
             store,
             max_items=self.window_size,
@@ -139,6 +143,7 @@ class ContextFacet:
                 "last_context_max_items": max_items,
                 "last_context_load_ratio": load_ratio,
                 "last_context_overloaded": context_load["overloaded"],
+                "last_context_pressure": window.metadata.get("context_pressure", 0.0),
                 "last_context_strategy": window.strategy,
                 "last_context_source_types": source_types,
                 "last_included_context_types": included_context_types,
@@ -160,6 +165,9 @@ class ContextFacet:
                 "last_reference_anchor_count": reference_anchor_count,
                 "last_included_wm_v2_contradiction_cluster_ids": wm_v2_cluster_ids,
                 "last_included_belief_consistency_wm_v2": belief_consistency_prior_wm,
+                "last_context_item_lifecycle": window.metadata.get("context_item_lifecycle", []),
+                "last_context_learning_events": window.metadata.get("learning_events", []),
+                "last_context_lpb_signals": window.metadata.get("lpb_signals", []),
             },
             metadata={
                 "context_window": window.to_dict(),
@@ -189,6 +197,27 @@ class ContextFacet:
                 "topic_terms": topic_terms,
                 "included_wm_v2_contradiction_cluster_ids": wm_v2_cluster_ids,
                 "belief_consistency_prior_wm": belief_consistency_prior_wm,
+                "context_pressure": window.metadata.get("context_pressure", 0.0),
+                "context_pressure_components": window.metadata.get("context_pressure_components", {}),
+                "context_pressure_reason": window.metadata.get("context_pressure_reason"),
+                "context_overloaded": window.metadata.get("context_overloaded", context_load["overloaded"]),
+                "consolidation_recommended": window.metadata.get("consolidation_recommended", False),
+                "predictive_context_item_count": len(window.metadata.get("predictive_item_ids", [])),
+                "protected_context_item_count": len(window.metadata.get("protected_context_item_ids", [])),
+                "pruned_context_item_count": len(window.metadata.get("pruned_context_item_ids", [])),
+                "stale_context_item_count": window.metadata.get("stale_context_item_count", 0),
+                "active_memory_community_count": len(
+                    [
+                        item
+                        for item in window.items
+                        if item.item_type.value == "memory_community"
+                    ]
+                ),
+                "active_belief_cluster_count": len(wm_v2_cluster_ids),
+                "consolidated_context_items": window.metadata.get("consolidated_context_items", []),
+                "predictive_context_items": window.metadata.get("predictive_context_items", []),
+                "learning_events": window.metadata.get("learning_events", []),
+                "lpb_signals": window.metadata.get("lpb_signals", []),
                 "salience_threshold": window.metadata.get("salience_threshold", 0.0),
                 "limits": window.metadata.get("limits", {}),
                 "reasons": window.metadata.get("reasons", []),

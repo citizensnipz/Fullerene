@@ -1148,6 +1148,36 @@ class VerifierV1ArtifactTests(unittest.TestCase):
             rows,
         )
 
+    def test_context_v3_consolidation_requires_source_ids(self) -> None:
+        rows = verifier_artifacts.validate_context_v2_packet(
+            {
+                "strategy": "self_editing_v3",
+                "consolidated_context_items": [{"canonical": False, "source_item_ids": []}],
+                "context_load": {"item_count": 4, "max_items": 8, "load_ratio": 0.5, "overloaded": False},
+            },
+            behavior_trace={"final_decision": "record"},
+            event={"event_type": "user_message"},
+        )
+        self.assertTrue(
+            any(r.get("code") == "consolidation_missing_source_ids" for r in rows if isinstance(r, dict)),
+            rows,
+        )
+
+    def test_context_v3_overloaded_without_pressure_warns(self) -> None:
+        rows = verifier_artifacts.validate_context_v2_packet(
+            {
+                "strategy": "self_editing_v3",
+                "context_overloaded": True,
+                "context_load": {"item_count": 8, "max_items": 8, "load_ratio": 1.0, "overloaded": True},
+            },
+            behavior_trace={"final_decision": "ask"},
+            event={"event_type": "user_message"},
+        )
+        self.assertTrue(
+            any(r.get("code") == "overloaded_without_context_pressure" for r in rows if isinstance(r, dict)),
+            rows,
+        )
+
     def test_world_model_contradicted_without_count_warns(self) -> None:
         rows = verifier_artifacts.validate_world_model_v1_artifacts(
             {

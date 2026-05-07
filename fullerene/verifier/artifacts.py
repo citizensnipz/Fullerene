@@ -13,6 +13,7 @@ from fullerene.planner.models import PlanStatus, PlanStepStatus, RiskLevel
 from fullerene.context.models import (
     DYNAMIC_ACTIVE_FACETS_V1,
     PRESSURE_RELEVANCE_V2,
+    SELF_EDITING_V3,
     STATIC_RECENT_EPISODIC_V0,
     ContextItemType,
 )
@@ -41,7 +42,12 @@ CANONICAL_PRESSURE_KEYS = (
 BEHAVIOR_DECISION_KEYS = ("wait", "record", "ask", "act")
 ACT_OVERLOAD_THRESHOLD = 0.85
 VALID_CONTEXT_STRATEGIES = frozenset(
-    {STATIC_RECENT_EPISODIC_V0, DYNAMIC_ACTIVE_FACETS_V1, PRESSURE_RELEVANCE_V2}
+    {
+        STATIC_RECENT_EPISODIC_V0,
+        DYNAMIC_ACTIVE_FACETS_V1,
+        PRESSURE_RELEVANCE_V2,
+        SELF_EDITING_V3,
+    }
 )
 VALID_CONTEXT_TYPES = frozenset(item.value for item in ContextItemType)
 VALID_BELIEF_STATUS = frozenset(
@@ -1572,6 +1578,116 @@ def validate_context_v2_packet(
                 retry_recommended=True,
             )
         )
+    # Context v3 checks (compatible extension over v2 packet).
+    if strategy == SELF_EDITING_V3:
+        consolidated = context_meta.get("consolidated_context_items")
+        if isinstance(consolidated, list):
+            for idx, row in enumerate(consolidated[:32]):
+                if not isinstance(row, Mapping):
+                    continue
+                if row.get("canonical") is not False:
+                    out.append(
+                        artifact_result(
+                            validator="context_v3_schema",
+                            artifact_kind=kind,
+                            status="failed",
+                            severity="warning",
+                            code="consolidation_canonical_true",
+                            path=f"context.metadata.consolidated_context_items[{idx}].canonical",
+                            message="Consolidation must be non-canonical (canonical=false).",
+                        )
+                    )
+                src_ids = row.get("source_item_ids")
+                if not isinstance(src_ids, list) or not src_ids:
+                    out.append(
+                        artifact_result(
+                            validator="context_v3_schema",
+                            artifact_kind=kind,
+                            status="warning",
+                            severity="warning",
+                            code="consolidation_missing_source_ids",
+                            path=f"context.metadata.consolidated_context_items[{idx}].source_item_ids",
+                            message="Consolidation should cite source item ids.",
+                        )
+                    )
+        predictive = context_meta.get("predictive_context_items")
+        if isinstance(predictive, list):
+            for idx, row in enumerate(predictive[:64]):
+                if not isinstance(row, Mapping):
+                    continue
+                meta = row.get("metadata")
+                if not isinstance(meta, Mapping) or not bool(meta.get("predictive")):
+                    out.append(
+                        artifact_result(
+                            validator="context_v3_schema",
+                            artifact_kind=kind,
+                            status="warning",
+                            severity="warning",
+                            code="predictive_item_unmarked",
+                            path=f"context.metadata.predictive_context_items[{idx}]",
+                            message="Predictive context item should be marked predictive=true.",
+                        )
+                    )
+                score = (meta or {}).get("predictive_score") if isinstance(meta, Mapping) else None
+                reason = (meta or {}).get("predictive_reason") if isinstance(meta, Mapping) else None
+                if _to_float(score) is None or not str(reason or "").strip():
+                    out.append(
+                        artifact_result(
+                            validator="context_v3_schema",
+                            artifact_kind=kind,
+                            status="warning",
+                            severity="warning",
+                            code="predictive_missing_reason_or_score",
+                            path=f"context.metadata.predictive_context_items[{idx}].metadata",
+                            message="Predictive item should include score and reason.",
+                        )
+                    )
+        pressure = _to_float(context_meta.get("context_pressure"))
+        components = context_meta.get("context_pressure_components")
+        overloaded_v3 = bool(context_meta.get("context_overloaded"))
+        if overloaded_v3 and pressure is None:
+            out.append(
+                artifact_result(
+                    validator="context_v3_schema",
+                    artifact_kind=kind,
+                    status="warning",
+                    severity="warning",
+                    code="overloaded_without_context_pressure",
+                    path="context.metadata.context_pressure",
+                    message="Context overloaded but no context_pressure was emitted.",
+                )
+            )
+        if isinstance(components, Mapping):
+            for key, value in components.items():
+                num = _to_float(value)
+                if num is not None and key.endswith("_count"):
+                    continue
+                if num is not None and not (0.0 <= float(num) <= 1.0):
+                    out.append(
+                        artifact_result(
+                            validator="context_v3_schema",
+                            artifact_kind=kind,
+                            status="warning",
+                            severity="warning",
+                            code="context_pressure_component_out_of_bounds",
+                            path=f"context.metadata.context_pressure_components.{key}",
+                            message="Context pressure component should be clamped to [0,1].",
+                        )
+                    )
+        unresolved = context_meta.get("unresolved_references")
+        reason = str(context_meta.get("context_pressure_reason") or "")
+        if isinstance(unresolved, list) and len(unresolved) >= 2 and "unresolved" not in reason:
+            out.append(
+                artifact_result(
+                    validator="context_v3_schema",
+                    artifact_kind=kind,
+                    status="warning",
+                    severity="warning",
+                    code="high_unresolved_without_clarification_pressure",
+                    path="context.metadata.context_pressure_reason",
+                    message="High unresolved references should influence pressure reason metadata.",
+                )
+            )
     out.append(
         artifact_result(
             validator="context_v2_schema",

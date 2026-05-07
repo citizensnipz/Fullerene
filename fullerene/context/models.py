@@ -12,6 +12,7 @@ from uuid import uuid4
 STATIC_RECENT_EPISODIC_V0 = "static_recent_episodic_v0"
 DYNAMIC_ACTIVE_FACETS_V1 = "dynamic_active_facets_v1"
 PRESSURE_RELEVANCE_V2 = "pressure_relevance_v2"
+SELF_EDITING_V3 = "self_editing_v3"
 
 
 def utcnow() -> datetime:
@@ -48,6 +49,8 @@ class ContextItemType(str, Enum):
     BELIEF_CONSISTENCY = "belief_consistency"
     POLICY = "policy"
     SIGNAL = "signal"
+    CONSOLIDATED = "consolidated"
+    PREDICTIVE = "predictive"
     SYSTEM = "system"
 
 
@@ -205,6 +208,19 @@ class ContextAssemblyConfig:
     include_recent_signals: bool = True
     include_policy_summary: bool = True
     include_signal_summaries: bool = True
+    enable_self_editing: bool = True
+    enable_context_consolidation: bool = True
+    enable_predictive_loading: bool = True
+    enable_context_pressure: bool = True
+    low_pressure_threshold: float = 0.25
+    overload_pressure_threshold: float = 0.80
+    consolidation_min_items: int = 3
+    consolidation_max_source_items: int = 8
+    predictive_max_items: int = 4
+    predictive_min_score: float = 0.35
+    stale_decay_rate: float = 0.15
+    context_pressure_weight: float = 0.20
+    max_consolidated_items: int = 4
     strategy: str = DYNAMIC_ACTIVE_FACETS_V1
 
     def __post_init__(self) -> None:
@@ -215,6 +231,8 @@ class ContextAssemblyConfig:
             self.strategy = STATIC_RECENT_EPISODIC_V0
         elif raw_strategy == PRESSURE_RELEVANCE_V2:
             self.strategy = PRESSURE_RELEVANCE_V2
+        elif raw_strategy in {"self_editing", SELF_EDITING_V3}:
+            self.strategy = SELF_EDITING_V3
         else:
             self.strategy = DYNAMIC_ACTIVE_FACETS_V1
         self.max_items_total = max(int(self.max_items_total), 1)
@@ -247,10 +265,29 @@ class ContextAssemblyConfig:
         self.include_signal_summaries = bool(self.include_signal_summaries)
         self.include_policy_summary = self.include_policy
         self.include_signal_summaries = self.include_recent_signals
+        self.enable_self_editing = bool(self.enable_self_editing)
+        self.enable_context_consolidation = bool(self.enable_context_consolidation)
+        self.enable_predictive_loading = bool(self.enable_predictive_loading)
+        self.enable_context_pressure = bool(self.enable_context_pressure)
+        self.low_pressure_threshold = max(0.0, min(float(self.low_pressure_threshold), 1.0))
+        self.overload_pressure_threshold = max(
+            0.0,
+            min(float(self.overload_pressure_threshold), 1.0),
+        )
+        self.consolidation_min_items = max(int(self.consolidation_min_items), 2)
+        self.consolidation_max_source_items = max(
+            int(self.consolidation_max_source_items),
+            self.consolidation_min_items,
+        )
+        self.predictive_max_items = max(int(self.predictive_max_items), 0)
+        self.predictive_min_score = max(0.0, min(float(self.predictive_min_score), 1.0))
+        self.stale_decay_rate = max(0.0, min(float(self.stale_decay_rate), 1.0))
+        self.context_pressure_weight = max(0.0, min(float(self.context_pressure_weight), 1.0))
+        self.max_consolidated_items = max(int(self.max_consolidated_items), 0)
 
     @property
     def max_items(self) -> int:
-        if self.strategy == PRESSURE_RELEVANCE_V2:
+        if self.strategy in {PRESSURE_RELEVANCE_V2, SELF_EDITING_V3}:
             return self.max_items_total
         policy_items = 1 if self.include_policy_summary else 0
         signal_items = 5 if self.include_signal_summaries else 0
@@ -291,6 +328,19 @@ class ContextAssemblyConfig:
             "salience_threshold": self.salience_threshold,
             "include_policy_summary": self.include_policy_summary,
             "include_signal_summaries": self.include_signal_summaries,
+            "enable_self_editing": self.enable_self_editing,
+            "enable_context_consolidation": self.enable_context_consolidation,
+            "enable_predictive_loading": self.enable_predictive_loading,
+            "enable_context_pressure": self.enable_context_pressure,
+            "low_pressure_threshold": self.low_pressure_threshold,
+            "overload_pressure_threshold": self.overload_pressure_threshold,
+            "consolidation_min_items": self.consolidation_min_items,
+            "consolidation_max_source_items": self.consolidation_max_source_items,
+            "predictive_max_items": self.predictive_max_items,
+            "predictive_min_score": self.predictive_min_score,
+            "stale_decay_rate": self.stale_decay_rate,
+            "context_pressure_weight": self.context_pressure_weight,
+            "max_consolidated_items": self.max_consolidated_items,
             "strategy": self.strategy,
             "max_items": self.max_items,
         }
@@ -333,7 +383,74 @@ class ContextAssemblyConfig:
             salience_threshold=data.get("salience_threshold", 0.0),
             include_policy_summary=data.get("include_policy_summary", True),
             include_signal_summaries=data.get("include_signal_summaries", True),
+            enable_self_editing=data.get("enable_self_editing", True),
+            enable_context_consolidation=data.get("enable_context_consolidation", True),
+            enable_predictive_loading=data.get("enable_predictive_loading", True),
+            enable_context_pressure=data.get("enable_context_pressure", True),
+            low_pressure_threshold=data.get("low_pressure_threshold", 0.25),
+            overload_pressure_threshold=data.get("overload_pressure_threshold", 0.80),
+            consolidation_min_items=data.get("consolidation_min_items", 3),
+            consolidation_max_source_items=data.get("consolidation_max_source_items", 8),
+            predictive_max_items=data.get("predictive_max_items", 4),
+            predictive_min_score=data.get("predictive_min_score", 0.35),
+            stale_decay_rate=data.get("stale_decay_rate", 0.15),
+            context_pressure_weight=data.get("context_pressure_weight", 0.20),
+            max_consolidated_items=data.get("max_consolidated_items", 4),
             strategy=data.get("strategy", DYNAMIC_ACTIVE_FACETS_V1),
+        )
+
+
+@dataclass(slots=True)
+class ContextConsolidation:
+    consolidation_id: str
+    source_item_ids: list[str]
+    source_types: list[str]
+    consolidated_text: str
+    top_terms: list[str]
+    confidence: float = 0.0
+    method: str = "deterministic_term_consolidation_v0"
+    canonical: bool = False
+    created_at: datetime = field(default_factory=utcnow)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.consolidation_id = str(self.consolidation_id or uuid4().hex)
+        self.source_item_ids = [str(item_id) for item_id in self.source_item_ids if str(item_id).strip()]
+        self.source_types = [str(source_type) for source_type in self.source_types if str(source_type).strip()]
+        self.consolidated_text = str(self.consolidated_text or "").strip()
+        self.top_terms = [str(term).strip().lower() for term in self.top_terms if str(term).strip()]
+        self.confidence = max(0.0, min(float(self.confidence), 1.0))
+        self.method = str(self.method or "deterministic_term_consolidation_v0")
+        self.canonical = False
+        self.metadata = dict(self.metadata or {})
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "consolidation_id": self.consolidation_id,
+            "source_item_ids": list(self.source_item_ids),
+            "source_types": list(self.source_types),
+            "consolidated_text": self.consolidated_text,
+            "top_terms": list(self.top_terms),
+            "confidence": self.confidence,
+            "method": self.method,
+            "canonical": False,
+            "created_at": self.created_at.isoformat(),
+            "metadata": _serialize_value(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ContextConsolidation":
+        return cls(
+            consolidation_id=str(data.get("consolidation_id") or uuid4().hex),
+            source_item_ids=list(data.get("source_item_ids") or []),
+            source_types=list(data.get("source_types") or []),
+            consolidated_text=str(data.get("consolidated_text") or ""),
+            top_terms=list(data.get("top_terms") or []),
+            confidence=float(data.get("confidence") or 0.0),
+            method=str(data.get("method") or "deterministic_term_consolidation_v0"),
+            canonical=False,
+            created_at=_parse_datetime(data.get("created_at")) or utcnow(),
+            metadata=data.get("metadata", {}),
         )
 
 

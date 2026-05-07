@@ -267,7 +267,7 @@ score = (
 - **v0** - static working memory window from recent episodic records only. **Implemented for explicit compatibility.**
 - **v1** - dynamically assembled bounded working packet from current event, active goals, recent/relevant memories, active beliefs, policy summary, and compact signal summaries under deterministic scoping rules. **Current.**
 - **v2** - pressure/relevance-filtered deterministic assembly with protected working-memory continuity and LPB/attention-aware inclusion. **Current.**
-- **v3** - self-editing context, semantic consolidation, predictive loading, and pressure signaling when the context window overloads. **Future.**
+- **v3 (`self_editing_v3`)** - deterministic self-editing context implemented as a Context strategy extension over v2: low-pressure stale pruning metadata, bounded non-canonical consolidation records (source ids required, `canonical=false`), bounded predictive context loading labels, and explicit context-pressure components/signal payloads. No LLM summarization, no model training, no unbounded traversal, and no source-of-truth mutation in Memory/World Model stores.
 
 ## Behavior v2.3 (current)
 

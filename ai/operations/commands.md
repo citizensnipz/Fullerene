@@ -91,6 +91,7 @@ python -m fullerene --full --interactive --interactive-show-ticks
 python -m fullerene --full --interactive --interactive-status-every 5
 python -m fullerene --full --interactive --session-id demo-session --working-memory-context-turns 8 --working-memory-turns 20
 python -m fullerene --full --interactive --interactive-allow-model --model ollama:gemma3:4b --context-strategy pressure_relevance_v2
+python -m fullerene --context --context-strategy self_editing_v3 --context-self-edit --context-consolidate --context-predictive --content "plan next steps"
 python -m fullerene --full --interactive --interactive-allow-model --model ollama:gemma3:4b
 cmd /c "echo quit| python -m fullerene --full --interactive --interactive-max-ticks 20 --interactive-interval 0.5 --interactive-no-clear"
 ```
@@ -107,7 +108,9 @@ cmd /c "echo quit| python -m fullerene --full --interactive --interactive-max-ti
 - `--working-memory-context-turns N` controls how many recent dialogue turns Context includes.
 - `--working-memory-turns N` controls per-session working-memory retention after pruning.
 - `--context-strategy pressure_relevance_v2` enables Context v2 pressure/relevance filtering.
+- `--context-strategy self_editing_v3` enables Context v3 self-editing lifecycle with bounded consolidation/predictive loading and context-pressure metadata.
 - `--context-max-items N`, `--context-min-relevance FLOAT`, and `--context-min-pressure FLOAT` tune Context v2 bounded selection and cutoffs.
+- `--context-self-edit`, `--context-consolidate`, and `--context-predictive` explicitly toggle v3 lifecycle/consolidation/predictive features.
 - `--interactive-clear` enables experimental clear-screen behavior; transcript mode remains default.
 - `--json` is not supported with `--interactive` in v0.
 

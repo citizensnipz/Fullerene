@@ -15,6 +15,7 @@ from fullerene.context import (
     ConversationContinuity,
     DYNAMIC_ACTIVE_FACETS_V1,
     PRESSURE_RELEVANCE_V2,
+    SELF_EDITING_V3,
     ReferenceAnchor,
     STATIC_RECENT_EPISODIC_V0,
     ContextAssemblyConfig,
@@ -203,6 +204,20 @@ class ContextModelTests(unittest.TestCase):
         self.assertEqual(config.max_items, 1)
         self.assertEqual(config.min_relevance_score, 0.15)
         self.assertEqual(config.min_pressure_score, 0.20)
+
+    def test_context_v3_defaults_and_clamping(self) -> None:
+        config = ContextAssemblyConfig(
+            strategy=SELF_EDITING_V3,
+            low_pressure_threshold=-1,
+            overload_pressure_threshold=2,
+            predictive_min_score=4,
+            consolidation_min_items=1,
+        )
+        self.assertEqual(config.strategy, SELF_EDITING_V3)
+        self.assertEqual(config.low_pressure_threshold, 0.0)
+        self.assertEqual(config.overload_pressure_threshold, 1.0)
+        self.assertEqual(config.predictive_min_score, 1.0)
+        self.assertGreaterEqual(config.consolidation_min_items, 2)
 
     def test_context_item_round_trips_through_dict(self) -> None:
         created_at = utcnow() - timedelta(minutes=30)
@@ -1221,6 +1236,34 @@ class DynamicContextAssemblerTests(unittest.TestCase):
         self.assertIn("reference_anchors", window.metadata)
         self.assertIn("continuity_confidence", window.metadata)
         self.assertIn("reference_anchor_count", window.metadata)
+
+    def test_self_editing_v3_emits_predictive_consolidation_and_pressure_metadata(self) -> None:
+        event = self.make_event("plan next steps")
+        state = NexusState(
+            facet_state={
+                "memory": {
+                    "last_context_memory_communities": [
+                        {"community_id": "c1", "activation_score": 0.9, "pressure_score": 0.6},
+                        {"community_id": "c2", "activation_score": 0.8, "pressure_score": 0.5},
+                    ]
+                },
+                "planner": {"last_relevant_goal_ids": ["goal-1"]},
+            }
+        )
+        assembler = DynamicContextAssembler(
+            config=ContextAssemblyConfig(
+                strategy=SELF_EDITING_V3,
+                max_items_total=12,
+                max_working_memory_turns=0,
+                include_policy_summary=False,
+                include_signal_summaries=False,
+            )
+        )
+        window = assembler.assemble(event=event, state=state)
+        self.assertEqual(window.strategy, SELF_EDITING_V3)
+        self.assertIn("context_pressure", window.metadata)
+        self.assertIn("predictive_context_items", window.metadata)
+        self.assertIn("context_item_lifecycle", window.metadata)
 
     def test_context_facet_state_updates_include_last_reference_anchors(self) -> None:
         root = make_tempdir_path()
