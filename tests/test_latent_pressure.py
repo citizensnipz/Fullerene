@@ -9,6 +9,7 @@ from fullerene.signals.latent_pressure import (
     LatentPressureResult,
     update_latent_pressure,
 )
+from fullerene.signals.latent_pressure.buffer import should_ingest_signal_on_tick
 from fullerene.state import InMemoryStateStore
 from fullerene.world_model import SQLiteWorldModelStore
 from fullerene.workspace_state import workspace_state_root
@@ -44,6 +45,46 @@ class LatentPressureModelTests(unittest.TestCase):
 class LatentPressureBufferTests(unittest.TestCase):
     def _state(self) -> NexusState:
         return NexusState()
+
+    def test_belief_contradiction_cluster_suppressed_on_idle_tick_when_low_pressure(
+        self,
+    ) -> None:
+        sig = {
+            "source": "world_model",
+            "entry_type": "belief_contradiction_cluster",
+            "description": "cluster",
+            "metadata": {"pressure_score": 0.1},
+        }
+        tick = Event(event_type=EventType.SYSTEM_TICK, content="")
+        ok, reason = should_ingest_signal_on_tick(sig, tick, NexusState())
+        self.assertFalse(ok)
+        self.assertEqual(reason, "belief_contradiction_cluster_idle_low_pressure")
+
+    def test_belief_contradiction_cluster_allowed_on_tick_when_pressure_high(self) -> None:
+        sig = {
+            "source": "world_model",
+            "entry_type": "belief_contradiction_cluster",
+            "description": "cluster",
+            "metadata": {"pressure_score": 0.4},
+        }
+        tick = Event(event_type=EventType.SYSTEM_TICK, content="")
+        ok, reason = should_ingest_signal_on_tick(sig, tick, NexusState())
+        self.assertTrue(ok)
+        self.assertEqual(reason, "belief_contradiction_cluster")
+
+    def test_belief_contradiction_cluster_always_ingested_on_user_event_even_if_low_pressure(
+        self,
+    ) -> None:
+        sig = {
+            "source": "world_model",
+            "entry_type": "belief_contradiction_cluster",
+            "description": "cluster",
+            "metadata": {"pressure_score": 0.05},
+        }
+        event = Event(event_type=EventType.USER_MESSAGE, content="x")
+        ok, reason = should_ingest_signal_on_tick(sig, event, NexusState())
+        self.assertTrue(ok)
+        self.assertEqual(reason, "non_system_tick")
 
     def test_creates_contradiction_from_behavior_trace(self) -> None:
         state = self._state()

@@ -27,6 +27,7 @@ INITIAL_INTENSITIES = {
     "approval_required": 0.5,
     "memory_cluster_activation": 0.42,
     "unresolved_memory_cluster": 0.45,
+    "belief_contradiction_cluster": 0.58,
     "contradiction": 0.6,
     "uncertainty": 0.45,
     "context_overload": 0.4,
@@ -594,6 +595,13 @@ def should_ingest_signal_on_tick(
         "unresolved_memory_cluster",
     }:
         return False, "memory_cluster_suppressed_on_idle_tick"
+
+    if source == "world_model" and entry_type == "belief_contradiction_cluster":
+        md = _dict(signal.get("metadata"))
+        pr = _clamp01(md.get("pressure_score"))
+        if event.event_type == EventType.SYSTEM_TICK and pr < 0.35:
+            return False, "belief_contradiction_cluster_idle_low_pressure"
+        return True, "belief_contradiction_cluster"
 
     return False, "system_tick_routine_signal_suppressed"
 

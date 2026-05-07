@@ -45,6 +45,7 @@ class ContextItemType(str, Enum):
     MEMORY = "memory"
     GOAL = "goal"
     BELIEF = "belief"
+    BELIEF_CONSISTENCY = "belief_consistency"
     POLICY = "policy"
     SIGNAL = "signal"
     SYSTEM = "system"
@@ -199,6 +200,7 @@ class ContextAssemblyConfig:
     include_attention: bool = True
     include_policy: bool = True
     include_world_model: bool = True
+    include_belief_consistency: bool = True
     include_goals: bool = True
     include_recent_signals: bool = True
     include_policy_summary: bool = True
@@ -230,6 +232,7 @@ class ContextAssemblyConfig:
         self.include_attention = bool(self.include_attention)
         self.include_policy = bool(self.include_policy)
         self.include_world_model = bool(self.include_world_model)
+        self.include_belief_consistency = bool(self.include_belief_consistency)
         self.include_goals = bool(self.include_goals)
         self.include_recent_signals = bool(self.include_recent_signals)
         self.max_memories = max(int(self.max_memories), 0)
@@ -251,7 +254,16 @@ class ContextAssemblyConfig:
             return self.max_items_total
         policy_items = 1 if self.include_policy_summary else 0
         signal_items = 5 if self.include_signal_summaries else 0
-        total = 1 + self.max_goals + self.max_memories + self.max_beliefs + policy_items + signal_items
+        belief_consistency = 1 if self.include_belief_consistency else 0
+        total = (
+            1
+            + self.max_goals
+            + self.max_memories
+            + self.max_beliefs
+            + policy_items
+            + signal_items
+            + belief_consistency
+        )
         return max(total, 1)
 
     def to_dict(self) -> dict[str, Any]:
@@ -272,6 +284,7 @@ class ContextAssemblyConfig:
             "include_attention": self.include_attention,
             "include_policy": self.include_policy,
             "include_world_model": self.include_world_model,
+            "include_belief_consistency": self.include_belief_consistency,
             "include_goals": self.include_goals,
             "include_recent_signals": self.include_recent_signals,
             "max_working_turns": self.max_working_turns,
@@ -309,6 +322,7 @@ class ContextAssemblyConfig:
                 data.get("include_policy_summary", True),
             ),
             include_world_model=data.get("include_world_model", True),
+            include_belief_consistency=data.get("include_belief_consistency", True),
             include_goals=data.get("include_goals", True),
             include_recent_signals=data.get(
                 "include_recent_signals",

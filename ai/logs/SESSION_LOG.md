@@ -1,3 +1,11 @@
+### 2026-05-07 - World Model v2 cross-facet polish
+
+- **Context:** Finish WM v2 harness integration (LPB, Context, Policy, Verifier tweaks, Behavior regressions from empty aligned beliefs / unresolved refs, partner-belief ingest accounting).
+- **Done:** LPB `belief_contradiction_cluster`; Context belief-consistency item + metadata; policy injection for contradiction approval flags; verifier world-model extras; facet state cluster sample; behavior belief-signal fusion + unresolved-reference exemptions; ingest canonical redirect for partner rows; tests + changelog.
+- **Verified:** `python -m unittest discover -s tests -p "test_*.py"` (605 tests OK).
+- **Next:** Optional `ai/project/architecture.md` / glossary wording if you want vocabulary parity with WM v2 field names only.
+- **Blockers:** None.
+
 ### 2026-05-07 - Memory v3 implementation
 
 - **Context:** Implement Memory v3 (communities / concern areas, bounded graph ops, activation+pressure, LPB, Context, affect salience v3 seam) without new facet, LLM, or mandatory Leiden dependency.

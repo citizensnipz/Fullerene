@@ -588,7 +588,7 @@ class BehaviorFacet:
             aligned_beliefs
         )
         belief_confidence, belief_contradiction, belief_reason = (
-            self._resolve_belief_signal(aligned_beliefs)
+            self._resolve_belief_signal(aligned_beliefs, world_context)
         )
         policy_result, policy_requires_approval, policy_blocks_act, policy_reason = (
             self._extract_policy_signal(metadata, state)
@@ -2164,6 +2164,7 @@ class BehaviorFacet:
     @staticmethod
     def _resolve_belief_signal(
         aligned_beliefs: list[dict[str, Any]],
+        world_context: dict[str, Any] | None = None,
     ) -> tuple[float, bool, str | None]:
         confidence = BehaviorFacet._resolve_world_alignment_confidence(aligned_beliefs)
         contradicted = False
@@ -2172,8 +2173,26 @@ class BehaviorFacet:
             if isinstance(status, str) and status.strip().lower() == "contradicted":
                 contradicted = True
                 break
+        wc = world_context if isinstance(world_context, dict) else {}
+        wm_top_contrad = BehaviorFacet._numeric_unit_value(wc.get("wm_v2_top_contradiction_score"))
+        graph_confidence = BehaviorFacet._numeric_unit_value(wc.get("wm_v2_belief_graph_confidence"))
+        if (
+            aligned_beliefs
+            and graph_confidence is not None
+            and not contradicted
+        ):
+            confidence = round(_clamp_unit(max(confidence, min(graph_confidence * 1.05, 1.0))), 3)
+        if bool(wc.get("wm_v2_suppress_act_due_to_low_confidence")):
+            ceiling = max(LOW_BELIEF_CONFIDENCE_THRESHOLD - 0.05, 0.05)
+            next_confidence = confidence if confidence > 0.0 else 0.34
+            confidence = min(next_confidence, ceiling)
+            if contradicted:
+                pass
+            elif next_confidence > ceiling:
+                return confidence, False, "low_belief_confidence_wm_v2_metadata"
         if contradicted:
-            return confidence, True, "world_model_contradiction"
+            suffix = ":wm_v2_graph" if wm_top_contrad is not None and wm_top_contrad >= 0.52 else ""
+            return confidence, True, f"world_model_contradiction{suffix}"
         if confidence > 0.0 and confidence < LOW_BELIEF_CONFIDENCE_THRESHOLD:
             return confidence, False, "low_belief_confidence"
         return confidence, False, None
@@ -2490,10 +2509,17 @@ class BehaviorFacet:
             reasons.append("context_continuity_supported_follow_up")
 
         if signals.follow_up_reference_detected and signals.has_unresolved_reference:
-            add(DecisionAction.ASK, "unresolved_reference_ask_bias", 0.25)
-            add(DecisionAction.ACT, "unresolved_reference_act_penalty", -0.15)
-            high_ambiguity = True
-            reasons.append("unresolved_reference_requires_targeted_clarification")
+            anchor_query = (
+                signals.query_intent in {"recommendation", "planning"}
+                and (signals.has_preference_memory or signals.has_goal)
+            )
+            if not anchor_query:
+                add(DecisionAction.ASK, "unresolved_reference_ask_bias", 0.25)
+                add(DecisionAction.ACT, "unresolved_reference_act_penalty", -0.15)
+                high_ambiguity = True
+                reasons.append(
+                    "unresolved_reference_requires_targeted_clarification",
+                )
 
         if grounded and low_ambiguity and signals.query_intent in QUERY_INTENTS_REQUIRING_RESPONSE:
             reasons.append("grounded_low_ambiguity_act")
@@ -2932,9 +2958,16 @@ class BehaviorFacet:
                 reasons.append("context_continuity_supported_follow_up")
                 reasons.append("resolved_reference_lowered_ambiguity")
             if signals.has_unresolved_reference:
-                adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.2)
-                adjusted["act"] = _clamp_unit(adjusted["act"] - 0.1)
-                reasons.append("unresolved_reference_requires_targeted_clarification")
+                anchor_query = (
+                    signals.query_intent in {"recommendation", "planning"}
+                    and (signals.has_preference_memory or signals.has_goal)
+                )
+                if not anchor_query:
+                    adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.2)
+                    adjusted["act"] = _clamp_unit(adjusted["act"] - 0.1)
+                    reasons.append(
+                        "unresolved_reference_requires_targeted_clarification",
+                    )
         if signals.repeated_dissatisfaction:
             adjusted["ask"] = _clamp_unit(adjusted["ask"] + 0.1)
             adjusted["act"] = _clamp_unit(adjusted["act"] - 0.15)

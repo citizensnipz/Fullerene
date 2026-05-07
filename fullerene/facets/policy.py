@@ -99,6 +99,23 @@ EXTERNAL_APPROVAL_RULES = {
 }
 
 
+WM_V2_CONTRADICTION_REQUIRE_APPROVAL_RULE = PolicyRule(
+    id="builtin-wm-v2-contradiction-cluster-require-approval",
+    name="Require approval when world model reports active contradiction cluster pressure",
+    description=(
+        "When the deterministic belief graph flags unresolved contradiction-cluster "
+        "pressure, gated external ACT decisions require explicit approval."
+    ),
+    rule_type=PolicyRuleType.REQUIRE_APPROVAL,
+    target_type=PolicyTargetType.GENERAL,
+    target="*",
+    conditions={},
+    priority=115.0,
+    source=PolicySource.SYSTEM,
+    metadata={"built_in": True, "baseline": False, "world_model_v2": True},
+)
+
+
 @dataclass(slots=True)
 class _PolicyContext:
     metadata: dict[str, Any]
@@ -202,6 +219,9 @@ class PolicyFacet:
             for rule in self.store.list_enabled_policies()
             if self._rule_matches(rule, context)
         ]
+        explicit_matches = self._maybe_inject_wm_v2_contradiction_approval(
+            state, context, explicit_matches
+        )
         ordered_matches = self._sort_rules(explicit_matches)
         denied = self._top_rule(ordered_matches, PolicyRuleType.DENY)
         approval = self._top_rule(ordered_matches, PolicyRuleType.REQUIRE_APPROVAL)
@@ -1095,6 +1115,23 @@ class PolicyFacet:
             ),
             reverse=True,
         )
+
+    @staticmethod
+    def _maybe_inject_wm_v2_contradiction_approval(
+        state: NexusState,
+        context: _PolicyContext,
+        rules: list[PolicyRule],
+    ) -> list[PolicyRule]:
+        if context.current_decision != DecisionAction.ACT:
+            return rules
+        if context.is_internal_state_action:
+            return rules
+        wm = state.facet_state.get("world_model")
+        if not isinstance(wm, dict):
+            return rules
+        if not bool(wm.get("wm_v2_requires_approval_due_to_contradiction")):
+            return rules
+        return [*rules, WM_V2_CONTRADICTION_REQUIRE_APPROVAL_RULE]
 
     @staticmethod
     def _top_rule(

@@ -625,6 +625,71 @@ class PolicyFacetTests(unittest.TestCase):
             any("unknown_target_type_fallback" in r for r in policy_eval.get("reasons", []))
         )
 
+    def test_wm_v2_contradiction_flag_injects_require_approval_even_with_explicit_allow(
+        self,
+    ) -> None:
+        """World model contradiction approval flag stacks as a bounded built-in REQ rule."""
+        self.store.add_policy(
+            PolicyRule(
+                id="allow-shell-wide",
+                name="Allow shell",
+                rule_type=PolicyRuleType.ALLOW,
+                target_type=PolicyTargetType.SHELL,
+                target="*",
+                priority=200.0,
+            )
+        )
+        facet_state = {
+            "behavior": {"last_selected_decision": "act"},
+            "world_model": {"wm_v2_requires_approval_due_to_contradiction": True},
+        }
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="run tool",
+                metadata={
+                    "explicit_action": True,
+                    "target_type": "shell",
+                    "dry_run": False,
+                },
+            ),
+            NexusState(facet_state=facet_state),
+        )
+
+        self.assertEqual(
+            result.metadata["policy_status"],
+            PolicyStatus.APPROVAL_REQUIRED.value,
+        )
+        matched = result.metadata.get("matched_policies") or []
+        self.assertTrue(
+            any(
+                isinstance(p, dict)
+                and p.get("id") == "builtin-wm-v2-contradiction-cluster-require-approval"
+                for p in matched
+            ),
+        )
+
+    def test_wm_v2_contradiction_flag_does_not_apply_to_internal_state_act(self) -> None:
+        facet_state = {
+            "behavior": {"last_selected_decision": "act"},
+            "world_model": {"wm_v2_requires_approval_due_to_contradiction": True},
+        }
+        result = self.facet.process(
+            Event(
+                event_type=EventType.USER_MESSAGE,
+                content="touch state file",
+                metadata={
+                    "explicit_action": True,
+                    "target_type": "internal_state",
+                    "target": "state-dir",
+                    "operation": "update",
+                    "dry_run": False,
+                },
+            ),
+            NexusState(facet_state=facet_state),
+        )
+        self.assertEqual(result.metadata["policy_status"], PolicyStatus.ALLOWED.value)
+
     def test_v1_plan_level_aggregation_denied_over_approval_and_allowed(self) -> None:
         plan_dict = {
             "id": "plan-1",

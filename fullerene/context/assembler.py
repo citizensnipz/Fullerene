@@ -219,6 +219,15 @@ class DynamicContextAssembler:
         items.extend(belief_items)
         reasons.append(f"included_beliefs={len(belief_items)}")
 
+        bc_items, _, bc_cluster_ids = self._belief_consistency_bundle(working_state)
+        for bc in bc_items:
+            if len(items) >= self.config.max_items:
+                reasons.append("belief_consistency_skipped_budget")
+                break
+            items.append(bc)
+        if bc_items:
+            reasons.append("included_belief_consistency_wm_v2")
+
         policy_item = self._policy_item()
         if policy_item is not None:
             items.append(policy_item)
@@ -289,6 +298,8 @@ class DynamicContextAssembler:
             "normalized_goal_keys": list(goal_deduplication.normalized_goal_keys),
             "included_memory_ids": [item.id for item in memory_items],
             "included_belief_ids": [item.id for item in belief_items],
+            "included_wm_v2_contradiction_cluster_ids": list(bc_cluster_ids),
+            "belief_consistency_prior_wm": bool(bc_items),
             "salience_threshold": self.config.salience_threshold,
             "limits": {
                 "max_goals": self.config.max_goals,
@@ -396,6 +407,9 @@ class DynamicContextAssembler:
         candidates.extend(self._build_belief_candidates(event))
         candidates.extend(self._build_memory_candidates_v2(event))
         candidates.extend(self._build_memory_community_candidates(working_state))
+        candidates.extend(
+            self._build_belief_consistency_candidates(working_state),
+        )
         candidates.extend(self._build_policy_candidates(working_state, facet_results))
         if self.config.include_recent_signals:
             candidates.extend(self._build_signal_candidates(working_state, facet_results))
@@ -441,7 +455,9 @@ class DynamicContextAssembler:
                 excluded.append({"id": item.id, "reason": "budget_evicted"})
                 continue
             score = row["score"]
-            pressure_bypass = score["pressure_score"] >= self.config.min_pressure_score and row["source_type"] in {"lpb", "policy", "signal"}
+            pressure_bypass = score["pressure_score"] >= self.config.min_pressure_score and row[
+                "source_type"
+            ] in {"lpb", "policy", "signal", "belief_consistency"}
             if not pressure_bypass and score["final_score"] < self.config.min_relevance_score:
                 excluded.append({"id": item.id, "reason": "below_relevance_cutoff"})
                 continue
@@ -486,6 +502,22 @@ class DynamicContextAssembler:
             "included_memory_ids": [item.id for item in included if item.item_type == ContextItemType.MEMORY],
             "included_goal_ids": [item.id for item in included if item.item_type == ContextItemType.GOAL],
             "included_belief_ids": [item.id for item in included if item.item_type == ContextItemType.BELIEF],
+            "included_wm_v2_contradiction_cluster_ids": sorted(
+                {
+                    cid
+                    for item in included
+                    if item.item_type == ContextItemType.BELIEF_CONSISTENCY
+                    for cid in (
+                        item.metadata.get("included_belief_contradiction_cluster_ids")
+                        if isinstance(item.metadata, dict)
+                        else []
+                    )
+                    if isinstance(cid, str) and cid.strip()
+                },
+            )[:16],
+            "belief_consistency_prior_wm": any(
+                item.item_type == ContextItemType.BELIEF_CONSISTENCY for item in included
+            ),
             "included_policy_ids": [item.id for item in included if item.item_type == ContextItemType.POLICY],
             "excluded_context_items": excluded[:64],
             "item_score_breakdowns": score_breakdowns,
@@ -1103,6 +1135,129 @@ class DynamicContextAssembler:
                 continue
             filtered.append(record)
         return filtered
+
+    @staticmethod
+    def _belief_consistency_clamp_unit(value: Any) -> float:
+        try:
+            return max(0.0, min(float(value), 1.0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _belief_consistency_bundle(
+        self,
+        state: NexusState,
+    ) -> tuple[list[ContextItem], float, list[str]]:
+        if not self.config.include_belief_consistency:
+            return [], 0.0, []
+        wm = state.facet_state.get("world_model")
+        if not isinstance(wm, dict):
+            return [], 0.0, []
+
+        gc = self._belief_consistency_clamp_unit(wm.get("wm_v2_belief_graph_confidence"))
+        appr = bool(wm.get("wm_v2_requires_approval_due_to_contradiction"))
+        low = bool(wm.get("wm_v2_suppress_act_due_to_low_confidence"))
+        tcp = self._belief_consistency_clamp_unit(wm.get("wm_v2_top_belief_cluster_pressure"))
+        tcs = self._belief_consistency_clamp_unit(wm.get("wm_v2_top_contradiction_score"))
+        sample = wm.get("wm_v2_contradiction_cluster_sample")
+        cluster_bits: list[str] = []
+        cluster_ids: list[str] = []
+        if isinstance(sample, list):
+            for row in sample[:2]:
+                if not isinstance(row, dict):
+                    continue
+                cid = str(row.get("cluster_id") or row.get("id") or "").strip()
+                if cid:
+                    cluster_ids.append(cid)
+                try:
+                    psz_f = round(float(row.get("pressure_score") or 0.0), 2)
+                except (TypeError, ValueError):
+                    psz_f = 0.0
+                raw_mc = row.get("member_count")
+                if raw_mc is None:
+                    raw_mc = row.get("size")
+                try:
+                    mc = int(raw_mc or 0)
+                except (TypeError, ValueError):
+                    mc = 0
+                if cid:
+                    cluster_bits.append(f"{cid}(p={psz_f},n={mc})")
+
+        interesting = (
+            appr
+            or low
+            or tcp >= 0.25
+            or tcs >= 0.25
+            or gc <= 0.45
+            or bool(cluster_bits)
+        )
+        if not interesting:
+            return [], 0.0, []
+
+        parts = [
+            f"Belief consistency (prior-cycle world model): graph_conf={gc:.2f}",
+            f"approval_recommended={str(appr).lower()}",
+            f"suppress_act_low_confidence={str(low).lower()}",
+            f"top_cluster_pressure={tcp:.2f}",
+            f"top_contradiction={tcs:.2f}",
+        ]
+        if cluster_bits:
+            parts.append("clusters:" + ";".join(cluster_bits))
+        content = "; ".join(parts)
+        if len(content) > 320:
+            content = content[:317] + "..."
+
+        pressure_hint = self._belief_consistency_clamp_unit(
+            max(
+                tcp,
+                tcs * 0.65,
+                0.55 if appr else 0.0,
+                0.35 if low else 0.0,
+            )
+        )
+
+        item = ContextItem(
+            id="belief-consistency-prior-wm-v0",
+            item_type=ContextItemType.BELIEF_CONSISTENCY,
+            content=content,
+            source_id="world_model_prior",
+            metadata={
+                "context_source": "belief_consistency_wm_v2_prior",
+                "wm_v2_belief_graph_confidence": gc,
+                "included_belief_contradiction_cluster_ids": cluster_ids[:8],
+                "wm_v2_requires_approval": appr,
+                "wm_v2_suppress_act_low_confidence": low,
+                "belief_consistency_pressure_hint": pressure_hint,
+            },
+        )
+        dedup_cluster_ids = sorted({c for c in cluster_ids if c})[:16]
+        return [item], pressure_hint, dedup_cluster_ids
+
+    def _build_belief_consistency_candidates(
+        self,
+        state: NexusState,
+    ) -> list[dict[str, Any]]:
+        items, hint, _ = self._belief_consistency_bundle(state)
+        if not items:
+            return []
+        item = items[0]
+        md = dict(item.metadata) if isinstance(item.metadata, dict) else {}
+        pressure = self._belief_consistency_clamp_unit(
+            md.get("belief_consistency_pressure_hint", hint),
+        )
+        score = self._score_candidate(
+            relevance_score=0.74,
+            pressure_score=pressure,
+            priority_score=0.55,
+        )
+        return [
+            {
+                "item": item,
+                "score": score,
+                "source_rank": 3,
+                "source_type": "belief_consistency",
+                "include_reason": "wm_v2_belief_consistency_prior",
+            },
+        ]
 
     def _belief_items(self, event: Event) -> list[ContextItem]:
         if self.world_model_store is None or self.config.max_beliefs == 0:

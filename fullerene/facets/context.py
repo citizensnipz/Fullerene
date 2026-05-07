@@ -99,6 +99,13 @@ class ContextFacet:
         query_intent = window.metadata.get("query_intent")
         event_domain = window.metadata.get("event_domain")
         memory_score_breakdowns = window.metadata.get("memory_score_breakdowns", [])
+        wm_v2_cluster_ids = window.metadata.get("included_wm_v2_contradiction_cluster_ids")
+        if not isinstance(wm_v2_cluster_ids, list):
+            wm_v2_cluster_ids = []
+        wm_v2_cluster_ids = [str(cid) for cid in wm_v2_cluster_ids if str(cid).strip()]
+        belief_consistency_prior_wm = bool(
+            window.metadata.get("belief_consistency_prior_wm", False)
+        )
         reference_anchors = window.metadata.get("reference_anchors", [])
         unresolved_references = window.metadata.get("unresolved_references", [])
         continuity_confidence = float(window.metadata.get("continuity_confidence", 0.0) or 0.0)
@@ -151,6 +158,8 @@ class ContextFacet:
                 "last_current_topic_hint": current_topic_hint,
                 "last_topic_terms": topic_terms,
                 "last_reference_anchor_count": reference_anchor_count,
+                "last_included_wm_v2_contradiction_cluster_ids": wm_v2_cluster_ids,
+                "last_included_belief_consistency_wm_v2": belief_consistency_prior_wm,
             },
             metadata={
                 "context_window": window.to_dict(),
@@ -178,6 +187,8 @@ class ContextFacet:
                 "continuity_confidence": continuity_confidence,
                 "current_topic_hint": current_topic_hint,
                 "topic_terms": topic_terms,
+                "included_wm_v2_contradiction_cluster_ids": wm_v2_cluster_ids,
+                "belief_consistency_prior_wm": belief_consistency_prior_wm,
                 "salience_threshold": window.metadata.get("salience_threshold", 0.0),
                 "limits": window.metadata.get("limits", {}),
                 "reasons": window.metadata.get("reasons", []),

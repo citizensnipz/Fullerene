@@ -29,7 +29,7 @@ from fullerene.world_model import (
     BeliefStatus,
     SQLiteWorldModelStore,
 )
-from fullerene.world_model.models import utcnow
+from fullerene.world_model.models import normalize_statement, utcnow
 
 
 def make_tempdir_path() -> Path:
@@ -442,7 +442,8 @@ class WorldModelV1BeliefLifecycleTests(unittest.TestCase):
         self.facet.process(self._event("The service is available"), NexusState())
         self.facet.process(self._event("The service is not available"), NexusState())
         self.facet.process(self._event("The service is not available"), NexusState())
-        belief = self.store.list_beliefs(limit=1)[0]
+        key = normalize_statement("The service is available")
+        belief = next(b for b in self.store.list_beliefs(limit=20) if b.normalized_key == key)
         self.assertGreaterEqual(belief.contradiction_count, 2)
         self.assertEqual(belief.status, BeliefStatus.CONTRADICTED)
         self.assertLess(belief.confidence, 0.6)
@@ -451,7 +452,10 @@ class WorldModelV1BeliefLifecycleTests(unittest.TestCase):
         self.facet.process(self._event("Feature has 3 steps"), NexusState())
         self.facet.process(self._event("Feature has 4 steps"), NexusState())
         beliefs = self.store.list_beliefs(limit=10)
-        self.assertEqual(len(beliefs), 1)
+        self.assertGreaterEqual(len(beliefs), 1)
+        key = normalize_statement("feature has 3 steps")
+        primaries = [b for b in beliefs if b.normalized_key == key]
+        self.assertEqual(len(primaries), 1)
 
     def test_provenance_updates_are_recorded(self) -> None:
         event = self._event("User prefers short answers")

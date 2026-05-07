@@ -192,8 +192,9 @@ class ContextModelTests(unittest.TestCase):
         self.assertEqual(config.salience_threshold, 0.0)
         self.assertTrue(config.include_policy_summary)
         self.assertTrue(config.include_signal_summaries)
+        self.assertTrue(config.include_belief_consistency)
         self.assertEqual(config.strategy, DYNAMIC_ACTIVE_FACETS_V1)
-        self.assertEqual(config.max_items, 20)
+        self.assertEqual(config.max_items, 21)
 
     def test_context_v2_defaults_and_clamping(self) -> None:
         config = ContextAssemblyConfig(strategy=PRESSURE_RELEVANCE_V2, max_items_total=-1)
@@ -496,6 +497,49 @@ class DynamicContextAssemblerTests(unittest.TestCase):
         self.assertEqual(world_store.calls, [10])
         self.assertEqual(policy_store.list_policies_calls, [(20, True)])
         self.assertEqual(policy_store.count_calls, 1)
+
+    def test_includes_belief_consistency_from_prior_world_model_facet_state(self) -> None:
+        event = self.make_event()
+        memory_store = TrackingMemoryStore([])
+        state = NexusState(
+            facet_state={
+                "world_model": {
+                    "wm_v2_requires_approval_due_to_contradiction": True,
+                    "wm_v2_top_belief_cluster_pressure": 0.5,
+                    "wm_v2_top_contradiction_score": 0.1,
+                    "wm_v2_belief_graph_confidence": 0.3,
+                    "wm_v2_contradiction_cluster_sample": [
+                        {"cluster_id": "cc-test-1", "pressure_score": 0.5, "member_count": 3},
+                    ],
+                },
+            },
+        )
+        assembler = DynamicContextAssembler(
+            memory_store=memory_store,
+            config=ContextAssemblyConfig(
+                max_goals=0,
+                max_memories=0,
+                max_beliefs=0,
+                include_goals=False,
+                include_world_model=False,
+                include_signal_summaries=False,
+                include_policy_summary=False,
+            ),
+        )
+        window = assembler.assemble(event=event, state=state)
+
+        consistency_items = [
+            item
+            for item in window.items
+            if item.item_type == ContextItemType.BELIEF_CONSISTENCY
+        ]
+        self.assertEqual(len(consistency_items), 1)
+        self.assertIn("Belief consistency", consistency_items[0].content)
+        self.assertEqual(
+            window.metadata.get("included_wm_v2_contradiction_cluster_ids"),
+            ["cc-test-1"],
+        )
+        self.assertTrue(window.metadata.get("belief_consistency_prior_wm"))
 
     def test_filters_memories_by_salience_threshold(self) -> None:
         event = self.make_event()

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 from uuid import uuid4
 
 from fullerene.memory.models import normalize_tags
@@ -55,6 +55,45 @@ class BeliefType(str, Enum):
     CAPABILITY = "capability"
     PREFERENCE = "preference"
     UNKNOWN = "unknown"
+
+
+# World Model v2 graph artifacts (JSON-serializable via to_dict helpers below).
+BELIEF_EDGE_TYPES = frozenset(
+    {
+        "related",
+        "supporting",
+        "contradicting",
+        "causal",
+        "temporal",
+        "inferred_from",
+    }
+)
+
+
+def stable_belief_edge_id(source_belief_id: str, target_belief_id: str, edge_type: str) -> str:
+    import hashlib
+
+    a, b = sorted((str(source_belief_id), str(target_belief_id)))
+    raw = f"{a}|{b}|{str(edge_type).strip().lower()}".encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:32]  # noqa: S324
+
+
+def belief_edge_to_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize edge row for API/verifier consumption."""
+    out = dict(row)
+    meta = out.get("metadata") if isinstance(out.get("metadata"), dict) else {}
+    prov = out.get("provenance") if isinstance(out.get("provenance"), dict) else {}
+    out["metadata"] = _serialize_value(meta)
+    out["provenance"] = _serialize_value(prov)
+    return out
+
+
+def belief_community_to_dict(data: dict[str, Any]) -> dict[str, Any]:
+    return {k: _serialize_value(v) for k, v in data.items()}
+
+
+def belief_rule_to_dict(data: dict[str, Any]) -> dict[str, Any]:
+    return {k: _serialize_value(v) for k, v in data.items()}
 
 
 def normalize_statement(text: str) -> str:

@@ -1,3 +1,13 @@
+### 2026-05-07 (World Model v2 integration: LPB, Context, Policy, Verifier, Behavior)
+
+- LPB: `belief_contradiction_cluster` intensity + idle-tick ingestion gating aligned with cluster `pressure_score` (suppress low-pressure system ticks).
+- Context: `ContextItemType.BELIEF_CONSISTENCY`, `include_belief_consistency`, prior-cycle wm snapshot line + `included_wm_v2_contradiction_cluster_ids`; pressure relevance v2 candidate source `belief_consistency`.
+- Policy: bounded built-in `REQUIRE_APPROVAL` when SQLite world facet state requests contradiction approval (`wm_v2_requires_approval_due_to_contradiction`) for external ACT; skipped for internal-state actions.
+- Verifier: `validate_world_model_v1_artifacts(..., decision_is_act=...)`, cluster scalar checks + ACT+approval-flag warning hook.
+- WorldModelFacet state: bounded `wm_v2_contradiction_cluster_sample`; partner-belief ingest resolves back to canonical primary for contradiction accounting; raised clusterpressure signal floor (~0.28) to reduce one-belief LPB noise.
+- Behavior: do not fuse `wm_v2_belief_graph_confidence` when no aligned beliefs (avoids bogus low-confidence guardrail); exempt recommendation/planning with preference or goal grounding from unresolved-reference ASK biases.
+- Tests: policy WM gate, latent-pressure tick tests, context belief-consistency wiring, WM lifecycle expectations for partner rows.
+
 ### 2026-05-07 (Memory v3 communities, bounded graph, LPB, Context)
 
 - Added `fullerene/memory/communities.py`, `community_detection.py`, `v3.py`, `v3_runtime.py`, `contradiction.py`; SQLite tables `memory_communities`, `memory_community_members`; column `memories.community_id`; `SQLiteMemoryStore` helpers (`rebuild_memory_communities`, `update_memory_communities_for_new_memory`, `list_memory_communities`, `get_memory_community`, `get_memory_neighbors`, `merge_memory_metadata`, decay pass).

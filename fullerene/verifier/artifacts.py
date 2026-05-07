@@ -1586,7 +1586,11 @@ def validate_context_v2_packet(
     return out
 
 
-def validate_world_model_v1_artifacts(world_meta: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+def validate_world_model_v1_artifacts(
+    world_meta: Mapping[str, Any] | None,
+    *,
+    decision_is_act: bool = False,
+) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     if not world_meta:
         return out
@@ -1646,6 +1650,54 @@ def validate_world_model_v1_artifacts(world_meta: Mapping[str, Any] | None) -> l
             contradicted = any(isinstance(b, Mapping) and str(b.get("status") or "").lower() == "contradicted" for b in (relevant or []))
             if contradicted:
                 out.append(artifact_result(validator="world_model_lpb_consistency", artifact_kind=kind, status="warning", severity="warning", code="missing_contradiction_pressure_signal", path="world_model.contradiction_signals", message="Contradicted belief present without contradiction pressure signal."))
+    clusters = world_meta.get("active_contradiction_clusters")
+    if isinstance(clusters, list):
+        for idx, row in enumerate(clusters):
+            if not isinstance(row, Mapping):
+                continue
+            ps = row.get("pressure_score")
+            if ps is not None and not _is_unit_number(ps):
+                out.append(
+                    artifact_result(
+                        validator="world_model_v2_cluster_schema",
+                        artifact_kind=kind,
+                        status="failed",
+                        severity="warning",
+                        code="invalid_cluster_pressure_score",
+                        path=f"world_model.active_contradiction_clusters[{idx}].pressure_score",
+                        message="Contradiction cluster pressure_score should be in [0,1] when present.",
+                    )
+                )
+    for scalar_key in (
+        "belief_graph_confidence",
+        "top_contradiction_score",
+        "top_belief_cluster_pressure",
+    ):
+        if scalar_key in world_meta and world_meta.get(scalar_key) is not None:
+            if not _is_unit_number(world_meta.get(scalar_key)):
+                out.append(
+                    artifact_result(
+                        validator="world_model_v2_schema",
+                        artifact_kind=kind,
+                        status="failed",
+                        severity="warning",
+                        code="invalid_world_model_scalar",
+                        path=f"world_model.{scalar_key}",
+                        message=f"{scalar_key} should be a unit number in [0,1] when present.",
+                    )
+                )
+    if decision_is_act and bool(world_meta.get("requires_approval_due_to_contradiction")):
+        out.append(
+            artifact_result(
+                validator="world_model_v2_behavior_consistency",
+                artifact_kind=kind,
+                status="warning",
+                severity="warning",
+                code="act_with_contradiction_approval_flag",
+                path="world_model.requires_approval_due_to_contradiction",
+                message="World model recommends approval for contradiction pressure while decision is ACT.",
+            )
+        )
     out.append(
         artifact_result(
             validator="world_model_v1_schema",
@@ -2454,7 +2506,12 @@ def run_all_artifact_validators(
             )
         )
     if isinstance(world_meta, Mapping):
-        rows.extend(validate_world_model_v1_artifacts(world_meta))
+        rows.extend(
+            validate_world_model_v1_artifacts(
+                world_meta,
+                decision_is_act=decision_is_act,
+            )
+        )
 
     if isinstance(learning_meta, Mapping):
         chunk, r = validate_learning_v1_metadata(learning_meta)
